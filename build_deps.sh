@@ -34,6 +34,10 @@ cd $BASE_DIR/deps/http-parser && make clean && make package && \
   install -D $BASE_DIR/deps/http-parser/libhttp_parser.a $DEPS_INSTALL_PATH/lib/libhttp_parser.a && \
   make clean
 
+# Build liburing
+cd $BASE_DIR/deps/liburing && make clean && \
+  ./configure --prefix=${DEPS_INSTALL_PATH} && make install
+
 # Build libuv
 cd $BASE_DIR/deps/libuv && rm -rf build && mkdir -p build && cd build && \
   cmake -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DLIBUV_BUILD_TESTS=OFF \
