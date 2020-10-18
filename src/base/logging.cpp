@@ -138,7 +138,7 @@ void LogMessage::SendToLog(const std::string& message_text) {
 
 void LogMessage::AppendErrStrIfNecessary() {
     if (append_err_str_) {
-        stream() << fmt::format(": {} [{}]", strerror(append_err_str_), preserved_errno_);
+        stream() << fmt::format(": {} [{}]", strerror(preserved_errno_), preserved_errno_);
     }
 }
 
