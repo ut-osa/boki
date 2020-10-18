@@ -535,13 +535,13 @@ void Server::OngoingEngineHandshake::OnReadError() {
 }
 
 UV_ALLOC_CB_FOR_CLASS(Server::OngoingEngineHandshake, BufferAlloc) {
-    server_->read_buffer_pool_.Get(buf);
+    server_->read_buffer_pool_.Get(&buf->base, &buf->len);
 }
 
 UV_READ_CB_FOR_CLASS(Server::OngoingEngineHandshake, ReadMessage) {
     auto reclaim_resource = gsl::finally([server = server_, buf] {
         if (buf->base != 0) {
-            server->read_buffer_pool_.Return(buf);
+            server->read_buffer_pool_.Return(buf->base);
         }
     });
     if (nread < 0) {

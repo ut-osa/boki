@@ -28,6 +28,7 @@
 // We're always on x86_64
 #define __FAAS_CACHE_LINE_SIZE 64
 #define __FAAS_PAGE_SIZE       4096
+#define __FAAS_PTR_SIZE        8
 
 #ifndef __FAAS_FILE_CREAT_MODE
 #define __FAAS_FILE_CREAT_MODE 0664

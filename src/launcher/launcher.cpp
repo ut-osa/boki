@@ -160,17 +160,17 @@ void Launcher::OnRecvMessage(const protocol::Message& message) {
 
 void Launcher::NewReadBuffer(size_t suggested_size, uv_buf_t* buf) {
     DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
-    buffer_pool_.Get(buf);
+    buffer_pool_.Get(&buf->base, &buf->len);
 }
 
 void Launcher::ReturnReadBuffer(const uv_buf_t* buf) {
     DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
-    buffer_pool_.Return(buf);
+    buffer_pool_.Return(buf->base);
 }
 
 void Launcher::NewWriteBuffer(uv_buf_t* buf) {
     DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
-    buffer_pool_.Get(buf);
+    buffer_pool_.Get(&buf->base, &buf->len);
 }
 
 void Launcher::ReturnWriteBuffer(char* buf) {

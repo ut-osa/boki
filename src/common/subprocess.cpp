@@ -172,13 +172,13 @@ void Subprocess::OnAllHandlesClosed() {
 }
 
 UV_ALLOC_CB_FOR_CLASS(Subprocess, BufferAlloc) {
-    read_buffer_pool_->Get(buf);
+    read_buffer_pool_->Get(&buf->base, &buf->len);
 }
 
 UV_READ_CB_FOR_CLASS(Subprocess, ReadStdout) {
     auto reclaim_resource = gsl::finally([this, buf] {
         if (buf->base != 0) {
-            read_buffer_pool_->Return(buf);
+            read_buffer_pool_->Return(buf->base);
         }
     });
     if (nread < 0) {
@@ -206,7 +206,7 @@ UV_READ_CB_FOR_CLASS(Subprocess, ReadStdout) {
 UV_READ_CB_FOR_CLASS(Subprocess, ReadStderr) {
     auto reclaim_resource = gsl::finally([this, buf] {
         if (buf->base != 0) {
-            read_buffer_pool_->Return(buf);
+            read_buffer_pool_->Return(buf->base);
         }
     });
     if (nread < 0) {

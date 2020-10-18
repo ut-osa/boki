@@ -16,7 +16,6 @@ ServerBase::ServerBase()
     stop_event_.data = this;
 }
 
-
 ServerBase::~ServerBase() {
     State state = state_.load();
     DCHECK(state == kCreated || state == kStopped);
@@ -92,7 +91,7 @@ void ServerBase::RegisterConnection(IOWorker* io_worker, ConnectionBase* connect
     uv_write_t* write_req = connection->uv_write_req_for_transfer();
     void** buf = reinterpret_cast<void**>(connection->pipe_write_buf_for_transfer());
     *buf = connection;
-    uv_buf_t uv_buf = uv_buf_init(reinterpret_cast<char*>(buf), sizeof(void*));
+    uv_buf_t uv_buf = uv_buf_init(reinterpret_cast<char*>(buf), __FAAS_PTR_SIZE);
     uv_pipe_t* pipe_to_worker = pipes_to_io_worker_[io_worker].get();
     write_req->data = uv_handle;
     connection->set_id(next_connection_id_++);

@@ -37,7 +37,7 @@ protected:
 private:
     uv_write_t uv_write_req_for_transfer_;
     uv_write_t uv_write_req_for_back_transfer_;
-    char pipe_write_buf_for_transfer_[sizeof(void*)];
+    char pipe_write_buf_for_transfer_[__FAAS_PTR_SIZE];
 
     DISALLOW_COPY_AND_ASSIGN(ConnectionBase);
 };

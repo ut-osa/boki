@@ -472,6 +472,7 @@ void Engine::ProcessDiscardedFuncCallIfNecessary() {
                     /* processing_time= */ 0, pipe_buf, &dummy_message);
             } else {
                 // TODO: handle this case
+                LOG(FATAL) << "Unimplemented";
             }
         }
     }

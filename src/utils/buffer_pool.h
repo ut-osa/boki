@@ -5,7 +5,6 @@
 #endif
 
 #include "base/common.h"
-#include "common/uv.h"
 
 namespace faas {
 namespace utils {
@@ -16,6 +15,8 @@ public:
     BufferPool(std::string_view pool_name, size_t buffer_size)
         : pool_name_(std::string(pool_name)), buffer_size_(buffer_size) {}
     ~BufferPool() {}
+
+    size_t buffer_size() const { return buffer_size_; }
 
     void Get(char** buf, size_t* size) {
         if (available_buffers_.empty()) {
@@ -30,17 +31,20 @@ public:
         *size = buffer_size_;
     }
 
-    void Get(uv_buf_t* buf) {
-        Get(&buf->base, &buf->len);
+    void Get(std::span<char>* buf) {
+        char* base;
+        size_t len;
+        Get(&base, &len);
+        *buf = std::span<char>(base, len);
     }
 
     void Return(char* buf) {
         available_buffers_.push_back(buf);
     }
 
-    void Return(const uv_buf_t* buf) {
-        DCHECK_EQ(buf->len, buffer_size_);
-        Return(buf->base);
+    void Return(std::span<char> buf) {
+        DCHECK_EQ(buf.size(), buffer_size_);
+        Return(buf.data());
     }
 
 private:

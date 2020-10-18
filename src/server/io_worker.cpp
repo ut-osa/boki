@@ -69,17 +69,17 @@ void IOWorker::WaitForFinish() {
 
 void IOWorker::NewReadBuffer(size_t suggested_size, uv_buf_t* buf) {
     DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
-    read_buffer_pool_.Get(buf);
+    read_buffer_pool_.Get(&buf->base, &buf->len);
 }
 
 void IOWorker::ReturnReadBuffer(const uv_buf_t* buf) {
     DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
-    read_buffer_pool_.Return(buf);
+    read_buffer_pool_.Return(buf->base);
 }
 
 void IOWorker::NewWriteBuffer(uv_buf_t* buf) {
     DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
-    write_buffer_pool_.Get(buf);
+    write_buffer_pool_.Get(&buf->base, &buf->len);
 }
 
 void IOWorker::ReturnWriteBuffer(char* buf) {
@@ -153,10 +153,9 @@ void IOWorker::OnConnectionClose(ConnectionBase* connection) {
                                   connections_by_type_[connection->type()].size());
     }
     uv_write_t* write_req = connection->uv_write_req_for_back_transfer();
-    size_t buf_len = sizeof(void*);
     char* buf = connection->pipe_write_buf_for_transfer();
-    memcpy(buf, &connection, buf_len);
-    uv_buf_t uv_buf = uv_buf_init(buf, buf_len);
+    memcpy(buf, &connection, __FAAS_PTR_SIZE);
+    uv_buf_t uv_buf = uv_buf_init(buf, __FAAS_PTR_SIZE);
     connections_on_closing_++;
     UV_DCHECK_OK(uv_write(write_req, UV_AS_STREAM(&pipe_to_server_),
                           &uv_buf, 1, &IOWorker::PipeWriteCallback));
@@ -195,9 +194,9 @@ UV_ASYNC_CB_FOR_CLASS(IOWorker, Stop) {
 }
 
 UV_READ_CB_FOR_CLASS(IOWorker, NewConnection) {
-    DCHECK_EQ(nread, gsl::narrow_cast<ssize_t>(sizeof(void*)));
+    DCHECK_EQ(nread, __FAAS_PTR_SIZE);
     ConnectionBase* connection;
-    memcpy(&connection, buf->base, sizeof(void*));
+    memcpy(&connection, buf->base, __FAAS_PTR_SIZE);
     free(buf->base);
     uv_stream_t* client = connection->InitUVHandle(&uv_loop_);
     UV_DCHECK_OK(uv_accept(UV_AS_STREAM(&pipe_to_server_), client));
