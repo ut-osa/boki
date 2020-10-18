@@ -39,8 +39,7 @@ void IOWorker::Start(int pipe_to_server_fd) {
     io_uring_.PrepareBuffers(kEventFdBufGroup, 8);
     io_uring_.StartRead(
         eventfd_, kEventFdBufGroup, true,
-        [this] (int fd, int status, std::span<const char> data) {
-            DCHECK_EQ(fd, eventfd_);
+        [this] (int status, std::span<const char> data) {
             PCHECK(status == 0);
             RunScheduledFunctions();
         }
@@ -50,8 +49,7 @@ void IOWorker::Start(int pipe_to_server_fd) {
     io_uring_.PrepareBuffers(kServerPipeBufGroup, __FAAS_PTR_SIZE);
     io_uring_.StartRead(
         pipe_to_server_fd_, kServerPipeBufGroup, true,
-        [this] (int fd, int status, std::span<const char> data) {
-            DCHECK_EQ(fd, pipe_to_server_fd_);
+        [this] (int status, std::span<const char> data) {
             PCHECK(status == 0);
             CHECK_EQ(data.size(), static_cast<size_t>(__FAAS_PTR_SIZE));
             ConnectionBase* connection;
@@ -99,8 +97,7 @@ void IOWorker::OnConnectionClose(ConnectionBase* connection) {
     connections_on_closing_++;
     io_uring_.Write(
         pipe_to_server_fd_, data,
-        [this] (int fd, int status, size_t nwrite) {
-            DCHECK_EQ(fd, pipe_to_server_fd_);
+        [this] (int status, size_t nwrite) {
             PCHECK(status == 0);
             CHECK_EQ(nwrite, static_cast<size_t>(__FAAS_PTR_SIZE));
             DCHECK_GT(connections_on_closing_, 0);
@@ -110,7 +107,7 @@ void IOWorker::OnConnectionClose(ConnectionBase* connection) {
                     && connections_on_closing_ == 0) {
                 // We have returned all Connection objects to Server
                 HLOG(INFO) << "Close pipe to Server";
-                io_uring_.Close(pipe_to_server_fd_, [this] (int fd) {
+                io_uring_.Close(pipe_to_server_fd_, [this] () {
                     pipe_to_server_fd_ = -1;
                 });
             }
@@ -225,11 +222,11 @@ void IOWorker::StopInternal() {
         HLOG(WARNING) << "Already in stopping state";
         return;
     }
-    io_uring_.Close(eventfd_, [this] (int fd) { eventfd_ = -1; });
+    io_uring_.Close(eventfd_, [this] () { eventfd_ = -1; });
     HLOG(INFO) << "Start stopping process";
     if (connections_.empty() && connections_on_closing_ == 0) {
         HLOG(INFO) << "Close pipe to Server";
-        io_uring_.Close(pipe_to_server_fd_, [this] (int fd) { pipe_to_server_fd_ = -1; });
+        io_uring_.Close(pipe_to_server_fd_, [this] () { pipe_to_server_fd_ = -1; });
     } else {
         for (const auto& entry : connections_) {
             ConnectionBase* connection = entry.second;

@@ -225,7 +225,7 @@ void IOUring::UnrefFd(int fd) {
         ref_counts_.erase(fd);
     }
     if (close_cbs_.contains(fd) && !ref_counts_.contains(fd)) {
-        close_cbs_[fd](fd);
+        close_cbs_[fd]();
         close_cbs_.erase(fd);
     }
 }
@@ -236,10 +236,10 @@ void IOUring::HandleReadOpComplete(Op* op, int res) {
     bool return_buf = false;
     DCHECK(read_cbs_.contains(op->fd));
     if (res >= 0) {
-        read_cbs_[op->fd](op->fd, 0, std::span<const char>(op->buf, res));
+        read_cbs_[op->fd](0, std::span<const char>(op->buf, res));
     } else if (res != -ECANCELED) {
         errno = -res;
-        read_cbs_[op->fd](op->fd, -1, std::span<const char>());
+        read_cbs_[op->fd](-1, std::span<const char>());
     }
     if (op->flags & kOpFlagRepeat) {
         EnqueueRead(op->fd, op->buf_gid, std::span<char>(op->buf, op->buf_len), true);
@@ -257,10 +257,10 @@ void IOUring::HandleWriteOpComplete(Op* op, int res) {
     DCHECK_EQ(op_type(op), kWrite);
     DCHECK(write_cbs_.contains(op->id));
     if (res >= 0) {
-        write_cbs_[op->id](op->fd, 0, res);
+        write_cbs_[op->id](0, res);
     } else {
         errno = -res;
-        write_cbs_[op->id](op->fd, -1, 0);
+        write_cbs_[op->id](-1, 0);
     }
     write_cbs_.erase(op->id);
 }
@@ -272,7 +272,7 @@ void IOUring::HandleSendallOpComplete(Op* op, int res) {
     if (res >= 0) {
         size_t nwrite = gsl::narrow_cast<size_t>(res);
         if (nwrite == op->buf_len) {
-            sendall_cbs_[op->id](op->fd, 0);
+            sendall_cbs_[op->id](0);
         } else {
             std::span<const char> remaining_data(op->buf + nwrite, op->buf_len - nwrite);
             new_op = AllocSendAllOp(op->fd, remaining_data);
@@ -281,7 +281,7 @@ void IOUring::HandleSendallOpComplete(Op* op, int res) {
         }
     } else {
         errno = -res;
-        sendall_cbs_[op->id](op->fd, -1);
+        sendall_cbs_[op->id](-1);
     }
     sendall_cbs_.erase(op->id);
     if (new_op == nullptr) {

@@ -16,21 +16,20 @@ public:
 
     void PrepareBuffers(uint16_t gid, size_t buf_size);
 
-    typedef std::function<void(int /* fd */, int /* status */,
-                               std::span<const char> /* data */)> ReadCallback;
+    typedef std::function<void(int /* status */, std::span<const char> /* data */)> ReadCallback;
     bool StartRead(int fd, uint16_t buf_gid, bool repeat, ReadCallback cb);
     bool StopRead(int fd);
 
     // Partial write may happen. The caller is responsible for handling partial writes.
-    typedef std::function<void(int /* fd */, int /* status */, size_t /* nwrite */)> WriteCallback;
+    typedef std::function<void(int /* status */, size_t /* nwrite */)> WriteCallback;
     bool Write(int fd, std::span<const char> data, WriteCallback cb);
 
     // Only works for sockets. Partial write will not happen.
     // IOUring implementation will correctly order all SendAll writes.
-    typedef std::function<void(int /* fd */, int /* status */)> SendAllCallback;
+    typedef std::function<void(int /* status */)> SendAllCallback;
     bool SendAll(int sockfd, std::span<const char> data, SendAllCallback cb);
 
-    typedef std::function<void(int /* fd */)> CloseCallback;
+    typedef std::function<void()> CloseCallback;
     bool Close(int fd, CloseCallback cb);
 
     void EventLoopRunOnce(int* inflight_ops);

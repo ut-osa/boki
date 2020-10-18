@@ -5,25 +5,25 @@
 #include "common/protocol.h"
 #include "common/stat.h"
 #include "utils/appendable_buffer.h"
-#include "server/io_worker.h"
-#include "server/connection_base.h"
+#include "engine/io_worker.h"
 
 namespace faas {
 namespace engine {
 
 class Engine;
 
-class GatewayConnection final : public server::ConnectionBase {
+class GatewayConnection final : public ConnectionBase {
 public:
     static constexpr int kTypeId = 0;
+    static constexpr uint64_t kBufGroup = 1;
+    static constexpr size_t kBufSize = 65536;
 
-    GatewayConnection(Engine* engine, uint16_t conn_id);
+    GatewayConnection(Engine* engine, uint16_t conn_id, int sockfd);
     ~GatewayConnection();
 
     uint16_t conn_id() const { return conn_id_; }
 
-    uv_stream_t* InitUVHandle(uv_loop_t* uv_loop) override;
-    void Start(server::IOWorker* io_worker) override;
+    void Start(IOWorker* io_worker) override;
     void ScheduleClose() override;
 
     void SendMessage(const protocol::GatewayMessage& message,
@@ -34,9 +34,9 @@ private:
 
     Engine* engine_;
     uint16_t conn_id_;
-    server::IOWorker* io_worker_;
+    IOWorker* io_worker_;
     State state_;
-    uv_tcp_t uv_tcp_handle_;
+    int sockfd_;
 
     std::string log_header_;
 
@@ -44,12 +44,8 @@ private:
     utils::AppendableBuffer read_buffer_;
 
     void ProcessGatewayMessages();
-
-    DECLARE_UV_ALLOC_CB_FOR_CLASS(BufferAlloc);
-    DECLARE_UV_READ_CB_FOR_CLASS(RecvData);
-    DECLARE_UV_WRITE_CB_FOR_CLASS(DataSent);
-    DECLARE_UV_WRITE_CB_FOR_CLASS(HandshakeSent);
-    DECLARE_UV_CLOSE_CB_FOR_CLASS(Close);
+    void OnRecvData(int status, std::span<const char> data);
+    void CloseCallback();
 
     DISALLOW_COPY_AND_ASSIGN(GatewayConnection);
 };
