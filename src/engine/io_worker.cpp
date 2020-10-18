@@ -39,9 +39,10 @@ void IOWorker::Start(int pipe_to_server_fd) {
     io_uring_.PrepareBuffers(kEventFdBufGroup, 8);
     io_uring_.StartRead(
         eventfd_, kEventFdBufGroup, true,
-        [this] (int status, std::span<const char> data) {
+        [this] (int status, std::span<const char> data) -> bool {
             PCHECK(status == 0);
             RunScheduledFunctions();
+            return true;
         }
     );
     // Setup pipe to server for receiving connections
@@ -49,12 +50,13 @@ void IOWorker::Start(int pipe_to_server_fd) {
     io_uring_.PrepareBuffers(kServerPipeBufGroup, __FAAS_PTR_SIZE);
     io_uring_.StartRead(
         pipe_to_server_fd_, kServerPipeBufGroup, true,
-        [this] (int status, std::span<const char> data) {
+        [this] (int status, std::span<const char> data) -> bool {
             PCHECK(status == 0);
             CHECK_EQ(data.size(), static_cast<size_t>(__FAAS_PTR_SIZE));
             ConnectionBase* connection;
             memcpy(&connection, data.data(), __FAAS_PTR_SIZE);
             OnNewConnection(connection);
+            return true;
         }
     );
     // Start event loop thread

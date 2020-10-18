@@ -1,7 +1,6 @@
 #pragma once
 
 #include "base/common.h"
-#include "common/uv.h"
 #include "common/protocol.h"
 #include "common/stat.h"
 #include "utils/appendable_buffer.h"
@@ -44,7 +43,7 @@ private:
     utils::AppendableBuffer read_buffer_;
 
     void ProcessGatewayMessages();
-    void OnRecvData(int status, std::span<const char> data);
+    bool OnRecvData(int status, std::span<const char> data);
     void CloseCallback();
 
     DISALLOW_COPY_AND_ASSIGN(GatewayConnection);

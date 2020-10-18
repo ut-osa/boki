@@ -16,7 +16,7 @@ public:
 
     void PrepareBuffers(uint16_t gid, size_t buf_size);
 
-    typedef std::function<void(int /* status */, std::span<const char> /* data */)> ReadCallback;
+    typedef std::function<bool(int /* status */, std::span<const char> /* data */)> ReadCallback;
     bool StartRead(int fd, uint16_t buf_gid, bool repeat, ReadCallback cb);
     bool StopRead(int fd);
 
@@ -39,11 +39,11 @@ private:
 
     absl::flat_hash_map</* gid */ uint16_t, std::unique_ptr<utils::BufferPool>> buf_pools_;
     absl::flat_hash_map</* fd */ int, int> ref_counts_;
-    absl::flat_hash_map</* fd */ int, ReadCallback> read_cbs_;
 
     enum OpType { kRead, kWrite, kSendAll, kClose, kCancel };
     enum {
-        kOpFlagRepeat = 1 << 0,
+        kOpFlagRepeat    = 1 << 0,
+        kOpFlagCancelled = 1 << 1,
     };
     static constexpr uint64_t kInvalidOpId = ~0ULL;
     static constexpr int kInvalidFd = -1;
@@ -52,8 +52,8 @@ private:
         int      fd;         // Used by kRead, kWrite, kSendAll, kClose
         uint16_t buf_gid;    // Used by kRead
         uint16_t flags;
-        char*    buf;        // Used by kRead, kSendAll
-        size_t   buf_len;    // Used by kRead, kSendAll
+        char*    buf;        // Used by kRead, kWrite, kSendAll
+        size_t   buf_len;    // Used by kRead, kWrite, kSendAll
         uint64_t next_op;    // Used by kSendAll
     } __attribute__ ((packed));
     static_assert(sizeof(Op) == 40, "Unexpected Op size");
@@ -62,6 +62,7 @@ private:
     utils::SimpleObjectPool<Op> op_pool_;
     absl::flat_hash_map</* op_id */ uint64_t, Op*> ops_;
     absl::flat_hash_map</* fd */ int, Op*> read_ops_;
+    absl::flat_hash_map</* op_id */ uint64_t, ReadCallback> read_cbs_;
     absl::flat_hash_map</* op_id */ uint64_t, WriteCallback> write_cbs_;
     absl::flat_hash_map</* op_id */ uint64_t, SendAllCallback> sendall_cbs_;
     absl::flat_hash_map</* fd */ int, Op*> last_send_op_;
@@ -69,14 +70,13 @@ private:
 
     inline OpType op_type(const Op* op) { return gsl::narrow_cast<OpType>(op->id & 0xff); }
 
-    Op* EnqueueRead(int fd, uint16_t buf_gid, std::span<char> buf, bool repeat);
-    Op* EnqueueWrite(int fd, std::span<const char> data);
-    Op* EnqueueClose(int fd);
-    Op* EnqueueCancel(uint64_t op_id);
-
+    Op* AllocReadOp(int fd, uint16_t buf_gid, std::span<char> buf, bool repeat);
+    Op* AllocWriteOp(int fd, std::span<const char> data);
     Op* AllocSendAllOp(int fd, std::span<const char> data);
-    void EnqueueSendAllOp(Op* op);
+    Op* AllocCloseOp(int fd);
+    Op* AllocCancelOp(uint64_t op_id);
 
+    void EnqueueOp(Op* op);
     void OnOpComplete(Op* op, struct io_uring_cqe* cqe);
     void RefFd(int fd);
     void UnrefFd(int fd);

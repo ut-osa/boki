@@ -30,10 +30,10 @@ void IOUring::PrepareBuffers(uint16_t gid, size_t buf_size) {
 
 bool IOUring::StartRead(int fd, uint16_t buf_gid, bool repeat, ReadCallback cb) {
     if (close_cbs_.contains(fd)) {
-        LOG(ERROR) << fmt::format("fd {} has been closed", fd);
+        LOG(WARNING) << fmt::format("Fd {} already closed", fd);
         return false;
     }
-    if (read_cbs_.contains(fd)) {
+    if (read_ops_.contains(fd)) {
         LOG(ERROR) << fmt::format("fd {} already registered read callback", fd);
         return false;
     }
@@ -43,54 +43,69 @@ bool IOUring::StartRead(int fd, uint16_t buf_gid, bool repeat, ReadCallback cb) 
     }
     std::span<char> buf;
     buf_pools_[buf_gid]->Get(&buf);
-    read_cbs_[fd] = cb;
-    EnqueueRead(fd, buf_gid, buf, repeat);
+    Op* op = AllocReadOp(fd, buf_gid, buf, repeat);
+    read_cbs_[op->id] = cb;
+    EnqueueOp(op);
     return true;
 }
 
 bool IOUring::StopRead(int fd) {
-    if (!read_cbs_.contains(fd)) {
-        LOG(ERROR) << fmt::format("fd {} not registered read callback", fd);
+    if (read_ops_.contains(fd)) {
+        Op* read_op = read_ops_[fd];
+        read_op->flags |= kOpFlagCancelled;
+        Op* op = AllocCancelOp(read_op->id);
+        EnqueueOp(op);
+        return true;
+    } else {
         return false;
     }
-    if (read_ops_.contains(fd)) {
-        read_ops_[fd]->flags &= ~kOpFlagRepeat;
-        EnqueueCancel(read_ops_[fd]->id);
-    }
-    return true;
 }
 
 bool IOUring::Write(int fd, std::span<const char> data, WriteCallback cb) {
     if (close_cbs_.contains(fd)) {
-        LOG(ERROR) << fmt::format("fd {} has been closed", fd);
+        LOG(WARNING) << fmt::format("Fd {} already closed", fd);
         return false;
     }
-    Op* op = EnqueueWrite(fd, data);
+    Op* op = AllocWriteOp(fd, data);
     write_cbs_[op->id] = cb;
+    EnqueueOp(op);
     return true;
 }
 
 bool IOUring::SendAll(int fd, std::span<const char> data, SendAllCallback cb) {
     if (close_cbs_.contains(fd)) {
-        LOG(ERROR) << fmt::format("fd {} has been closed", fd);
+        LOG(WARNING) << fmt::format("Fd {} already closed", fd);
         return false;
     }
     Op* op = AllocSendAllOp(fd, data);
     sendall_cbs_[op->id] = cb;
     if (last_send_op_.contains(fd)) {
         Op* last_op = last_send_op_[fd];
+        DCHECK_EQ(op_type(last_op), kSendAll);
         DCHECK_EQ(last_op->next_op, kInvalidOpId);
         last_op->next_op = op->id;
     } else {
-        EnqueueSendAllOp(op);
+        EnqueueOp(op);
     }
     last_send_op_[fd] = op;
     return true;
 }
 
 bool IOUring::Close(int fd, CloseCallback cb) {
-    EnqueueClose(fd);
+    if (close_cbs_.contains(fd)) {
+        LOG(WARNING) << fmt::format("Fd {} already closed", fd);
+        return false;
+    }
+    Op* op = AllocCloseOp(fd);
     close_cbs_[fd] = cb;
+    if (last_send_op_.contains(fd)) {
+        Op* last_op = last_send_op_[fd];
+        DCHECK_EQ(op_type(last_op), kSendAll);
+        DCHECK_EQ(last_op->next_op, kInvalidOpId);
+        last_op->next_op = op->id;
+    } else {
+        EnqueueOp(op);
+    }
     return true;
 }
 
@@ -123,12 +138,7 @@ void IOUring::EventLoopRunOnce(int* inflight_ops) {
     OP_VAR->next_op = kInvalidOpId;      \
     ops_[id] = op
 
-#define ALLOC_SQE(SQE_VAR, OP_VAR)       \
-    struct io_uring_sqe* SQE_VAR;        \
-    SQE_VAR = io_uring_get_sqe(&ring_);  \
-    SQE_VAR->user_data = OP_VAR->id
-
-IOUring::Op* IOUring::EnqueueRead(int fd, uint16_t buf_gid, std::span<char> buf, bool repeat) {
+IOUring::Op* IOUring::AllocReadOp(int fd, uint16_t buf_gid, std::span<char> buf, bool repeat) {
     ALLOC_OP(kRead, op);
     op->fd = fd;
     op->buf_gid = buf_gid;
@@ -138,34 +148,16 @@ IOUring::Op* IOUring::EnqueueRead(int fd, uint16_t buf_gid, std::span<char> buf,
     op->buf = buf.data();
     op->buf_len = buf.size();
     RefFd(fd);
-    ALLOC_SQE(sqe, op);
-    io_uring_prep_read(sqe, fd, buf.data(), buf.size(), 0);
     read_ops_[fd] = op;
     return op;
 }
 
-IOUring::Op* IOUring::EnqueueWrite(int fd, std::span<const char> data) {
+IOUring::Op* IOUring::AllocWriteOp(int fd, std::span<const char> data) {
     ALLOC_OP(kWrite, op);
     op->fd = fd;
+    op->buf = const_cast<char*>(data.data());
+    op->buf_len = data.size();
     RefFd(fd);
-    ALLOC_SQE(sqe, op);
-    io_uring_prep_write(sqe, fd, data.data(), data.size(), 0);
-    return op;
-}
-
-IOUring::Op* IOUring::EnqueueClose(int fd) {
-    ALLOC_OP(kClose, op);
-    op->fd = fd;
-    RefFd(fd);
-    ALLOC_SQE(sqe, op);
-    io_uring_prep_close(sqe, fd);
-    return op;
-}
-
-IOUring::Op* IOUring::EnqueueCancel(uint64_t op_id) {
-    ALLOC_OP(kCancel, op);
-    ALLOC_SQE(sqe, op);
-    io_uring_prep_cancel(sqe, reinterpret_cast<void*>(op_id), 0);
     return op;
 }
 
@@ -178,13 +170,42 @@ IOUring::Op* IOUring::AllocSendAllOp(int fd, std::span<const char> data) {
     return op;
 }
 
-void IOUring::EnqueueSendAllOp(Op* op) {
-    ALLOC_SQE(sqe, op);
-    io_uring_prep_send(sqe, op->fd, op->buf, op->buf_len, 0);
+IOUring::Op* IOUring::AllocCloseOp(int fd) {
+    ALLOC_OP(kClose, op);
+    op->fd = fd;
+    RefFd(fd);
+    return op;
+}
+
+IOUring::Op* IOUring::AllocCancelOp(uint64_t op_id) {
+    ALLOC_OP(kCancel, op);
+    op->next_op = op_id;
+    return op;
 }
 
 #undef ALLOC_OP
-#undef ALLOC_SQE
+
+void IOUring::EnqueueOp(Op* op) {
+    struct io_uring_sqe* sqe = io_uring_get_sqe(&ring_);
+    sqe->user_data = op->id;
+    switch (op_type(op)) {
+    case kRead:
+        io_uring_prep_read(sqe, op->fd, op->buf, op->buf_len, 0);
+        break;
+    case kWrite:
+        io_uring_prep_write(sqe, op->fd, op->buf, op->buf_len, 0);
+        break;
+    case kSendAll:
+        io_uring_prep_send(sqe, op->fd, op->buf, op->buf_len, 0);
+        break;
+    case kClose:
+        io_uring_prep_close(sqe, op->fd);
+        break;
+    case kCancel:
+        io_uring_prep_cancel(sqe, reinterpret_cast<void*>(op->next_op), 0);
+        break;
+    }
+}
 
 void IOUring::OnOpComplete(Op* op, struct io_uring_cqe* cqe) {
     int res = cqe->res;
@@ -233,21 +254,24 @@ void IOUring::UnrefFd(int fd) {
 void IOUring::HandleReadOpComplete(Op* op, int res) {
     DCHECK_EQ(op_type(op), kRead);
     read_ops_.erase(op->fd);
-    bool return_buf = false;
-    DCHECK(read_cbs_.contains(op->fd));
+    DCHECK(read_cbs_.contains(op->id));
+    bool cb_ret = false;
     if (res >= 0) {
-        read_cbs_[op->fd](0, std::span<const char>(op->buf, res));
+        cb_ret = read_cbs_[op->id](0, std::span<const char>(op->buf, res));
     } else if (res != -ECANCELED) {
         errno = -res;
-        read_cbs_[op->fd](-1, std::span<const char>());
+        cb_ret = read_cbs_[op->id](-1, std::span<const char>());
     }
-    if (op->flags & kOpFlagRepeat) {
-        EnqueueRead(op->fd, op->buf_gid, std::span<char>(op->buf, op->buf_len), true);
+    if ((op->flags & kOpFlagRepeat) != 0
+            && (op->flags & kOpFlagCancelled) == 0
+            && res != 0
+            && cb_ret) {
+        Op* new_op = AllocReadOp(op->fd, op->buf_gid, std::span<char>(op->buf, op->buf_len), true);
+        read_cbs_[new_op->id] = std::move(read_cbs_[op->id]);
+        read_cbs_.erase(op->id);
+        EnqueueOp(new_op);
     } else {
-        read_cbs_.erase(op->fd);
-        return_buf = true;
-    }
-    if (return_buf) {
+        read_cbs_.erase(op->id);
         DCHECK(buf_pools_.contains(op->buf_gid));
         buf_pools_[op->buf_gid]->Return(op->buf);
     }
@@ -295,7 +319,7 @@ void IOUring::HandleSendallOpComplete(Op* op, int res) {
         }
     }
     if (new_op != nullptr) {
-        EnqueueSendAllOp(new_op);
+        EnqueueOp(new_op);
     }
 }
 

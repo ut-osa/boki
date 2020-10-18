@@ -127,17 +127,20 @@ void GatewayConnection::ProcessGatewayMessages() {
     }
 }
 
-void GatewayConnection::OnRecvData(int status, std::span<const char> data) {
+bool GatewayConnection::OnRecvData(int status, std::span<const char> data) {
     DCHECK(io_worker_->WithinMyEventLoopThread());
     if (status != 0) {
         HPLOG(ERROR) << "Read error, will close this connection";
         ScheduleClose();
+        return false;
     } else if (data.size() == 0) {
         HLOG(INFO) << "Connection closed remotely";
         ScheduleClose();
+        return false;
     } else {
         read_buffer_.AppendData(data);
         ProcessGatewayMessages();
+        return true;
     }
 }
 
