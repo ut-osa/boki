@@ -32,6 +32,30 @@ static bool FillTcp6SocketAddr(struct sockaddr_in6* addr, std::string_view ip, u
 }
 }
 
+int UnixDomainSocketBindAndListen(std::string_view path, int backlog) {
+    struct sockaddr_un addr;
+    if (!FillUnixSocketAddr(&addr, path)) {
+        LOG(ERROR) << "Failed to fill Unix socket path: " << path;
+        return -1;
+    }
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd == -1) {
+        PLOG(ERROR) << "Failed to create Unix socket";
+        return -1;
+    }
+    if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) != 0) {
+        PLOG(ERROR) << "Failed to bind to " << path;
+        close(fd);
+        return -1;
+    }
+    if (listen(fd, backlog) != 0) {
+        PLOG(ERROR) << "Failed to listen with backlog " << backlog;
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
+
 int UnixDomainSocketConnect(std::string_view path) {
     struct sockaddr_un addr;
     if (!FillUnixSocketAddr(&addr, path)) {

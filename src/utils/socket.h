@@ -8,6 +8,7 @@ namespace faas {
 namespace utils {
 
 // Return sockfd on success, and return -1 on error
+int UnixDomainSocketBindAndListen(std::string_view path, int backlog = 4);
 int UnixDomainSocketConnect(std::string_view path);
 int TcpSocketBindAndListen(std::string_view addr, uint16_t port, int backlog = 4);
 int TcpSocketConnect(std::string_view addr, uint16_t port);

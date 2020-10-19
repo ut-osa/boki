@@ -45,10 +45,8 @@ Engine::Engine()
       engine_tcp_port_(-1),
       func_worker_use_engine_socket_(absl::GetFlag(FLAGS_func_worker_use_engine_socket)),
       use_fifo_for_nested_call_(absl::GetFlag(FLAGS_use_fifo_for_nested_call)),
-      uv_handle_(nullptr),
-      next_gateway_conn_worker_id_(0),
+      server_sockfd_(-1),
       next_ipc_conn_worker_id_(0),
-      next_gateway_conn_id_(0),
       worker_manager_(new WorkerManager(this)),
       monitor_(absl::GetFlag(FLAGS_disable_monitor) ? nullptr : new Monitor(this)),
       tracer_(new Tracer(this)),
@@ -70,9 +68,6 @@ Engine::Engine()
 }
 
 Engine::~Engine() {
-    if (uv_handle_ != nullptr) {
-        free(uv_handle_);
-    }
 }
 
 void Engine::StartInternal() {
@@ -92,51 +87,49 @@ void Engine::StartInternal() {
     CHECK_GT(gateway_conn_per_worker_, 0);
     CHECK(!gateway_addr_.empty());
     CHECK_NE(gateway_port_, -1);
-    struct sockaddr_in addr;
-    if (!utils::FillTcpSocketAddr(&addr, gateway_addr_, gateway_port_)) {
-        HLOG(FATAL) << "Failed to fill socker address for " << gateway_addr_;
-    }
     int total_gateway_conn = num_io_workers_ * gateway_conn_per_worker_;
     for (int i = 0; i < total_gateway_conn; i++) {
-        uv_tcp_t* uv_handle = reinterpret_cast<uv_tcp_t*>(malloc(sizeof(uv_tcp_t)));
-        UV_CHECK_OK(uv_tcp_init(uv_loop(), uv_handle));
-        uv_handle->data = this;
-        uv_connect_t* req = reinterpret_cast<uv_connect_t*>(malloc(sizeof(uv_connect_t)));
-        UV_CHECK_OK(uv_tcp_connect(req, uv_handle, (const struct sockaddr *)&addr,
-                                   &Engine::GatewayConnectCallback));
+        int sockfd = utils::TcpSocketConnect(gateway_addr_, gateway_port_);
+        CHECK(sockfd != -1)
+            << fmt::format("Failed to connect to gateway {}:{}", gateway_addr_, gateway_port_);
+        std::shared_ptr<ConnectionBase> connection(
+            new GatewayConnection(this, gsl::narrow_cast<uint16_t>(i), sockfd));
+        IOWorker* io_worker = io_workers_[i % num_io_workers_];
+        RegisterConnection(io_worker, connection.get());
+        DCHECK_GE(connection->id(), 0);
+        DCHECK(!gateway_connections_.contains(connection->id()));
+        gateway_connections_[connection->id()] = std::move(connection);
     }
     // Listen on ipc_path
     if (engine_tcp_port_ == -1) {
-        uv_pipe_t* pipe_handle = reinterpret_cast<uv_pipe_t*>(malloc(sizeof(uv_pipe_t)));
-        UV_CHECK_OK(uv_pipe_init(uv_loop(), pipe_handle, 0));
-        pipe_handle->data = this;
         std::string ipc_path(ipc::GetEngineUnixSocketPath());
         if (fs_utils::Exists(ipc_path)) {
             PCHECK(fs_utils::Remove(ipc_path));
         }
-        UV_CHECK_OK(uv_pipe_bind(pipe_handle, ipc_path.c_str()));
+        server_sockfd_ = utils::UnixDomainSocketBindAndListen(ipc_path, listen_backlog_);
+        CHECK(server_sockfd_ != -1)
+            << fmt::format("Failed to listen on {}", ipc_path);
         HLOG(INFO) << fmt::format("Listen on {} for IPC connections", ipc_path);
-        uv_handle_ = UV_AS_STREAM(pipe_handle);
     } else {
-        uv_tcp_t* tcp_handle = reinterpret_cast<uv_tcp_t*>(malloc(sizeof(uv_tcp_t)));
-        UV_CHECK_OK(uv_tcp_init(uv_loop(), tcp_handle));
-        tcp_handle->data = this;
-        UV_CHECK_OK(uv_ip4_addr("0.0.0.0", engine_tcp_port_, &addr));
-        UV_CHECK_OK(uv_tcp_bind(tcp_handle, (const struct sockaddr *)&addr, 0));
+        server_sockfd_ = utils::TcpSocketBindAndListen(
+            "0.0.0.0", engine_tcp_port_, listen_backlog_);
+        CHECK(server_sockfd_ != -1)
+            << fmt::format("Failed to listen on 0.0.0.0:{}", engine_tcp_port_);
         HLOG(INFO) << fmt::format("Listen on 0.0.0.0:{} for IPC connections", engine_tcp_port_);
-        uv_handle_ = UV_AS_STREAM(tcp_handle);
     }
-    UV_CHECK_OK(uv_listen(uv_handle_, listen_backlog_, &Engine::MessageConnectionCallback));
+    ListenForNewConnections(server_sockfd_, absl::bind_front(&Engine::OnMessageConnection, this));
     // Initialize tracer
     tracer_->Init();
 }
 
 void Engine::StopInternal() {
-    uv_close(UV_AS_HANDLE(uv_handle_), nullptr);
+    if (server_sockfd_ != -1) {
+        PCHECK(close(server_sockfd_) == 0) << "Failed to close server fd";
+    }
 }
 
-void Engine::OnConnectionClose(server::ConnectionBase* connection) {
-    DCHECK_IN_EVENT_LOOP_THREAD(uv_loop());
+void Engine::OnConnectionClose(ConnectionBase* connection) {
+    DCHECK(WithinMyEventLoopThread());
     if (connection->type() == MessageConnection::kTypeId) {
         DCHECK(message_connections_.contains(connection->id()));
         MessageConnection* message_connection = connection->as_ptr<MessageConnection>();
@@ -380,9 +373,9 @@ void Engine::OnExternalFuncCall(const FuncCall& func_call, std::span<const char>
 void Engine::ExternalFuncCallCompleted(const protocol::FuncCall& func_call,
                                        std::span<const char> output, int32_t processing_time) {
     inflight_external_requests_.fetch_add(-1);
-    server::IOWorker* io_worker = server::IOWorker::current();
+    IOWorker* io_worker = IOWorker::current();
     DCHECK(io_worker != nullptr);
-    server::ConnectionBase* gateway_connection = io_worker->PickConnection(
+    ConnectionBase* gateway_connection = io_worker->PickConnection(
         GatewayConnection::kTypeId);
     if (gateway_connection == nullptr) {
         HLOG(ERROR) << "There is not GatewayConnection associated with current IOWorker";
@@ -395,9 +388,9 @@ void Engine::ExternalFuncCallCompleted(const protocol::FuncCall& func_call,
 
 void Engine::ExternalFuncCallFailed(const protocol::FuncCall& func_call, int status_code) {
     inflight_external_requests_.fetch_add(-1);
-    server::IOWorker* io_worker = server::IOWorker::current();
+    IOWorker* io_worker = IOWorker::current();
     DCHECK(io_worker != nullptr);
-    server::ConnectionBase* gateway_connection = io_worker->PickConnection(
+    ConnectionBase* gateway_connection = io_worker->PickConnection(
         GatewayConnection::kTypeId);
     if (gateway_connection == nullptr) {
         HLOG(ERROR) << "There is not GatewayConnection associated with current IOWorker";
@@ -478,54 +471,16 @@ void Engine::ProcessDiscardedFuncCallIfNecessary() {
     }
 }
 
-UV_CONNECT_CB_FOR_CLASS(Engine, GatewayConnect) {
-    uv_tcp_t* uv_handle = reinterpret_cast<uv_tcp_t*>(req->handle);
-    free(req);
-    if (status != 0) {
-        HLOG(WARNING) << "Failed to connect to gateway: " << uv_strerror(status);
-        uv_close(UV_AS_HANDLE(uv_handle), uv::HandleFreeCallback);
-        return;
-    }
-    uint16_t conn_id = next_gateway_conn_id_++;
-    std::shared_ptr<server::ConnectionBase> connection(new GatewayConnection(this, conn_id));
-    DCHECK_LT(next_gateway_conn_worker_id_, io_workers_.size());
-    HLOG(INFO) << fmt::format("New gateway connection (conn_id={}) assigned to IO worker {}",
-                              conn_id, next_gateway_conn_worker_id_);
-    server::IOWorker* io_worker = io_workers_[next_gateway_conn_worker_id_];
-    next_gateway_conn_worker_id_ = (next_gateway_conn_worker_id_ + 1) % io_workers_.size();
-    RegisterConnection(io_worker, connection.get(), UV_AS_STREAM(uv_handle));
-    DCHECK_GE(connection->id(), 0);
-    DCHECK(!gateway_connections_.contains(connection->id()));
-    gateway_connections_[connection->id()] = std::move(connection);
-}
-
-UV_CONNECTION_CB_FOR_CLASS(Engine, MessageConnection) {
-    if (status != 0) {
-        HLOG(WARNING) << "Failed to open message connection: " << uv_strerror(status);
-        return;
-    }
+void Engine::OnMessageConnection(int sockfd) {
     HLOG(INFO) << "New message connection";
-    std::shared_ptr<server::ConnectionBase> connection(new MessageConnection(this));
-    uv_stream_t* client;
-    if (engine_tcp_port_ == -1) {
-        client = UV_AS_STREAM(malloc(sizeof(uv_pipe_t)));
-        UV_DCHECK_OK(uv_pipe_init(uv_loop(), reinterpret_cast<uv_pipe_t*>(client), 0));
-    } else {
-        client = UV_AS_STREAM(malloc(sizeof(uv_tcp_t)));
-        UV_DCHECK_OK(uv_tcp_init(uv_loop(), reinterpret_cast<uv_tcp_t*>(client)));
-    }
-    if (uv_accept(uv_handle_, client) == 0) {
-        DCHECK_LT(next_ipc_conn_worker_id_, io_workers_.size());
-        server::IOWorker* io_worker = io_workers_[next_ipc_conn_worker_id_];
-        next_ipc_conn_worker_id_ = (next_ipc_conn_worker_id_ + 1) % io_workers_.size();
-        RegisterConnection(io_worker, connection.get(), client);
-        DCHECK_GE(connection->id(), 0);
-        DCHECK(!message_connections_.contains(connection->id()));
-        message_connections_[connection->id()] = std::move(connection);
-    } else {
-        LOG(ERROR) << "Failed to accept new message connection";
-        free(client);
-    }
+    std::shared_ptr<ConnectionBase> connection(new MessageConnection(this, sockfd));
+    DCHECK_LT(next_ipc_conn_worker_id_, io_workers_.size());
+    IOWorker* io_worker = io_workers_[next_ipc_conn_worker_id_];
+    next_ipc_conn_worker_id_ = (next_ipc_conn_worker_id_ + 1) % io_workers_.size();
+    RegisterConnection(io_worker, connection.get());
+    DCHECK_GE(connection->id(), 0);
+    DCHECK(!message_connections_.contains(connection->id()));
+    message_connections_[connection->id()] = std::move(connection);
 }
 
 }  // namespace engine
