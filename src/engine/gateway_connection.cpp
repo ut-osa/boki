@@ -1,5 +1,6 @@
 #include "engine/gateway_connection.h"
 
+#include "utils/socket.h"
 #include "engine/engine.h"
 
 #define HLOG(l) LOG(l) << log_header_
@@ -33,10 +34,10 @@ void GatewayConnection::Start(IOWorker* io_worker) {
     DCHECK(io_worker->WithinMyEventLoopThread());
     io_worker_ = io_worker;
     if (absl::GetFlag(FLAGS_gateway_conn_enable_nodelay)) {
-        // UV_DCHECK_OK(uv_tcp_nodelay(&uv_tcp_handle_, 1));
+        CHECK(utils::SetTcpSocketNoDelay(sockfd_));
     }
     if (absl::GetFlag(FLAGS_gateway_conn_enable_keepalive)) {
-        // UV_DCHECK_OK(uv_tcp_keepalive(&uv_tcp_handle_, 1, 1));
+        CHECK(utils::SetTcpSocketKeepAlive(sockfd_));
     }
     current_io_uring()->PrepareBuffers(kBufGroup, kBufSize);
     handshake_message_ = NewEngineHandshakeGatewayMessage(engine_->node_id(), conn_id_);

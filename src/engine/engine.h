@@ -1,7 +1,6 @@
 #pragma once
 
 #include "base/common.h"
-#include "common/uv.h"
 #include "common/protocol.h"
 #include "common/func_config.h"
 #include "ipc/shm_region.h"

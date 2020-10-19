@@ -4,6 +4,7 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <netinet/tcp.h>
 #include <netdb.h>
 
 namespace faas {
@@ -159,6 +160,26 @@ int Tcp6SocketConnect(std::string_view ip, uint16_t port) {
         return -1;
     }
     return fd;
+}
+
+bool SetTcpSocketNoDelay(int sockfd) {
+    int flag = 1;
+    if (setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY,
+                   reinterpret_cast<const void*>(&flag), sizeof(int)) != 0) {
+        PLOG(ERROR) << "Failed to set TCP_NODELAY";
+        return false;
+    }
+    return true;
+}
+
+bool SetTcpSocketKeepAlive(int sockfd) {
+    int flag = 1;
+    if (setsockopt(sockfd, IPPROTO_TCP, SO_KEEPALIVE,
+                   reinterpret_cast<const void*>(&flag), sizeof(int)) != 0) {
+        PLOG(ERROR) << "Failed to set TCP_KEEPALIVE";
+        return false;
+    }
+    return true;
 }
 
 bool FillTcpSocketAddr(struct sockaddr_in* addr, std::string_view host_or_ip, uint16_t port) {
