@@ -37,28 +37,36 @@ void IOWorker::Start(int pipe_to_server_fd) {
     eventfd_ = eventfd(0, 0);
     PCHECK(eventfd_ >= 0) << "Failed to create eventfd";
     io_uring_.PrepareBuffers(kEventFdBufGroup, 8);
-    io_uring_.StartRead(
-        eventfd_, kEventFdBufGroup, true,
+    DCHECK(io_uring_.StartRead(
+        eventfd_, kEventFdBufGroup,
         [this] (int status, std::span<const char> data) -> bool {
+            if (state_.load(std::memory_order_consume) != kRunning) {
+                return false;
+            }
             PCHECK(status == 0);
+            HVLOG(1) << "eventfd triggered";
             RunScheduledFunctions();
             return true;
         }
-    );
+    ));
     // Setup pipe to server for receiving connections
     pipe_to_server_fd_ = pipe_to_server_fd;
     io_uring_.PrepareBuffers(kServerPipeBufGroup, __FAAS_PTR_SIZE);
-    io_uring_.StartRead(
-        pipe_to_server_fd_, kServerPipeBufGroup, true,
+    DCHECK(io_uring_.StartRecv(
+        pipe_to_server_fd_, kServerPipeBufGroup,
         [this] (int status, std::span<const char> data) -> bool {
             PCHECK(status == 0);
+            if (data.size() == 0) {
+                HLOG(INFO) << "Pipe to server closed";
+                return false;
+            }
             CHECK_EQ(data.size(), static_cast<size_t>(__FAAS_PTR_SIZE));
             ConnectionBase* connection;
             memcpy(&connection, data.data(), __FAAS_PTR_SIZE);
             OnNewConnection(connection);
             return true;
         }
-    );
+    ));
     // Start event loop thread
     event_loop_thread_.Start();
     state_.store(kRunning);
@@ -97,7 +105,7 @@ void IOWorker::OnConnectionClose(ConnectionBase* connection) {
     memcpy(buf, &connection, __FAAS_PTR_SIZE);
     std::span<const char> data(buf, __FAAS_PTR_SIZE);
     connections_on_closing_++;
-    io_uring_.Write(
+    DCHECK(io_uring_.Write(
         pipe_to_server_fd_, data,
         [this] (int status, size_t nwrite) {
             PCHECK(status == 0);
@@ -109,12 +117,12 @@ void IOWorker::OnConnectionClose(ConnectionBase* connection) {
                     && connections_on_closing_ == 0) {
                 // We have returned all Connection objects to Server
                 HLOG(INFO) << "Close pipe to Server";
-                io_uring_.Close(pipe_to_server_fd_, [this] () {
+                DCHECK(io_uring_.Close(pipe_to_server_fd_, [this] () {
                     pipe_to_server_fd_ = -1;
-                });
+                }));
             }
         }
-    );
+    ));
 }
 
 void IOWorker::NewWriteBuffer(std::span<char>* buf) {
@@ -174,7 +182,7 @@ void IOWorker::ScheduleFunction(ConnectionBase* owner, std::function<void()> fn)
     absl::MutexLock lk(&scheduled_function_mu_);
     scheduled_functions_.push_back(std::move(function));
     DCHECK(eventfd_ >= 0);
-    eventfd_write(eventfd_, 1);
+    PCHECK(eventfd_write(eventfd_, 1) == 0) << "eventfd_write failed";
 }
 
 void IOWorker::OnNewConnection(ConnectionBase* connection) {
@@ -224,11 +232,14 @@ void IOWorker::StopInternal() {
         HLOG(WARNING) << "Already in stopping state";
         return;
     }
-    io_uring_.Close(eventfd_, [this] () { eventfd_ = -1; });
+    DCHECK(io_uring_.Close(eventfd_, [this] () { eventfd_ = -1; }));
+    DCHECK(io_uring_.StopReadOrRecv(pipe_to_server_fd_));
     HLOG(INFO) << "Start stopping process";
     if (connections_.empty() && connections_on_closing_ == 0) {
         HLOG(INFO) << "Close pipe to Server";
-        io_uring_.Close(pipe_to_server_fd_, [this] () { pipe_to_server_fd_ = -1; });
+        DCHECK(io_uring_.Close(pipe_to_server_fd_, [this] () {
+            pipe_to_server_fd_ = -1;
+        }));
     } else {
         for (const auto& entry : connections_) {
             ConnectionBase* connection = entry.second;

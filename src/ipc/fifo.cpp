@@ -3,11 +3,11 @@
 
 #include "ipc/base.h"
 #include "utils/fs.h"
+#include "utils/io.h"
 #include "common/time.h"
 
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <fcntl.h>
 #include <poll.h>
 
 namespace faas {
@@ -69,10 +69,7 @@ int FifoOpenForReadWrite(std::string_view name, bool nonblocking) {
 }
 
 void FifoUnsetNonblocking(int fd) {
-    int flags = fcntl(fd, F_GETFL, 0);
-    PCHECK(flags != -1) << "fcntl F_GETFL failed";
-    PCHECK(fcntl(fd, F_SETFL, flags & ~O_NONBLOCK) == 0)
-        << "fcntl F_SETFL failed";
+    io_utils::FdUnsetNonblocking(fd);
 }
 
 bool FifoPollForRead(int fd, int timeout_ms) {

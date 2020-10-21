@@ -37,8 +37,8 @@ void MessageConnection::Start(IOWorker* io_worker) {
     DCHECK(io_worker->WithinMyEventLoopThread());
     io_worker_ = io_worker;
     current_io_uring()->PrepareBuffers(kBufGroup, kBufSize);
-    DCHECK(current_io_uring()->StartRead(
-        sockfd_, kBufGroup, true,
+    DCHECK(current_io_uring()->StartRecv(
+        sockfd_, kBufGroup,
         [this] (int status, std::span<const char> data) -> bool {
             if (status != 0) {
                 HPLOG(ERROR) << "Read error on handshake, will close this connection";
@@ -72,11 +72,14 @@ void MessageConnection::ScheduleClose() {
         return;
     }
     DCHECK(state_ == kHandshake || state_ == kRunning);
+    HLOG(INFO) << "Start closing";
+    current_io_uring()->StopReadOrRecv(sockfd_);
     DCHECK(current_io_uring()->Close(sockfd_, [this] () {
         sockfd_ = -1;
         OnFdClosed();
     }));
     if (in_fifo_fd_ != -1) {
+        current_io_uring()->StopReadOrRecv(in_fifo_fd_);
         DCHECK(current_io_uring()->Close(in_fifo_fd_, [this] () {
             in_fifo_fd_ = -1;
             OnFdClosed();
@@ -180,7 +183,7 @@ void MessageConnection::RecvHandshakeMessage() {
             ScheduleClose();
             return;
         }
-        ipc::FifoUnsetNonblocking(out_fifo_fd_);
+        ipc::FifoUnsetNonblocking(in_fifo_fd_);
         pipe_for_write_fd_.store(out_fifo_fd_);
     }
     char* buf = reinterpret_cast<char*>(malloc(sizeof(Message) + payload.size()));
@@ -200,9 +203,15 @@ void MessageConnection::RecvHandshakeMessage() {
             handshake_done_ = true;
             state_ = kRunning;
             message_buffer_.Reset();
-            DCHECK(current_io_uring()->StartRead(
-                (in_fifo_fd_ == -1) ? sockfd_ : in_fifo_fd_, kBufGroup, true,
-                absl::bind_front(&MessageConnection::OnRecvData, this)));
+            if (in_fifo_fd_ != -1) {
+                DCHECK(current_io_uring()->StartRead(
+                    in_fifo_fd_, kBufGroup,
+                    absl::bind_front(&MessageConnection::OnRecvData, this)));
+            } else {
+                DCHECK(current_io_uring()->StartRecv(
+                    sockfd_, kBufGroup,
+                    absl::bind_front(&MessageConnection::OnRecvData, this)));
+            }
             SendPendingMessages();
         }
     ));

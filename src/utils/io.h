@@ -2,6 +2,9 @@
 
 #include "base/common.h"
 
+#include <sys/types.h>
+#include <fcntl.h>
+
 namespace faas {
 namespace io_utils {
 
@@ -91,6 +94,20 @@ inline bool RecvData(int fd, char* buffer, size_t size, bool* eof) {
         pos += nread;
     }
     return true;
+}
+
+inline void FdSetNonblocking(int fd) {
+    int flags = fcntl(fd, F_GETFL, 0);
+    PCHECK(flags != -1) << "fcntl F_GETFL failed";
+    PCHECK(fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0)
+        << "fcntl F_SETFL failed";
+}
+
+inline void FdUnsetNonblocking(int fd) {
+    int flags = fcntl(fd, F_GETFL, 0);
+    PCHECK(flags != -1) << "fcntl F_GETFL failed";
+    PCHECK(fcntl(fd, F_SETFL, flags & ~O_NONBLOCK) == 0)
+        << "fcntl F_SETFL failed";
 }
 
 }  // namespace io_utils

@@ -109,7 +109,7 @@ private:
     void StopInternal() override;
     void OnConnectionClose(ConnectionBase* connection) override;
 
-    void OnMessageConnection(int sockfd);
+    void OnNewMessageConnection(int sockfd);
 
     void OnExternalFuncCall(const protocol::FuncCall& func_call, std::span<const char> input);
     void ExternalFuncCallCompleted(const protocol::FuncCall& func_call,

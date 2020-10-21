@@ -17,8 +17,9 @@ public:
     void PrepareBuffers(uint16_t gid, size_t buf_size);
 
     typedef std::function<bool(int /* status */, std::span<const char> /* data */)> ReadCallback;
-    bool StartRead(int fd, uint16_t buf_gid, bool repeat, ReadCallback cb);
-    bool StopRead(int fd);
+    bool StartRead(int fd, uint16_t buf_gid, ReadCallback cb);
+    bool StartRecv(int fd, uint16_t buf_gid, ReadCallback cb);
+    bool StopReadOrRecv(int fd);
 
     // Partial write may happen. The caller is responsible for handling partial writes.
     typedef std::function<void(int /* status */, size_t /* nwrite */)> WriteCallback;
@@ -43,7 +44,8 @@ private:
     enum OpType { kRead, kWrite, kSendAll, kClose, kCancel };
     enum {
         kOpFlagRepeat    = 1 << 0,
-        kOpFlagCancelled = 1 << 1,
+        kOpFlagUseRecv   = 1 << 1,
+        kOpFlagCancelled = 1 << 2,
     };
     static constexpr uint64_t kInvalidOpId = ~0ULL;
     static constexpr int kInvalidFd = -1;
@@ -70,7 +72,9 @@ private:
 
     inline OpType op_type(const Op* op) { return gsl::narrow_cast<OpType>(op->id & 0xff); }
 
-    Op* AllocReadOp(int fd, uint16_t buf_gid, std::span<char> buf, bool repeat);
+    bool StartReadInternal(int fd, uint16_t buf_gid, uint16_t flags, ReadCallback cb);
+
+    Op* AllocReadOp(int fd, uint16_t buf_gid, std::span<char> buf, uint16_t flags);
     Op* AllocWriteOp(int fd, std::span<const char> data);
     Op* AllocSendAllOp(int fd, std::span<const char> data);
     Op* AllocCloseOp(int fd);

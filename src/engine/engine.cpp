@@ -117,7 +117,8 @@ void Engine::StartInternal() {
             << fmt::format("Failed to listen on 0.0.0.0:{}", engine_tcp_port_);
         HLOG(INFO) << fmt::format("Listen on 0.0.0.0:{} for IPC connections", engine_tcp_port_);
     }
-    ListenForNewConnections(server_sockfd_, absl::bind_front(&Engine::OnMessageConnection, this));
+    ListenForNewConnections(server_sockfd_,
+                            absl::bind_front(&Engine::OnNewMessageConnection, this));
     // Initialize tracer
     tracer_->Init();
 }
@@ -471,7 +472,7 @@ void Engine::ProcessDiscardedFuncCallIfNecessary() {
     }
 }
 
-void Engine::OnMessageConnection(int sockfd) {
+void Engine::OnNewMessageConnection(int sockfd) {
     HLOG(INFO) << "New message connection";
     std::shared_ptr<ConnectionBase> connection(new MessageConnection(this, sockfd));
     DCHECK_LT(next_ipc_conn_worker_id_, io_workers_.size());

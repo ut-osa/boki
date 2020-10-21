@@ -1,5 +1,7 @@
 #include "engine/server_base.h"
 
+#include "utils/io.h"
+
 #include <sys/types.h>
 #include <sys/eventfd.h>
 #include <fcntl.h>
@@ -34,14 +36,14 @@ void ServerBase::Start() {
 void ServerBase::ScheduleStop() {
     HLOG(INFO) << "Scheduled to stop";
     DCHECK(stop_eventfd_ >= 0);
-    eventfd_write(stop_eventfd_, 1);
+    PCHECK(eventfd_write(stop_eventfd_, 1) == 0) << "eventfd_write failed";
 }
 
 void ServerBase::WaitForFinish() {
     DCHECK(state_.load() != kCreated);
-    for (const auto& io_worker : io_workers_) {
-        io_worker->WaitForFinish();
-    }
+    // for (const auto& io_worker : io_workers_) {
+    //     io_worker->WaitForFinish();
+    // }
     event_loop_thread_.Join();
     DCHECK(state_.load() == kStopped);
     HLOG(INFO) << "Stopped";
@@ -55,16 +57,17 @@ void ServerBase::EventLoopThreadMain() {
     std::vector<struct pollfd> pollfds;
     // Add stop_eventfd_
     pollfds.push_back({ .fd = stop_eventfd_, .events = POLLIN, .revents = 0 });
+    // Add all pipe fds to workers
+    for (const auto& item : pipes_to_io_worker_) {
+        pollfds.push_back({ .fd = item.second, .events = POLLIN, .revents = 0 });
+    }
     // Add all fds registered with ListenForNewConnections
     for (const auto& item : connection_cbs_) {
         pollfds.push_back({ .fd = item.first, .events = POLLIN, .revents = 0 });
     }
-    // Add all pipe fds to workers
-    for (const auto& item : pipes_to_io_worker_) {
-        pollfds.push_back({ .fd = item.second, .events = POLLOUT, .revents = 0 });
-    }
     HLOG(INFO) << "Event loop starts";
-    while (true) {
+    bool stopped = false;
+    while (!stopped) {
         int ret = poll(pollfds.data(), pollfds.size(), /* timeout= */ -1);
         PCHECK(ret >= 0) << "poll failed";
         for (const auto& item : pollfds) {
@@ -74,15 +77,17 @@ void ServerBase::EventLoopThreadMain() {
             CHECK((item.revents & POLLNVAL) == 0) << fmt::format("Invalid fd {}", item.fd);
             if ((item.revents & POLLERR) != 0 || (item.revents & POLLHUP) != 0) {
                 if (connection_cbs_.contains(item.fd)) {
-                    LOG(ERROR) << fmt::format("Error happens on server fd {}", item.fd);
+                    HLOG(ERROR) << fmt::format("Error happens on server fd {}", item.fd);
                 } else {
-                    LOG(FATAL) << fmt::format("Error happens on fd {}", item.fd);
+                    HLOG(FATAL) << fmt::format("Error happens on fd {}", item.fd);
                 }
-                continue;
             } else if (item.revents & POLLIN) {
                 if (item.fd == stop_eventfd_) {
                     HLOG(INFO) << "Receive stop event";
+                    uint64_t value;
+                    PCHECK(eventfd_read(stop_eventfd_, &value) == 0) << "eventfd_read failed";
                     DoStop();
+                    stopped = true;
                     break;
                 } else if (connection_cbs_.contains(item.fd)) {
                     DoAcceptConnection(item.fd);
@@ -90,7 +95,7 @@ void ServerBase::EventLoopThreadMain() {
                     DoReadClosedConnection(item.fd);
                 }
             } else {
-                LOG(FATAL) << "Unreachable";
+                HLOG(FATAL) << "Unreachable";
             }
         }
     }
@@ -113,7 +118,6 @@ IOWorker* ServerBase::CreateIOWorker(std::string_view worker_name, size_t write_
 }
 
 void ServerBase::RegisterConnection(IOWorker* io_worker, ConnectionBase* connection) {
-    DCHECK(WithinMyEventLoopThread());
     connection->set_id(next_connection_id_++);
     DCHECK(pipes_to_io_worker_.contains(io_worker));
     int pipe_to_worker = pipes_to_io_worker_[io_worker];
@@ -127,11 +131,7 @@ void ServerBase::RegisterConnection(IOWorker* io_worker, ConnectionBase* connect
 
 void ServerBase::ListenForNewConnections(int server_sockfd, ConnectionCallback cb) {
     DCHECK(state_.load() == kCreated);
-    // Set server_sockfd to O_NONBLOCK
-    int flags = fcntl(server_sockfd, F_GETFL, 0);
-    PCHECK(flags != -1) << "fcntl F_GETFL failed";
-    PCHECK(fcntl(server_sockfd, F_SETFL, flags & ~O_NONBLOCK) == 0)
-        << "fcntl F_SETFL failed";
+    io_utils::FdSetNonblocking(server_sockfd);
     connection_cbs_[server_sockfd] = cb;
 }
 
@@ -144,9 +144,13 @@ void ServerBase::DoStop() {
     HLOG(INFO) << "Start stopping process";
     for (const auto& io_worker : io_workers_) {
         io_worker->ScheduleStop();
+    }
+    for (const auto& io_worker : io_workers_) {
+        io_worker->WaitForFinish();
         int pipefd = pipes_to_io_worker_[io_worker.get()];
         PCHECK(close(pipefd) == 0) << "Failed to close pipe to IOWorker";
     }
+    HLOG(INFO) << "All IOWorker finish";
     StopInternal();
     state_.store(kStopping);
 }
@@ -172,7 +176,7 @@ void ServerBase::DoAcceptConnection(int server_sockfd) {
     DCHECK(WithinMyEventLoopThread());
     DCHECK(connection_cbs_.contains(server_sockfd));
     while (true) {
-        int client_sockfd = accept4(server_sockfd, nullptr, nullptr, SOCK_NONBLOCK);
+        int client_sockfd = accept4(server_sockfd, nullptr, nullptr, 0);
         if (client_sockfd < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 break;

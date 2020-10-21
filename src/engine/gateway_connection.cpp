@@ -41,7 +41,7 @@ void GatewayConnection::Start(IOWorker* io_worker) {
     }
     current_io_uring()->PrepareBuffers(kBufGroup, kBufSize);
     handshake_message_ = NewEngineHandshakeGatewayMessage(engine_->node_id(), conn_id_);
-    current_io_uring()->SendAll(
+    DCHECK(current_io_uring()->SendAll(
         sockfd_, std::span<const char>(reinterpret_cast<const char*>(&handshake_message_),
                                        sizeof(GatewayMessage)),
         [this] (int status) {
@@ -50,12 +50,12 @@ void GatewayConnection::Start(IOWorker* io_worker) {
             } else {
                 HLOG(INFO) << "Handshake done";
                 state_ = kRunning;
-                current_io_uring()->StartRead(
-                    sockfd_, kBufGroup, true,
-                    absl::bind_front(&GatewayConnection::OnRecvData, this));
+                DCHECK(current_io_uring()->StartRecv(
+                    sockfd_, kBufGroup,
+                    absl::bind_front(&GatewayConnection::OnRecvData, this)));
             }
         }
-    );
+    ));
     state_ = kHandshake;
 }
 
@@ -66,11 +66,12 @@ void GatewayConnection::ScheduleClose() {
         return;
     }
     DCHECK(state_ == kHandshake || state_ == kRunning);
-    current_io_uring()->Close(sockfd_, [this] () {
+    current_io_uring()->StopReadOrRecv(sockfd_);
+    DCHECK(current_io_uring()->Close(sockfd_, [this] () {
         DCHECK(state_ == kClosing);
         state_ = kClosed;
         io_worker_->OnConnectionClose(this);
-    });
+    }));
     state_ = kClosing;
 }
 
@@ -98,7 +99,7 @@ void GatewayConnection::SendMessage(const GatewayMessage& message, std::span<con
             write_size = copy_size;
         }
         DCHECK_LE(write_size, buf.size());
-        current_io_uring()->SendAll(
+        DCHECK(current_io_uring()->SendAll(
             sockfd_, std::span<const char>(buf.data(), write_size),
             [this, buf] (int status) {
                 io_worker_->ReturnWriteBuffer(buf);
@@ -107,7 +108,7 @@ void GatewayConnection::SendMessage(const GatewayMessage& message, std::span<con
                     ScheduleClose();
                 }
             }
-        );
+        ));
         pos += write_size;
     }
 }
