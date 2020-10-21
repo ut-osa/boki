@@ -118,7 +118,11 @@ bool IOUring::Close(int fd, CloseCallback cb) {
 }
 
 void IOUring::EventLoopRunOnce(int* inflight_ops) {
-    io_uring_submit_and_wait(&ring_, 1);
+    int ret = io_uring_submit_and_wait(&ring_, 1);
+    if (ret < 0) {
+        LOG(FATAL) << fmt::format("io_uring_submit_and_wait failed: {} [{}]",
+                                  strerror(-ret), -ret);
+    }
     struct io_uring_cqe* cqe;
     unsigned head;
     unsigned count = 0;

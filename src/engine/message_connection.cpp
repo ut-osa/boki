@@ -37,7 +37,7 @@ void MessageConnection::Start(IOWorker* io_worker) {
     DCHECK(io_worker->WithinMyEventLoopThread());
     io_worker_ = io_worker;
     current_io_uring()->PrepareBuffers(kBufGroup, kBufSize);
-    DCHECK(current_io_uring()->StartRecv(
+    URING_DCHECK_OK(current_io_uring()->StartRecv(
         sockfd_, kBufGroup,
         [this] (int status, std::span<const char> data) -> bool {
             if (status != 0) {
@@ -74,19 +74,19 @@ void MessageConnection::ScheduleClose() {
     DCHECK(state_ == kHandshake || state_ == kRunning);
     HLOG(INFO) << "Start closing";
     current_io_uring()->StopReadOrRecv(sockfd_);
-    DCHECK(current_io_uring()->Close(sockfd_, [this] () {
+    URING_DCHECK_OK(current_io_uring()->Close(sockfd_, [this] () {
         sockfd_ = -1;
         OnFdClosed();
     }));
     if (in_fifo_fd_ != -1) {
         current_io_uring()->StopReadOrRecv(in_fifo_fd_);
-        DCHECK(current_io_uring()->Close(in_fifo_fd_, [this] () {
+        URING_DCHECK_OK(current_io_uring()->Close(in_fifo_fd_, [this] () {
             in_fifo_fd_ = -1;
             OnFdClosed();
         }));
     }
     if (out_fifo_fd_ != -1) {
-        DCHECK(current_io_uring()->Close(out_fifo_fd_, [this] () {
+        URING_DCHECK_OK(current_io_uring()->Close(out_fifo_fd_, [this] () {
             out_fifo_fd_ = -1;
             pipe_for_write_fd_.store(-1);
             OnFdClosed();
@@ -124,13 +124,15 @@ void MessageConnection::SendPendingMessages() {
         const char* ptr = write_message_buffer_.data() + i * sizeof(Message);
         if (out_fifo_fd_ != -1) {
             const Message* message = reinterpret_cast<const Message*>(ptr);
-            DCHECK(WriteMessageWithFifo(*message));
+            if (!WriteMessageWithFifo(*message)) {
+                HLOG(FATAL) << "WriteMessageWithFifo failed";
+            }
         } else {
             std::span<char> buf;
             io_worker_->NewWriteBuffer(&buf);
             CHECK_GE(buf.size(), sizeof(Message));
             memcpy(buf.data(), ptr, sizeof(Message));
-            DCHECK(current_io_uring()->SendAll(
+            URING_DCHECK_OK(current_io_uring()->SendAll(
                 sockfd_, std::span<const char>(buf.data(), sizeof(Message)),
                 [this, buf] (int status) {
                     io_worker_->ReturnWriteBuffer(buf);
@@ -183,7 +185,7 @@ void MessageConnection::RecvHandshakeMessage() {
             ScheduleClose();
             return;
         }
-        ipc::FifoUnsetNonblocking(in_fifo_fd_);
+        ipc::FifoUnsetNonblocking(out_fifo_fd_);
         pipe_for_write_fd_.store(out_fifo_fd_);
     }
     char* buf = reinterpret_cast<char*>(malloc(sizeof(Message) + payload.size()));
@@ -191,7 +193,7 @@ void MessageConnection::RecvHandshakeMessage() {
     if (payload.size() > 0) {
         memcpy(buf + sizeof(Message), payload.data(), payload.size());
     }
-    DCHECK(current_io_uring()->SendAll(
+    URING_DCHECK_OK(current_io_uring()->SendAll(
         sockfd_, std::span<const char>(buf, sizeof(Message) + payload.size()),
         [this, buf] (int status) {
             free(buf);
@@ -204,11 +206,12 @@ void MessageConnection::RecvHandshakeMessage() {
             state_ = kRunning;
             message_buffer_.Reset();
             if (in_fifo_fd_ != -1) {
-                DCHECK(current_io_uring()->StartRead(
+                ipc::FifoUnsetNonblocking(in_fifo_fd_);
+                URING_DCHECK_OK(current_io_uring()->StartRead(
                     in_fifo_fd_, kBufGroup,
                     absl::bind_front(&MessageConnection::OnRecvData, this)));
             } else {
-                DCHECK(current_io_uring()->StartRecv(
+                URING_DCHECK_OK(current_io_uring()->StartRecv(
                     sockfd_, kBufGroup,
                     absl::bind_front(&MessageConnection::OnRecvData, this)));
             }
@@ -218,7 +221,8 @@ void MessageConnection::RecvHandshakeMessage() {
 }
 
 void MessageConnection::WriteMessage(const Message& message) {
-    if (absl::GetFlag(FLAGS_func_worker_pipe_direct_write)
+    if (is_func_worker_connection()
+            && absl::GetFlag(FLAGS_func_worker_pipe_direct_write)
             && WriteMessageWithFifo(message)) {
         return;
     }
@@ -237,9 +241,13 @@ bool MessageConnection::OnRecvData(int status, std::span<const char> data) {
         return false;
     }
     if (data.size() == 0) {
-        HLOG(INFO) << "Connection closed remotely";
-        ScheduleClose();
-        return false;
+        if (in_fifo_fd_ == -1) {
+            HLOG(INFO) << "Connection closed remotely";
+            ScheduleClose();
+            return false;
+        } else {
+            return true;
+        }
     }
     utils::ReadMessages<Message>(
         &message_buffer_, data.data(), data.size(),
@@ -260,12 +268,10 @@ bool MessageConnection::WriteMessageWithFifo(const protocol::Message& message) {
     }
     std::span<char> buf;
     current->NewWriteBuffer(&buf);
-    io_worker_->NewWriteBuffer(&buf);
     CHECK_GE(buf.size(), sizeof(Message));
     memcpy(buf.data(), &message, sizeof(Message));
-    std::span<const char> data(buf.data(), sizeof(Message));
-    DCHECK(current->io_uring()->Write(
-        fd, data,
+    URING_DCHECK_OK(current->io_uring()->Write(
+        fd, std::span<const char>(buf.data(), sizeof(Message)),
         [this, current, buf] (int status, size_t nwrite) {
             current->ReturnWriteBuffer(buf);
             if (status != 0) {

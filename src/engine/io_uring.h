@@ -57,8 +57,7 @@ private:
         char*    buf;        // Used by kRead, kWrite, kSendAll
         size_t   buf_len;    // Used by kRead, kWrite, kSendAll
         uint64_t next_op;    // Used by kSendAll
-    } __attribute__ ((packed));
-    static_assert(sizeof(Op) == 40, "Unexpected Op size");
+    };
 
     uint64_t next_op_id_;
     utils::SimpleObjectPool<Op> op_pool_;
@@ -91,6 +90,18 @@ private:
 
     DISALLOW_COPY_AND_ASSIGN(IOUring);
 };
+
+#define URING_CHECK_OK(URING_CALL)                    \
+    do {                                              \
+        bool ret = URING_CALL;                        \
+        LOG_IF(FATAL, ret) << "IOUring call failed";  \
+    } while (0)
+
+#define URING_DCHECK_OK(URING_CALL)                   \
+    do {                                              \
+        bool ret = URING_CALL;                        \
+        DLOG_IF(FATAL, ret) << "IOUring call failed"; \
+    } while (0)
 
 }  // namespace engine
 }  // namespace faas

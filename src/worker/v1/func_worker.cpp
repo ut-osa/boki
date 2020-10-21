@@ -97,7 +97,7 @@ void FuncWorker::MainServingLoop() {
 
     while (true) {
         Message message;
-        CHECK(io_utils::RecvMessage(input_pipe_fd_, &message, nullptr))
+        PCHECK(io_utils::RecvMessage(input_pipe_fd_, &message, nullptr))
             << "Failed to receive message from engine";
         if (IsDispatchFuncCallMessage(message)) {
             ExecuteFunc(message);
@@ -129,6 +129,7 @@ void FuncWorker::HandshakeWithEngine() {
         output_pipe_fd_ = engine_sock_fd_;
     } else {
         output_pipe_fd_ = ipc::FifoOpenForWrite(ipc::GetFuncWorkerOutputFifoName(client_id_));
+        CHECK(engine_sock_fd_ != -1) << "Failed to open output pipe";
     }
     if (response.flags & protocol::kUseFifoForNestedCallFlag) {
         LOG(INFO) << "Use extra FIFOs for handling nested call";

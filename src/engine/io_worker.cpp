@@ -37,7 +37,7 @@ void IOWorker::Start(int pipe_to_server_fd) {
     eventfd_ = eventfd(0, 0);
     PCHECK(eventfd_ >= 0) << "Failed to create eventfd";
     io_uring_.PrepareBuffers(kEventFdBufGroup, 8);
-    DCHECK(io_uring_.StartRead(
+    URING_DCHECK_OK(io_uring_.StartRead(
         eventfd_, kEventFdBufGroup,
         [this] (int status, std::span<const char> data) -> bool {
             if (state_.load(std::memory_order_consume) != kRunning) {
@@ -52,7 +52,7 @@ void IOWorker::Start(int pipe_to_server_fd) {
     // Setup pipe to server for receiving connections
     pipe_to_server_fd_ = pipe_to_server_fd;
     io_uring_.PrepareBuffers(kServerPipeBufGroup, __FAAS_PTR_SIZE);
-    DCHECK(io_uring_.StartRecv(
+    URING_DCHECK_OK(io_uring_.StartRecv(
         pipe_to_server_fd_, kServerPipeBufGroup,
         [this] (int status, std::span<const char> data) -> bool {
             PCHECK(status == 0);
@@ -105,7 +105,7 @@ void IOWorker::OnConnectionClose(ConnectionBase* connection) {
     memcpy(buf, &connection, __FAAS_PTR_SIZE);
     std::span<const char> data(buf, __FAAS_PTR_SIZE);
     connections_on_closing_++;
-    DCHECK(io_uring_.Write(
+    URING_DCHECK_OK(io_uring_.Write(
         pipe_to_server_fd_, data,
         [this] (int status, size_t nwrite) {
             PCHECK(status == 0);
@@ -117,7 +117,7 @@ void IOWorker::OnConnectionClose(ConnectionBase* connection) {
                     && connections_on_closing_ == 0) {
                 // We have returned all Connection objects to Server
                 HLOG(INFO) << "Close pipe to Server";
-                DCHECK(io_uring_.Close(pipe_to_server_fd_, [this] () {
+                URING_DCHECK_OK(io_uring_.Close(pipe_to_server_fd_, [this] () {
                     pipe_to_server_fd_ = -1;
                 }));
             }
@@ -232,12 +232,12 @@ void IOWorker::StopInternal() {
         HLOG(WARNING) << "Already in stopping state";
         return;
     }
-    DCHECK(io_uring_.Close(eventfd_, [this] () { eventfd_ = -1; }));
-    DCHECK(io_uring_.StopReadOrRecv(pipe_to_server_fd_));
+    URING_DCHECK_OK(io_uring_.Close(eventfd_, [this] () { eventfd_ = -1; }));
+    URING_DCHECK_OK(io_uring_.StopReadOrRecv(pipe_to_server_fd_));
     HLOG(INFO) << "Start stopping process";
     if (connections_.empty() && connections_on_closing_ == 0) {
         HLOG(INFO) << "Close pipe to Server";
-        DCHECK(io_uring_.Close(pipe_to_server_fd_, [this] () {
+        URING_DCHECK_OK(io_uring_.Close(pipe_to_server_fd_, [this] () {
             pipe_to_server_fd_ = -1;
         }));
     } else {
