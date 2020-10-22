@@ -1,19 +1,44 @@
 #include "engine/io_uring.h"
 
+#include <absl/flags/flag.h>
+
+ABSL_FLAG(int, io_uring_cq_nr_wait, 1, "");
+ABSL_FLAG(int, io_uring_cq_wait_timeout_us, 0, "");
+
+#define ERRNO_LOGSTR(errno) fmt::format("{} [{}]", strerror(errno), errno)
+
 namespace faas {
 namespace engine {
 
-IOUring::IOUring(int entries) : next_op_id_(1) {
+std::atomic<int> IOUring::next_uring_id_{0};
+
+IOUring::IOUring(int entries)
+    : uring_id_(next_uring_id_.fetch_add(1)),
+      next_op_id_(1),
+      ev_loop_counter_(
+          stat::Counter::StandardReportCallback(
+              fmt::format("io_uring[{}] ev_loop", uring_id_))),
+      wait_timeout_counter_(
+          stat::Counter::StandardReportCallback(
+              fmt::format("io_uring[{}] wait_timeout", uring_id_))),
+      completed_ops_counter_(
+          stat::Counter::StandardReportCallback(
+              fmt::format("io_uring[{}] completed_ops", uring_id_))),
+      completed_ops_stat_(
+          stat::StatisticsCollector<int>::StandardReportCallback(
+              fmt::format("io_uring[{}] completed_ops", uring_id_))) {
     struct io_uring_params params;
     memset(&params, 0, sizeof(params));
     PCHECK(io_uring_queue_init_params(entries, &ring_, &params) == 0)
         << "io_uring init failed";
-    PCHECK((params.features & IORING_FEAT_FAST_POLL) != 0)
+    CHECK((params.features & IORING_FEAT_FAST_POLL) != 0)
         << "IORING_FEAT_FAST_POLL not supported";
-    struct io_uring_probe* probe = io_uring_get_probe_ring(&ring_);
-    PCHECK(probe != nullptr && io_uring_opcode_supported(probe, IORING_OP_PROVIDE_BUFFERS))
-        << "Buffer selection is not supported";
-    free(probe);
+    memset(&cqe_wait_timeout, 0, sizeof(cqe_wait_timeout));
+    int wait_timeout_us = absl::GetFlag(FLAGS_io_uring_cq_wait_timeout_us);
+    if (wait_timeout_us != 0) {
+        cqe_wait_timeout.tv_sec = wait_timeout_us / 1000000;
+        cqe_wait_timeout.tv_nsec = int64_t{wait_timeout_us % 1000000} * 1000;
+    }
 }
 
 IOUring::~IOUring() {
@@ -25,7 +50,8 @@ void IOUring::PrepareBuffers(uint16_t gid, size_t buf_size) {
     if (buf_pools_.contains(gid)) {
         return;
     }
-    buf_pools_[gid] = std::make_unique<utils::BufferPool>(fmt::format("IOUring-{}", gid), buf_size);
+    buf_pools_[gid] = std::make_unique<utils::BufferPool>(
+        fmt::format("IOUring[{}]-{}", uring_id_, gid), buf_size);
 }
 
 bool IOUring::StartReadInternal(int fd, uint16_t buf_gid, uint16_t flags, ReadCallback cb) {
@@ -118,24 +144,50 @@ bool IOUring::Close(int fd, CloseCallback cb) {
 }
 
 void IOUring::EventLoopRunOnce(int* inflight_ops) {
-    int ret = io_uring_submit_and_wait(&ring_, 1);
-    if (ret < 0) {
-        LOG(FATAL) << fmt::format("io_uring_submit_and_wait failed: {} [{}]",
-                                  strerror(-ret), -ret);
+    struct io_uring_cqe* cqe = nullptr;
+    int nr_wait = absl::GetFlag(FLAGS_io_uring_cq_nr_wait);
+    if (absl::GetFlag(FLAGS_io_uring_cq_wait_timeout_us) == 0) {
+        int ret = io_uring_submit_and_wait(&ring_, nr_wait);
+        if (ret < 0) {
+            LOG(FATAL) << "io_uring_submit_and_wait failed: " << ERRNO_LOGSTR(-ret);
+        }
+    } else {
+        int ret = io_uring_wait_cqes(&ring_, &cqe, nr_wait, &cqe_wait_timeout, nullptr);
+        if (ret < 0) {
+            if (ret == -ETIME) {
+                wait_timeout_counter_.Tick();
+            } else {
+                LOG(FATAL) << "io_uring_wait_cqes failed: " << ERRNO_LOGSTR(-ret);
+            }
+        }
     }
-    struct io_uring_cqe* cqe;
-    unsigned head;
-    unsigned count = 0;
-    io_uring_for_each_cqe(&ring_, head, cqe) {
-        count++;
-        uint64_t op_id = cqe->user_data;
+    ev_loop_counter_.Tick();
+    int count = 0;
+    while (true) {
+        cqe = nullptr;
+        int ret = io_uring_peek_cqe(&ring_, &cqe);
+        if (ret != 0) {
+            if (ret == -ETIME) {
+                continue;
+            } else if (ret == -EAGAIN) {
+                break;
+            } else {
+                LOG(FATAL) << "io_uring_peek_cqe failed: " << ERRNO_LOGSTR(-ret);
+            }
+        }
+        uint64_t op_id = DCHECK_NOTNULL(cqe)->user_data;
         DCHECK(ops_.contains(op_id));
         Op* op = ops_[op_id];
         ops_.erase(op_id);
         OnOpComplete(op, cqe);
         op_pool_.Return(op);
+        io_uring_cqe_seen(&ring_, cqe);
+        count++;
     }
-    io_uring_cq_advance(&ring_, count);
+    if (count > 0) {
+        completed_ops_counter_.Tick(count);
+        completed_ops_stat_.AddSample(gsl::narrow_cast<int>(count));
+    }
 #if DCHECK_IS_ON()
     VLOG(1) << "Inflight ops:";
     for (const auto& item : ops_) {
@@ -248,8 +300,7 @@ void IOUring::OnOpComplete(Op* op, struct io_uring_cqe* cqe) {
     case kClose:
         // Close callback will be called in UnrefFd
         if (res < 0) {
-            LOG(ERROR) << fmt::format("Failed to close fd {}: {} [{}]",
-                                      op->fd, strerror(-res), -res);
+            LOG(ERROR) << fmt::format("Failed to close fd {}: ", op->fd) << ERRNO_LOGSTR(-res);
         }
         break;
     case kCancel:

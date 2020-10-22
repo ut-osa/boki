@@ -1,6 +1,7 @@
 #pragma once
 
 #include "base/common.h"
+#include "common/stat.h"
 #include "utils/object_pool.h"
 #include "utils/buffer_pool.h"
 
@@ -36,7 +37,10 @@ public:
     void EventLoopRunOnce(int* inflight_ops);
 
 private:
+    int uring_id_;
+    static std::atomic<int> next_uring_id_;
     struct io_uring ring_;
+    struct __kernel_timespec cqe_wait_timeout;
 
     absl::flat_hash_map</* gid */ uint16_t, std::unique_ptr<utils::BufferPool>> buf_pools_;
     absl::flat_hash_map</* fd */ int, int> ref_counts_;
@@ -68,6 +72,11 @@ private:
     absl::flat_hash_map</* op_id */ uint64_t, SendAllCallback> sendall_cbs_;
     absl::flat_hash_map</* fd */ int, Op*> last_send_op_;
     absl::flat_hash_map</* fd */ int, CloseCallback> close_cbs_;
+
+    stat::Counter ev_loop_counter_;
+    stat::Counter wait_timeout_counter_;
+    stat::Counter completed_ops_counter_;
+    stat::StatisticsCollector<int> completed_ops_stat_;
 
     inline OpType op_type(const Op* op) { return gsl::narrow_cast<OpType>(op->id & 0xff); }
 

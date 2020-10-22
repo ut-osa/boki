@@ -274,17 +274,18 @@ bool MessageConnection::WriteMessageWithFifo(const protocol::Message& message) {
         fd, std::span<const char>(buf.data(), sizeof(Message)),
         [this, current, buf] (int status, size_t nwrite) {
             current->ReturnWriteBuffer(buf);
-            if (status != 0) {
-                HPLOG(ERROR) << "Failed to write message";
+            if (status != 0 || nwrite == 0) {
+                if (status != 0) {
+                    HPLOG(ERROR) << "Failed to write message";
+                } else {
+                    HLOG(ERROR) << "Failed to write message: nwrite=0";
+                }
                 if (current == io_worker_) {
                     ScheduleClose();
+                    return;
                 }
             }
-            CHECK(nwrite == 0 || nwrite == sizeof(Message))
-                << "Write to FIFO is not atomic";
-            if (nwrite == 0) {
-                HLOG(ERROR) << "Failed to write to FIFO as internal buffer is full";
-            }
+            CHECK_EQ(nwrite, sizeof(Message)) << "Write to FIFO is not atomic";
         }
     ));
     return true;

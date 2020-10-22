@@ -41,9 +41,6 @@ void ServerBase::ScheduleStop() {
 
 void ServerBase::WaitForFinish() {
     DCHECK(state_.load() != kCreated);
-    // for (const auto& io_worker : io_workers_) {
-    //     io_worker->WaitForFinish();
-    // }
     event_loop_thread_.Join();
     DCHECK(state_.load() == kStopped);
     HLOG(INFO) << "Stopped";

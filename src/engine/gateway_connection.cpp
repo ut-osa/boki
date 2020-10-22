@@ -88,7 +88,7 @@ void GatewayConnection::SendMessage(const GatewayMessage& message, std::span<con
         io_worker_->NewWriteBuffer(&buf);
         size_t write_size;
         if (pos == 0) {
-            DCHECK(sizeof(GatewayMessage) <= buf.size());
+            DCHECK_LE(sizeof(GatewayMessage), buf.size());
             memcpy(buf.data(), &message, sizeof(GatewayMessage));
             size_t copy_size = std::min(buf.size() - sizeof(GatewayMessage), payload.size());
             memcpy(buf.data() + sizeof(GatewayMessage), payload.data(), copy_size);
