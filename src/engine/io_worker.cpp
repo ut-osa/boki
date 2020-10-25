@@ -37,6 +37,7 @@ void IOWorker::Start(int pipe_to_server_fd) {
     eventfd_ = eventfd(0, 0);
     PCHECK(eventfd_ >= 0) << "Failed to create eventfd";
     io_uring_.PrepareBuffers(kEventFdBufGroup, 8);
+    URING_DCHECK_OK(io_uring_.RegisterFd(eventfd_));
     URING_DCHECK_OK(io_uring_.StartRead(
         eventfd_, kEventFdBufGroup,
         [this] (int status, std::span<const char> data) -> bool {
@@ -52,6 +53,7 @@ void IOWorker::Start(int pipe_to_server_fd) {
     // Setup pipe to server for receiving connections
     pipe_to_server_fd_ = pipe_to_server_fd;
     io_uring_.PrepareBuffers(kServerPipeBufGroup, __FAAS_PTR_SIZE);
+    URING_DCHECK_OK(io_uring_.RegisterFd(pipe_to_server_fd_));
     URING_DCHECK_OK(io_uring_.StartRecv(
         pipe_to_server_fd_, kServerPipeBufGroup,
         [this] (int status, std::span<const char> data) -> bool {
@@ -116,10 +118,7 @@ void IOWorker::OnConnectionClose(ConnectionBase* connection) {
                     && connections_.empty()
                     && connections_on_closing_ == 0) {
                 // We have returned all Connection objects to Server
-                HLOG(INFO) << "Close pipe to Server";
-                URING_DCHECK_OK(io_uring_.Close(pipe_to_server_fd_, [this] () {
-                    pipe_to_server_fd_ = -1;
-                }));
+                CloseWorkerFds();
             }
         }
     ));
@@ -232,14 +231,9 @@ void IOWorker::StopInternal() {
         HLOG(WARNING) << "Already in stopping state";
         return;
     }
-    URING_DCHECK_OK(io_uring_.Close(eventfd_, [this] () { eventfd_ = -1; }));
-    URING_DCHECK_OK(io_uring_.StopReadOrRecv(pipe_to_server_fd_));
     HLOG(INFO) << "Start stopping process";
     if (connections_.empty() && connections_on_closing_ == 0) {
-        HLOG(INFO) << "Close pipe to Server";
-        URING_DCHECK_OK(io_uring_.Close(pipe_to_server_fd_, [this] () {
-            pipe_to_server_fd_ = -1;
-        }));
+        CloseWorkerFds();
     } else {
         for (const auto& entry : connections_) {
             ConnectionBase* connection = entry.second;
@@ -247,6 +241,20 @@ void IOWorker::StopInternal() {
         }
     }
     state_.store(kStopping);
+}
+
+void IOWorker::CloseWorkerFds() {
+    HLOG(INFO) << "Close worker fds";
+    io_uring_.StopReadOrRecv(eventfd_);
+    URING_DCHECK_OK(io_uring_.Close(eventfd_, [this] () {
+        URING_DCHECK_OK(io_uring_.UnregisterFd(eventfd_));
+        eventfd_ = -1;
+    }));
+    io_uring_.StopReadOrRecv(pipe_to_server_fd_);
+    URING_DCHECK_OK(io_uring_.Close(pipe_to_server_fd_, [this] () {
+        URING_DCHECK_OK(io_uring_.UnregisterFd(pipe_to_server_fd_));
+        pipe_to_server_fd_ = -1;
+    }));
 }
 
 }  // namespace engine

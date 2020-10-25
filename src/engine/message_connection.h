@@ -60,6 +60,7 @@ private:
 
     void RecvHandshakeMessage();
     void SendPendingMessages();
+    bool OnRecvSockData(int status, std::span<const char> data);
     bool OnRecvData(int status, std::span<const char> data);
     void OnFdClosed();
 

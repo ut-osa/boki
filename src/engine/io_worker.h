@@ -110,6 +110,7 @@ private:
     void OnNewConnection(ConnectionBase* connection);
     void RunScheduledFunctions();
     void StopInternal();
+    void CloseWorkerFds();
 
     DISALLOW_COPY_AND_ASSIGN(IOWorker);
 };

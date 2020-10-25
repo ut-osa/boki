@@ -16,6 +16,8 @@ public:
     ~IOUring();
 
     void PrepareBuffers(uint16_t gid, size_t buf_size);
+    bool RegisterFd(int fd);
+    bool UnregisterFd(int fd);
 
     typedef std::function<bool(int /* status */, std::span<const char> /* data */)> ReadCallback;
     bool StartRead(int fd, uint16_t buf_gid, ReadCallback cb);
@@ -42,8 +44,11 @@ private:
     struct io_uring ring_;
     struct __kernel_timespec cqe_wait_timeout;
 
+    std::vector<int> fds_;
+    absl::flat_hash_map</* fd */ int, /* index */ size_t> fd_indices_;
+
     absl::flat_hash_map</* gid */ uint16_t, std::unique_ptr<utils::BufferPool>> buf_pools_;
-    absl::flat_hash_map</* fd */ int, int> ref_counts_;
+    std::vector<int> ref_counts_;
 
     enum OpType { kRead, kWrite, kSendAll, kClose, kCancel };
     enum {
@@ -51,11 +56,11 @@ private:
         kOpFlagUseRecv   = 1 << 1,
         kOpFlagCancelled = 1 << 2,
     };
-    static constexpr uint64_t kInvalidOpId = ~0ULL;
-    static constexpr int kInvalidFd = -1;
+    static constexpr uint64_t kInvalidOpId = std::numeric_limits<uint64_t>::max();
+    static constexpr size_t kInvalidFdIndex = std::numeric_limits<size_t>::max();
     struct Op {
         uint64_t id;         // Lower 8-bit stores type
-        int      fd;         // Used by kRead, kWrite, kSendAll, kClose
+        size_t   fd_idx;     // Used by kRead, kWrite, kSendAll, kClose
         uint16_t buf_gid;    // Used by kRead
         uint16_t flags;
         char*    buf;        // Used by kRead, kWrite, kSendAll
@@ -66,12 +71,14 @@ private:
     uint64_t next_op_id_;
     utils::SimpleObjectPool<Op> op_pool_;
     absl::flat_hash_map</* op_id */ uint64_t, Op*> ops_;
-    absl::flat_hash_map</* fd */ int, Op*> read_ops_;
+
+    std::vector<Op*> read_ops_;
+    std::vector<Op*> last_send_op_;
+
     absl::flat_hash_map</* op_id */ uint64_t, ReadCallback> read_cbs_;
     absl::flat_hash_map</* op_id */ uint64_t, WriteCallback> write_cbs_;
     absl::flat_hash_map</* op_id */ uint64_t, SendAllCallback> sendall_cbs_;
-    absl::flat_hash_map</* fd */ int, Op*> last_send_op_;
-    absl::flat_hash_map</* fd */ int, CloseCallback> close_cbs_;
+    std::vector<CloseCallback> close_cbs_;
 
     stat::Counter ev_loop_counter_;
     stat::Counter wait_timeout_counter_;
@@ -82,16 +89,16 @@ private:
 
     bool StartReadInternal(int fd, uint16_t buf_gid, uint16_t flags, ReadCallback cb);
 
-    Op* AllocReadOp(int fd, uint16_t buf_gid, std::span<char> buf, uint16_t flags);
-    Op* AllocWriteOp(int fd, std::span<const char> data);
-    Op* AllocSendAllOp(int fd, std::span<const char> data);
-    Op* AllocCloseOp(int fd);
+    Op* AllocReadOp(size_t fd_idx, uint16_t buf_gid, std::span<char> buf, uint16_t flags);
+    Op* AllocWriteOp(size_t fd_idx, std::span<const char> data);
+    Op* AllocSendAllOp(size_t fd_idx, std::span<const char> data);
+    Op* AllocCloseOp(size_t fd_idx);
     Op* AllocCancelOp(uint64_t op_id);
 
     void EnqueueOp(Op* op);
     void OnOpComplete(Op* op, struct io_uring_cqe* cqe);
-    void RefFd(int fd);
-    void UnrefFd(int fd);
+    void RefFd(size_t fd_idx);
+    void UnrefFd(size_t fd_idx);
 
     void HandleReadOpComplete(Op* op, int res);
     void HandleWriteOpComplete(Op* op, int res);
@@ -100,16 +107,16 @@ private:
     DISALLOW_COPY_AND_ASSIGN(IOUring);
 };
 
-#define URING_CHECK_OK(URING_CALL)                    \
-    do {                                              \
-        bool ret = URING_CALL;                        \
-        LOG_IF(FATAL, ret) << "IOUring call failed";  \
+#define URING_CHECK_OK(URING_CALL)                     \
+    do {                                               \
+        bool ret = URING_CALL;                         \
+        LOG_IF(FATAL, !ret) << "IOUring call failed";  \
     } while (0)
 
-#define URING_DCHECK_OK(URING_CALL)                   \
-    do {                                              \
-        bool ret = URING_CALL;                        \
-        DLOG_IF(FATAL, ret) << "IOUring call failed"; \
+#define URING_DCHECK_OK(URING_CALL)                    \
+    do {                                               \
+        bool ret = URING_CALL;                         \
+        DLOG_IF(FATAL, !ret) << "IOUring call failed"; \
     } while (0)
 
 }  // namespace engine

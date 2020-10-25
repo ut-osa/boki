@@ -40,6 +40,7 @@ void GatewayConnection::Start(IOWorker* io_worker) {
         CHECK(utils::SetTcpSocketKeepAlive(sockfd_));
     }
     current_io_uring()->PrepareBuffers(kBufGroup, kBufSize);
+    URING_DCHECK_OK(current_io_uring()->RegisterFd(sockfd_));
     handshake_message_ = NewEngineHandshakeGatewayMessage(engine_->node_id(), conn_id_);
     URING_DCHECK_OK(current_io_uring()->SendAll(
         sockfd_, std::span<const char>(reinterpret_cast<const char*>(&handshake_message_),
@@ -69,6 +70,7 @@ void GatewayConnection::ScheduleClose() {
     current_io_uring()->StopReadOrRecv(sockfd_);
     URING_DCHECK_OK(current_io_uring()->Close(sockfd_, [this] () {
         DCHECK(state_ == kClosing);
+        URING_DCHECK_OK(current_io_uring()->UnregisterFd(sockfd_));
         state_ = kClosed;
         io_worker_->OnConnectionClose(this);
     }));

@@ -37,6 +37,7 @@ void MessageConnection::Start(IOWorker* io_worker) {
     DCHECK(io_worker->WithinMyEventLoopThread());
     io_worker_ = io_worker;
     current_io_uring()->PrepareBuffers(kBufGroup, kBufSize);
+    URING_DCHECK_OK(current_io_uring()->RegisterFd(sockfd_));
     URING_DCHECK_OK(current_io_uring()->StartRecv(
         sockfd_, kBufGroup,
         [this] (int status, std::span<const char> data) -> bool {
@@ -75,18 +76,21 @@ void MessageConnection::ScheduleClose() {
     HLOG(INFO) << "Start closing";
     current_io_uring()->StopReadOrRecv(sockfd_);
     URING_DCHECK_OK(current_io_uring()->Close(sockfd_, [this] () {
+        URING_DCHECK_OK(current_io_uring()->UnregisterFd(sockfd_));
         sockfd_ = -1;
         OnFdClosed();
     }));
     if (in_fifo_fd_ != -1) {
         current_io_uring()->StopReadOrRecv(in_fifo_fd_);
         URING_DCHECK_OK(current_io_uring()->Close(in_fifo_fd_, [this] () {
+            URING_DCHECK_OK(current_io_uring()->UnregisterFd(in_fifo_fd_));
             in_fifo_fd_ = -1;
             OnFdClosed();
         }));
     }
     if (out_fifo_fd_ != -1) {
         URING_DCHECK_OK(current_io_uring()->Close(out_fifo_fd_, [this] () {
+            URING_DCHECK_OK(current_io_uring()->UnregisterFd(out_fifo_fd_));
             out_fifo_fd_ = -1;
             pipe_for_write_fd_.store(-1);
             OnFdClosed();
@@ -179,12 +183,15 @@ void MessageConnection::RecvHandshakeMessage() {
             ScheduleClose();
             return;
         }
+        URING_DCHECK_OK(current_io_uring()->RegisterFd(out_fifo_fd_));
         in_fifo_fd_ = ipc::FifoOpenForRead(ipc::GetFuncWorkerOutputFifoName(client_id_));
         if (in_fifo_fd_ == -1) {
             HLOG(ERROR) << "FifoOpenForRead failed";
             ScheduleClose();
             return;
         }
+        URING_DCHECK_OK(current_io_uring()->RegisterFd(in_fifo_fd_));
+        ipc::FifoUnsetNonblocking(in_fifo_fd_);
         ipc::FifoUnsetNonblocking(out_fifo_fd_);
         pipe_for_write_fd_.store(out_fifo_fd_);
     }
@@ -206,10 +213,12 @@ void MessageConnection::RecvHandshakeMessage() {
             state_ = kRunning;
             message_buffer_.Reset();
             if (in_fifo_fd_ != -1) {
-                ipc::FifoUnsetNonblocking(in_fifo_fd_);
                 URING_DCHECK_OK(current_io_uring()->StartRead(
                     in_fifo_fd_, kBufGroup,
                     absl::bind_front(&MessageConnection::OnRecvData, this)));
+                URING_DCHECK_OK(current_io_uring()->StartRecv(
+                    sockfd_, kBufGroup,
+                    absl::bind_front(&MessageConnection::OnRecvSockData, this)));
             } else {
                 URING_DCHECK_OK(current_io_uring()->StartRecv(
                     sockfd_, kBufGroup,
@@ -232,6 +241,21 @@ void MessageConnection::WriteMessage(const Message& message) {
     }
     io_worker_->ScheduleFunction(
         this, absl::bind_front(&MessageConnection::SendPendingMessages, this));
+}
+
+bool MessageConnection::OnRecvSockData(int status, std::span<const char> data) {
+    if (status != 0) {
+        HPLOG(ERROR) << "Read error, will close this connection";
+        ScheduleClose();
+        return false;
+    }
+    if (data.size() == 0) {
+        HLOG(INFO) << "Connection closed remotely";
+        ScheduleClose();
+        return false;
+    }
+    HLOG(WARNING) << "Unexpected data from socket: size=" << data.size();
+    return true;
 }
 
 bool MessageConnection::OnRecvData(int status, std::span<const char> data) {
