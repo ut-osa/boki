@@ -12,7 +12,7 @@ namespace engine {
 
 class IOUring {
 public:
-    explicit IOUring(int entries);
+    explicit IOUring();
     ~IOUring();
 
     void PrepareBuffers(uint16_t gid, size_t buf_size);

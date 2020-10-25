@@ -15,7 +15,7 @@ IOUring* ConnectionBase::current_io_uring() {
 thread_local IOWorker* IOWorker::current_ = nullptr;
 
 IOWorker::IOWorker(std::string_view worker_name, size_t write_buffer_size)
-    : worker_name_(worker_name), state_(kCreated), io_uring_(kIOUringEntires),
+    : worker_name_(worker_name), state_(kCreated), io_uring_(),
       eventfd_(-1), pipe_to_server_fd_(-1),
       log_header_(fmt::format("{}: ", worker_name)),
       event_loop_thread_(fmt::format("{}/EL", worker_name),

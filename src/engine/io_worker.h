@@ -43,8 +43,6 @@ private:
 
 class IOWorker final {
 public:
-    static constexpr int kIOUringEntires = 2048;
-
     IOWorker(std::string_view worker_name, size_t write_buffer_size);
     ~IOWorker();
 

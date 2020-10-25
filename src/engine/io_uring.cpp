@@ -2,6 +2,7 @@
 
 #include <absl/flags/flag.h>
 
+ABSL_FLAG(int, io_uring_entries, 128, "");
 ABSL_FLAG(int, io_uring_fd_slots, 128, "");
 ABSL_FLAG(bool, io_uring_sqpoll, false, "");
 ABSL_FLAG(int, io_uring_sq_thread_idle_ms, 1, "");
@@ -15,7 +16,7 @@ namespace engine {
 
 std::atomic<int> IOUring::next_uring_id_{0};
 
-IOUring::IOUring(int entries)
+IOUring::IOUring()
     : uring_id_(next_uring_id_.fetch_add(1)),
       next_op_id_(1),
       ev_loop_counter_(
@@ -37,7 +38,8 @@ IOUring::IOUring(int entries)
         params.flags |= IORING_SETUP_SQPOLL;
         params.sq_thread_idle = absl::GetFlag(FLAGS_io_uring_sq_thread_idle_ms);
     }
-    int ret = io_uring_queue_init_params(entries, &ring_, &params);
+    int ret = io_uring_queue_init_params(
+        absl::GetFlag(FLAGS_io_uring_entries), &ring_, &params);
     if (ret != 0) {
         LOG(FATAL) << "io_uring init failed: " << ERRNO_LOGSTR(-ret);
     }
