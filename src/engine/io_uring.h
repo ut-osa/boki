@@ -83,7 +83,10 @@ private:
     stat::Counter ev_loop_counter_;
     stat::Counter wait_timeout_counter_;
     stat::Counter completed_ops_counter_;
+    stat::StatisticsCollector<int> io_uring_enter_time_stat_;
     stat::StatisticsCollector<int> completed_ops_stat_;
+    stat::StatisticsCollector<int> ev_loop_time_stat_;
+    stat::StatisticsCollector<int> average_op_time_stat_;
 
     inline OpType op_type(const Op* op) { return gsl::narrow_cast<OpType>(op->id & 0xff); }
 

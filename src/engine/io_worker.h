@@ -3,6 +3,7 @@
 #include "base/common.h"
 #include "base/thread.h"
 #include "utils/buffer_pool.h"
+#include "common/stat.h"
 #include "engine/io_uring.h"
 
 namespace faas {
@@ -73,6 +74,9 @@ public:
     // if it is closed.
     void ScheduleFunction(ConnectionBase* owner, std::function<void()> fn);
 
+    stat::Counter* message_counter() { return &message_counter_; }
+    stat::Counter* message_processing_time_counter() { return &message_processing_time_counter_; }
+
 private:
     enum State { kCreated, kRunning, kStopping, kStopped };
 
@@ -95,6 +99,9 @@ private:
     absl::flat_hash_map</* type */ int, size_t> connections_for_pick_rr_;
     utils::BufferPool write_buffer_pool_;
     int connections_on_closing_;
+
+    stat::Counter message_counter_;
+    stat::Counter message_processing_time_counter_;
 
     struct ScheduledFunction {
         int owner_id;

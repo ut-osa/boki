@@ -21,7 +21,11 @@ IOWorker::IOWorker(std::string_view worker_name, size_t write_buffer_size)
       event_loop_thread_(fmt::format("{}/EL", worker_name),
                          absl::bind_front(&IOWorker::EventLoopThreadMain, this)),
       write_buffer_pool_(fmt::format("{}_Write", worker_name), write_buffer_size),
-      connections_on_closing_(0) {
+      connections_on_closing_(0),
+      message_counter_(stat::Counter::StandardReportCallback(
+          fmt::format("{} message_counter", worker_name))),
+      message_processing_time_counter_(stat::Counter::StandardReportCallback(
+          fmt::format("{} message_processing_time", worker_name))) {
 }
 
 IOWorker::~IOWorker() {

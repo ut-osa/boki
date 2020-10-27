@@ -273,11 +273,16 @@ bool MessageConnection::OnRecvData(int status, std::span<const char> data) {
             return true;
         }
     }
+    int64_t start_timestamp = GetMonotonicNanoTimestamp();
     utils::ReadMessages<Message>(
         &message_buffer_, data.data(), data.size(),
         [this] (Message* message) {
             engine_->OnRecvMessage(this, *message);
+            IOWorker::current()->message_counter()->Tick();
         });
+    int64_t elasped_time = GetMonotonicNanoTimestamp() - start_timestamp;
+    IOWorker::current()->message_processing_time_counter()->Tick(
+        gsl::narrow_cast<int>(elasped_time));
     return true;
 }
 

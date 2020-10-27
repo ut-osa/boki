@@ -1,5 +1,7 @@
 #include "engine/io_uring.h"
 
+#include "common/time.h"
+
 #include <absl/flags/flag.h>
 
 ABSL_FLAG(int, io_uring_entries, 128, "");
@@ -19,18 +21,20 @@ std::atomic<int> IOUring::next_uring_id_{0};
 IOUring::IOUring()
     : uring_id_(next_uring_id_.fetch_add(1)),
       next_op_id_(1),
-      ev_loop_counter_(
-          stat::Counter::StandardReportCallback(
-              fmt::format("io_uring[{}] ev_loop", uring_id_))),
-      wait_timeout_counter_(
-          stat::Counter::StandardReportCallback(
-              fmt::format("io_uring[{}] wait_timeout", uring_id_))),
-      completed_ops_counter_(
-          stat::Counter::StandardReportCallback(
-              fmt::format("io_uring[{}] completed_ops", uring_id_))),
-      completed_ops_stat_(
-          stat::StatisticsCollector<int>::StandardReportCallback(
-              fmt::format("io_uring[{}] completed_ops", uring_id_))) {
+      ev_loop_counter_(stat::Counter::StandardReportCallback(
+          fmt::format("io_uring[{}] ev_loop", uring_id_))),
+      wait_timeout_counter_(stat::Counter::StandardReportCallback(
+          fmt::format("io_uring[{}] wait_timeout", uring_id_))),
+      completed_ops_counter_(stat::Counter::StandardReportCallback(
+          fmt::format("io_uring[{}] completed_ops", uring_id_))),
+      io_uring_enter_time_stat_(stat::StatisticsCollector<int>::StandardReportCallback(
+          fmt::format("io_uring[{}] io_uring_enter_time", uring_id_))),
+      completed_ops_stat_(stat::StatisticsCollector<int>::StandardReportCallback(
+          fmt::format("io_uring[{}] completed_ops", uring_id_))),
+      ev_loop_time_stat_(stat::StatisticsCollector<int>::StandardReportCallback(
+          fmt::format("io_uring[{}] ev_loop_time", uring_id_))),
+      average_op_time_stat_(stat::StatisticsCollector<int>::StandardReportCallback(
+          fmt::format("io_uring[{}] average_op_time", uring_id_))) {
     struct io_uring_params params;
     memset(&params, 0, sizeof(params));
     if (absl::GetFlag(FLAGS_io_uring_sqpoll)) {
@@ -227,12 +231,17 @@ void IOUring::EventLoopRunOnce(int* inflight_ops) {
     struct io_uring_cqe* cqe = nullptr;
     int nr_wait = absl::GetFlag(FLAGS_io_uring_cq_nr_wait);
     if (absl::GetFlag(FLAGS_io_uring_cq_wait_timeout_us) == 0) {
+        int64_t start_timestamp = GetMonotonicNanoTimestamp();
         int ret = io_uring_submit_and_wait(&ring_, nr_wait);
+        int64_t elasped_time = GetMonotonicNanoTimestamp() - start_timestamp;
         if (ret < 0) {
             LOG(FATAL) << "io_uring_submit_and_wait failed: " << ERRNO_LOGSTR(-ret);
         }
+        io_uring_enter_time_stat_.AddSample(gsl::narrow_cast<int>(elasped_time));
     } else {
+        int64_t start_timestamp = GetMonotonicNanoTimestamp();
         int ret = io_uring_wait_cqes(&ring_, &cqe, nr_wait, &cqe_wait_timeout, nullptr);
+        int64_t elasped_time = GetMonotonicNanoTimestamp() - start_timestamp;
         if (ret < 0) {
             if (ret == -ETIME) {
                 wait_timeout_counter_.Tick();
@@ -240,8 +249,10 @@ void IOUring::EventLoopRunOnce(int* inflight_ops) {
                 LOG(FATAL) << "io_uring_wait_cqes failed: " << ERRNO_LOGSTR(-ret);
             }
         }
+        io_uring_enter_time_stat_.AddSample(gsl::narrow_cast<int>(elasped_time));
     }
     ev_loop_counter_.Tick();
+    int64_t start_timestamp = GetMonotonicNanoTimestamp();
     int count = 0;
     while (true) {
         cqe = nullptr;
@@ -265,6 +276,9 @@ void IOUring::EventLoopRunOnce(int* inflight_ops) {
         count++;
     }
     if (count > 0) {
+        int64_t elasped_time = GetMonotonicNanoTimestamp() - start_timestamp;
+        ev_loop_time_stat_.AddSample(gsl::narrow_cast<int>(elasped_time));
+        average_op_time_stat_.AddSample(gsl::narrow_cast<int>(elasped_time / count));
         completed_ops_counter_.Tick(count);
         completed_ops_stat_.AddSample(gsl::narrow_cast<int>(count));
     }
