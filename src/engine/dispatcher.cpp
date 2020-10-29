@@ -19,12 +19,9 @@ namespace faas {
 namespace engine {
 
 using protocol::FuncCall;
-using protocol::FuncCallDebugString;
+using protocol::FuncCallHelper;
 using protocol::Message;
-using protocol::SetInlineDataInMessage;
-using protocol::GetFuncCallFromMessage;
-using protocol::NewCreateFuncWorkerMessage;
-using protocol::NewDispatchFuncCallMessage;
+using protocol::MessageHelper;
 
 Dispatcher::Dispatcher(Engine* engine, uint16_t func_id)
     : engine_(engine), func_id_(func_id),
@@ -87,15 +84,15 @@ void Dispatcher::OnFuncWorkerDisconnected(FuncWorker* func_worker) {
 bool Dispatcher::OnNewFuncCall(const FuncCall& func_call, const FuncCall& parent_func_call,
                                size_t input_size, std::span<const char> inline_input,
                                bool shm_input) {
-    VLOG(1) << "OnNewFuncCall " << FuncCallDebugString(func_call);
+    VLOG(1) << "OnNewFuncCall " << FuncCallHelper::DebugString(func_call);
     DCHECK_EQ(func_id_, func_call.func_id);
     absl::MutexLock lk(&mu_);
     Message* dispatch_func_call_message = message_pool_.Get();
-    *dispatch_func_call_message = NewDispatchFuncCallMessage(func_call);
+    *dispatch_func_call_message = MessageHelper::NewDispatchFuncCall(func_call);
     if (shm_input) {
         dispatch_func_call_message->payload_size = -gsl::narrow_cast<int32_t>(input_size);
     } else {
-        SetInlineDataInMessage(dispatch_func_call_message, inline_input);
+        MessageHelper::SetInlineData(dispatch_func_call_message, inline_input);
     }
 
     Tracer::FuncCallInfo* func_call_info = engine_->tracer()->OnNewFuncCall(
@@ -115,7 +112,7 @@ bool Dispatcher::OnNewFuncCall(const FuncCall& func_call, const FuncCall& parent
 
 bool Dispatcher::OnFuncCallCompleted(const FuncCall& func_call, int32_t processing_time,
                                      int32_t dispatch_delay, size_t output_size) {
-    VLOG(1) << "OnFuncCallCompleted " << FuncCallDebugString(func_call);
+    VLOG(1) << "OnFuncCallCompleted " << FuncCallHelper::DebugString(func_call);
     DCHECK_EQ(func_id_, func_call.func_id);
     Tracer::FuncCallInfo* func_call_info = engine_->tracer()->OnFuncCallCompleted(
         func_call, dispatch_delay, processing_time, output_size);
@@ -139,7 +136,7 @@ bool Dispatcher::OnFuncCallCompleted(const FuncCall& func_call, int32_t processi
 }
 
 bool Dispatcher::OnFuncCallFailed(const FuncCall& func_call, int32_t dispatch_delay) {
-    VLOG(1) << "OnFuncCallFailed " << FuncCallDebugString(func_call);
+    VLOG(1) << "OnFuncCallFailed " << FuncCallHelper::DebugString(func_call);
     DCHECK_EQ(func_id_, func_call.func_id);
     Tracer::FuncCallInfo* func_call_info = engine_->tracer()->OnFuncCallFailed(
         func_call, dispatch_delay);
@@ -190,7 +187,7 @@ bool Dispatcher::DispatchPendingFuncCall(FuncWorker* func_worker) {
             queueing_delay = current_timestamp - func_call_info->recv_timestamp;
         }
         Message* dispatch_func_call_message = pending_func_call.dispatch_func_call_message;
-        FuncCall func_call = GetFuncCallFromMessage(*dispatch_func_call_message);
+        FuncCall func_call = MessageHelper::GetFuncCall(*dispatch_func_call_message);
         if (func_call.client_id == 0
                 || max_relative_queueing_delay == 0.0
                 || queueing_delay <= max_relative_queueing_delay * average_processing_time) {
@@ -209,7 +206,7 @@ void Dispatcher::DispatchFuncCall(FuncWorker* func_worker, Message* dispatch_fun
     uint16_t client_id = func_worker->client_id();
     DCHECK(workers_.contains(client_id));
     DCHECK(!running_workers_.contains(client_id));
-    FuncCall func_call = GetFuncCallFromMessage(*dispatch_func_call_message);
+    FuncCall func_call = MessageHelper::GetFuncCall(*dispatch_func_call_message);
     engine_->tracer()->OnFuncCallDispatched(func_call, func_worker);
     assigned_workers_[func_call.full_call_id] = client_id;
     running_workers_[client_id] = func_call;

@@ -13,11 +13,7 @@ namespace launcher {
 
 using protocol::FuncCall;
 using protocol::Message;
-using protocol::IsHandshakeResponseMessage;
-using protocol::IsCreateFuncWorkerMessage;
-using protocol::NewLauncherHandshakeMessage;
-using protocol::SetInlineDataInMessage;
-using protocol::ComputeMessageDelay;
+using protocol::MessageHelper;
 
 Launcher::Launcher()
     : state_(kCreated), func_id_(-1), fprocess_mode_(kInvalidMode), engine_tcp_port_(-1),
@@ -50,11 +46,12 @@ void Launcher::Start() {
     CHECK(func_id_ != -1);
     CHECK(!fprocess_.empty());
     // Connect to engine via IPC path
-    Message handshake_message = NewLauncherHandshakeMessage(func_id_);
+    Message handshake_message = MessageHelper::NewLauncherHandshake(func_id_);
     std::string self_container_id = docker_utils::GetSelfContainerId();
     DCHECK_EQ(self_container_id.size(), docker_utils::kContainerIdLength);
-    SetInlineDataInMessage(&handshake_message, std::span<const char>(self_container_id.data(),
-                                                                     self_container_id.size()));
+    MessageHelper::SetInlineData(&handshake_message,
+                                 std::span<const char>(self_container_id.data(),
+                                                       self_container_id.size()));
     engine_connection_.Start(&uv_loop_, engine_tcp_port_, handshake_message);
     // Start thread for running event loop
     event_loop_thread_.Start();
@@ -105,7 +102,7 @@ void Launcher::EventLoopThreadMain() {
 bool Launcher::OnRecvHandshakeResponse(const Message& handshake_response,
                                        std::span<const char> payload) {
     DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
-    if (!IsHandshakeResponseMessage(handshake_response)) {
+    if (!MessageHelper::IsHandshakeResponse(handshake_response)) {
         HLOG(ERROR) << "Invalid handshake response, will close the connection";
         engine_connection_.ScheduleClose();
         return false;
@@ -124,8 +121,8 @@ bool Launcher::OnRecvHandshakeResponse(const Message& handshake_response,
 
 void Launcher::OnRecvMessage(const protocol::Message& message) {
     DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
-    engine_message_delay_stat_.AddSample(ComputeMessageDelay(message));
-    if (IsCreateFuncWorkerMessage(message)) {
+    engine_message_delay_stat_.AddSample(MessageHelper::ComputeMessageDelay(message));
+    if (MessageHelper::IsCreateFuncWorker(message)) {
         if (fprocess_mode_ == kCppMode) {
             auto func_process = std::make_unique<FuncProcess>(
                 this, /* id= */ func_processes_.size(),

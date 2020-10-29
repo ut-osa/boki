@@ -16,7 +16,7 @@ namespace faas {
 namespace engine {
 
 using protocol::FuncCall;
-using protocol::FuncCallDebugString;
+using protocol::FuncCallHelper;
 
 Tracer::Tracer(Engine* engine)
     : engine_(engine),
@@ -53,7 +53,7 @@ Tracer::FuncCallInfo* Tracer::OnNewFuncCall(const FuncCall& func_call,
     {
         absl::MutexLock lk(&mu_);
         if (func_call_infos_.contains(func_call.full_call_id)) {
-            HLOG(WARNING) << "FuncCall already exists: " << FuncCallDebugString(func_call);
+            HLOG(WARNING) << "FuncCall already exists: " << FuncCallHelper::DebugString(func_call);
             return nullptr;
         }
         info = func_call_info_pool_.Get();
@@ -110,7 +110,7 @@ Tracer::FuncCallInfo* Tracer::OnFuncCallDispatched(const protocol::FuncCall& fun
     {
         absl::MutexLock lk(&mu_);
         if (!func_call_infos_.contains(func_call.full_call_id)) {
-            HLOG(WARNING) << "Cannot find FuncCall: " << FuncCallDebugString(func_call);
+            HLOG(WARNING) << "Cannot find FuncCall: " << FuncCallHelper::DebugString(func_call);
             return nullptr;
         }
         info = func_call_infos_[func_call.full_call_id];
@@ -146,7 +146,7 @@ Tracer::FuncCallInfo* Tracer::OnFuncCallCompleted(const FuncCall& func_call,
     {
         absl::MutexLock lk(&mu_);
         if (!func_call_infos_.contains(func_call.full_call_id)) {
-            HLOG(WARNING) << "Cannot find FuncCall: " << FuncCallDebugString(func_call);
+            HLOG(WARNING) << "Cannot find FuncCall: " << FuncCallHelper::DebugString(func_call);
             return nullptr;
         }
         info = func_call_infos_[func_call.full_call_id];
@@ -207,7 +207,7 @@ Tracer::FuncCallInfo* Tracer::OnFuncCallFailed(const FuncCall& func_call, int32_
     {
         absl::MutexLock lk(&mu_);
         if (!func_call_infos_.contains(func_call.full_call_id)) {
-            HLOG(WARNING) << "Cannot find FuncCall: " << FuncCallDebugString(func_call);
+            HLOG(WARNING) << "Cannot find FuncCall: " << FuncCallHelper::DebugString(func_call);
             return nullptr;
         }
         info = func_call_infos_[func_call.full_call_id];
@@ -248,7 +248,7 @@ Tracer::FuncCallInfo* Tracer::OnFuncCallFailed(const FuncCall& func_call, int32_
 void Tracer::DiscardFuncCallInfo(const protocol::FuncCall& func_call) {
     absl::MutexLock lk(&mu_);
     if (!func_call_infos_.contains(func_call.full_call_id)) {
-        HLOG(WARNING) << "Cannot find FuncCall: " << FuncCallDebugString(func_call);
+        HLOG(WARNING) << "Cannot find FuncCall: " << FuncCallHelper::DebugString(func_call);
         return;
     }
     func_call_infos_.erase(func_call.full_call_id);

@@ -13,19 +13,9 @@ namespace faas {
 namespace worker_lib {
 
 using protocol::FuncCall;
-using protocol::NewFuncCall;
-using protocol::NewFuncCallWithMethod;
-using protocol::FuncCallDebugString;
+using protocol::FuncCallHelper;
 using protocol::Message;
-using protocol::GetFuncCallFromMessage;
-using protocol::GetInlineDataFromMessage;
-using protocol::IsHandshakeResponseMessage;
-using protocol::IsCreateFuncWorkerMessage;
-using protocol::IsDispatchFuncCallMessage;
-using protocol::IsFuncCallCompleteMessage;
-using protocol::IsFuncCallFailedMessage;
-using protocol::NewFuncWorkerHandshakeMessage;
-using protocol::NewFuncCallFailedMessage;
+using protocol::MessageHelper;
 
 static std::atomic<int> worker_created{0};
 
@@ -86,7 +76,7 @@ void EventDrivenWorker::OnFuncExecutionFinished(int64_t handle, bool success,
     FuncCall func_call = handle_to_func_call(handle);
     FuncWorkerState* worker_state = GetAssociatedFuncWorkerState(func_call);
     if (worker_state == nullptr) {
-        LOG(ERROR) << "Invalid func call: " << FuncCallDebugString(func_call);
+        LOG(ERROR) << "Invalid func call: " << FuncCallHelper::DebugString(func_call);
         return;
     }
     IncomingFuncCallState* func_call_state = incoming_func_calls_[func_call.full_call_id];
@@ -96,7 +86,7 @@ void EventDrivenWorker::OnFuncExecutionFinished(int64_t handle, bool success,
     });
     int32_t processing_time = gsl::narrow_cast<int32_t>(
         GetMonotonicMicroTimestamp() - func_call_state->start_timestamp);
-    VLOG(1) << "Finish executing func_call " << FuncCallDebugString(func_call);
+    VLOG(1) << "Finish executing func_call " << FuncCallHelper::DebugString(func_call);
     Message response;
     if (use_fifo_for_nested_call_) {
         worker_lib::FifoFuncCallFinished(
@@ -121,10 +111,10 @@ bool EventDrivenWorker::NewOutgoingFuncCall(int64_t parent_handle, std::string_v
     FuncCall parent_call = handle_to_func_call(parent_handle);
     FuncWorkerState* worker_state = GetAssociatedFuncWorkerState(parent_call);
     if (worker_state == nullptr) {
-        LOG(ERROR) << "Invalid parent func call: " << FuncCallDebugString(parent_call);
+        LOG(ERROR) << "Invalid parent func call: " << FuncCallHelper::DebugString(parent_call);
         return false;
     }
-    FuncCall func_call = NewFuncCall(
+    FuncCall func_call = FuncCallHelper::New(
         gsl::narrow_cast<uint16_t>(func_entry->func_id),
         worker_state->client_id, worker_state->next_call_id++);
     *handle = func_call_to_handle(func_call);
@@ -149,10 +139,10 @@ bool EventDrivenWorker::NewOutgoingGrpcCall(int64_t parent_handle, std::string_v
     FuncCall parent_call = handle_to_func_call(parent_handle);
     FuncWorkerState* worker_state = GetAssociatedFuncWorkerState(parent_call);
     if (worker_state == nullptr) {
-        LOG(ERROR) << "Invalid parent func call: " << FuncCallDebugString(parent_call);
+        LOG(ERROR) << "Invalid parent func call: " << FuncCallHelper::DebugString(parent_call);
         return false;
     }
-    FuncCall func_call = NewFuncCallWithMethod(
+    FuncCall func_call = FuncCallHelper::NewWithMethod(
         gsl::narrow_cast<uint16_t>(func_entry->func_id),
         gsl::narrow_cast<uint16_t>(method_id),
         worker_state->client_id, worker_state->next_call_id++);
@@ -163,7 +153,7 @@ bool EventDrivenWorker::NewOutgoingGrpcCall(int64_t parent_handle, std::string_v
 EventDrivenWorker::FuncWorkerState* EventDrivenWorker::GetAssociatedFuncWorkerState(
         const FuncCall& incoming_func_call) {
     if (incoming_func_calls_.count(incoming_func_call.full_call_id) == 0) {
-        LOG(ERROR) << "Cannot find func call: " << FuncCallDebugString(incoming_func_call);
+        LOG(ERROR) << "Cannot find func call: " << FuncCallHelper::DebugString(incoming_func_call);
         return nullptr;
     }
     IncomingFuncCallState* func_call_state = incoming_func_calls_[incoming_func_call.full_call_id];
@@ -178,13 +168,13 @@ void EventDrivenWorker::NewFuncWorker(uint16_t client_id) {
     int engine_sock_fd = utils::UnixDomainSocketConnect(ipc::GetEngineUnixSocketPath());
     CHECK(engine_sock_fd != -1) << "Failed to connect to engine socket";
     int input_pipe_fd = ipc::FifoOpenForRead(ipc::GetFuncWorkerInputFifoName(client_id));
-    Message message = NewFuncWorkerHandshakeMessage(
+    Message message = MessageHelper::NewFuncWorkerHandshake(
         gsl::narrow_cast<uint16_t>(config_entry_->func_id), client_id);
     PCHECK(io_utils::SendMessage(engine_sock_fd, message));
     Message response;
     CHECK(io_utils::RecvMessage(engine_sock_fd, &response, nullptr))
         << "Failed to receive handshake response from engine";
-    CHECK(IsHandshakeResponseMessage(response))
+    CHECK(MessageHelper::IsHandshakeResponse(response))
         << "Receive invalid handshake response";
     if (response.flags & protocol::kUseFifoForNestedCallFlag) {
         if (!use_fifo_for_nested_call_) {
@@ -211,12 +201,12 @@ void EventDrivenWorker::ExecuteFunc(FuncWorkerState* worker_state,
                                     const Message& dispatch_func_call_message) {
     int32_t dispatch_delay = gsl::narrow_cast<int32_t>(
         GetMonotonicMicroTimestamp() - dispatch_func_call_message.send_timestamp);
-    FuncCall func_call = GetFuncCallFromMessage(dispatch_func_call_message);
-    VLOG(1) << "Execute func_call " << FuncCallDebugString(func_call);
+    FuncCall func_call = MessageHelper::GetFuncCall(dispatch_func_call_message);
+    VLOG(1) << "Execute func_call " << FuncCallHelper::DebugString(func_call);
     std::unique_ptr<ipc::ShmRegion> input_region;
     std::span<const char> input;
     if (!worker_lib::GetFuncCallInput(dispatch_func_call_message, &input, &input_region)) {
-        Message response = NewFuncCallFailedMessage(func_call);
+        Message response = MessageHelper::NewFuncCallFailed(func_call);
         response.send_timestamp = GetMonotonicMicroTimestamp();
         PCHECK(io_utils::SendMessage(worker_state->output_pipe_fd, response));
         return;
@@ -226,7 +216,8 @@ void EventDrivenWorker::ExecuteFunc(FuncWorkerState* worker_state,
         if (func_call.method_id < config_entry_->grpc_methods.size()) {
             method = config_entry_->grpc_methods[func_call.method_id];
         } else {
-            LOG(FATAL) << "Invalid method_id in func_call: " << FuncCallDebugString(func_call);
+            LOG(FATAL) << "Invalid method_id in func_call: "
+                       << FuncCallHelper::DebugString(func_call);
         }
     }
     IncomingFuncCallState* func_call_state = incoming_func_call_pool_.Get();
@@ -242,7 +233,7 @@ bool EventDrivenWorker::NewOutgoingFuncCallCommon(const protocol::FuncCall& pare
                                                   const protocol::FuncCall& func_call,
                                                   FuncWorkerState* worker_state,
                                                   std::span<const char> input) {
-    VLOG(1) << "Invoke func_call " << FuncCallDebugString(func_call);
+    VLOG(1) << "Invoke func_call " << FuncCallHelper::DebugString(func_call);
     Message invoke_func_message;
     std::unique_ptr<ipc::ShmRegion> input_region;
     if (!worker_lib::PrepareNewFuncCall(
@@ -286,7 +277,7 @@ void EventDrivenWorker::OnMessagePipeReadable() {
     Message message;
     CHECK(io_utils::RecvMessage(message_pipe_fd_, &message, nullptr))
         << "Failed to receive message from launcher";
-    if (IsCreateFuncWorkerMessage(message)) {
+    if (MessageHelper::IsCreateFuncWorker(message)) {
         NewFuncWorker(message.client_id);
     } else {
         LOG(FATAL) << "Unknown launcher message type";
@@ -297,15 +288,16 @@ void EventDrivenWorker::OnEnginePipeReadable(FuncWorkerState* worker_state) {
     Message message;
     CHECK(io_utils::RecvMessage(worker_state->input_pipe_fd, &message, nullptr))
         << "Failed to receive message from engine";
-    if (IsDispatchFuncCallMessage(message)) {
+    if (MessageHelper::IsDispatchFuncCall(message)) {
         ExecuteFunc(worker_state, message);
-    } else if (IsFuncCallCompleteMessage(message) || IsFuncCallFailedMessage(message)) {
+    } else if (MessageHelper::IsFuncCallComplete(message)
+               || MessageHelper::IsFuncCallFailed(message)) {
         if (use_fifo_for_nested_call_) {
             LOG(FATAL) << "UseFifoForNestedCall flag is set, should not receive this message";
         }
-        FuncCall func_call = GetFuncCallFromMessage(message);
+        FuncCall func_call = MessageHelper::GetFuncCall(message);
         if (outgoing_func_calls_.count(func_call.full_call_id) == 0) {
-            LOG(ERROR) << "Unknown outgoing func call: " << FuncCallDebugString(func_call);
+            LOG(ERROR) << "Unknown outgoing func call: " << FuncCallHelper::DebugString(func_call);
             return;
         }
         OnOutgoingFuncCallFinished(message, outgoing_func_calls_[func_call.full_call_id]);
@@ -347,12 +339,12 @@ void EventDrivenWorker::OnOutgoingFuncCallFinished(const Message& message,
         func_call_state->input_region.reset(nullptr);
         outgoing_func_call_pool_.Return(func_call_state);
     });
-    if (IsFuncCallFailedMessage(message)) {
+    if (MessageHelper::IsFuncCallFailed(message)) {
         outgoing_func_call_complete_cb_(func_call_to_handle(func_call_state->func_call),
                                         /* success= */ false,
                                         /* output= */ std::span<const char>());
         return;
-    } else if (!IsFuncCallCompleteMessage(message)) {
+    } else if (!MessageHelper::IsFuncCallComplete(message)) {
         LOG(FATAL) << "Unknown message type";
     }
     std::unique_ptr<ipc::ShmRegion> output_region;
@@ -377,7 +369,7 @@ void EventDrivenWorker::OnOutgoingFuncCallFinished(const Message& message,
         outgoing_func_call_complete_cb_(func_call_to_handle(func_call_state->func_call),
                                         /* success= */ true, output_region->to_span());
     } else {
-        std::span<const char> output = GetInlineDataFromMessage(message);
+        std::span<const char> output = MessageHelper::GetInlineData(message);
         outgoing_func_call_complete_cb_(func_call_to_handle(func_call_state->func_call),
                                         /* success= */ true, output);
     }

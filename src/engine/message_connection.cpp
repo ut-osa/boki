@@ -17,8 +17,7 @@ namespace faas {
 namespace engine {
 
 using protocol::Message;
-using protocol::IsLauncherHandshakeMessage;
-using protocol::IsFuncWorkerHandshakeMessage;
+using protocol::MessageHelper;
 
 MessageConnection::MessageConnection(Engine* engine, int sockfd)
     : ConnectionBase(kTypeId),
@@ -162,10 +161,10 @@ void MessageConnection::RecvHandshakeMessage() {
     DCHECK(io_worker_->WithinMyEventLoopThread());
     Message* message = reinterpret_cast<Message*>(message_buffer_.data());
     func_id_ = message->func_id;
-    if (IsLauncherHandshakeMessage(*message)) {
+    if (MessageHelper::IsLauncherHandshake(*message)) {
         client_id_ = 0;
         log_header_ = fmt::format("LauncherConnection[{}]: ", func_id_);
-    } else if (IsFuncWorkerHandshakeMessage(*message)) {
+    } else if (MessageHelper::IsFuncWorkerHandshake(*message)) {
         client_id_ = message->client_id;
         log_header_ = fmt::format("FuncWorkerConnection[{}-{}]: ", func_id_, client_id_);
     } else {
@@ -176,7 +175,8 @@ void MessageConnection::RecvHandshakeMessage() {
         ScheduleClose();
         return;
     }
-    if (IsFuncWorkerHandshakeMessage(*message) && !engine_->func_worker_use_engine_socket()) {
+    if (MessageHelper::IsFuncWorkerHandshake(*message)
+            && !engine_->func_worker_use_engine_socket()) {
         out_fifo_fd_ = ipc::FifoOpenForWrite(ipc::GetFuncWorkerInputFifoName(client_id_));
         if (out_fifo_fd_ == -1) {
             HLOG(ERROR) << "FifoOpenForWrite failed";

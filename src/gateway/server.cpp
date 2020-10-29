@@ -21,15 +21,9 @@ namespace faas {
 namespace gateway {
 
 using protocol::FuncCall;
-using protocol::FuncCallDebugString;
-using protocol::NewFuncCall;
-using protocol::NewFuncCallWithMethod;
+using protocol::FuncCallHelper;
 using protocol::GatewayMessage;
-using protocol::GetFuncCallFromMessage;
-using protocol::IsEngineHandshakeMessage;
-using protocol::IsFuncCallCompleteMessage;
-using protocol::IsFuncCallFailedMessage;
-using protocol::NewDispatchFuncCallGatewayMessage;
+using protocol::GatewayMessageHelper;
 
 Server::Server()
     : engine_conn_port_(-1),
@@ -142,9 +136,9 @@ void Server::OnNewHttpFuncCall(HttpConnection* connection, FuncCallContext* func
         connection->OnFuncCallFinished(func_call_context);
         return;
     }
-    FuncCall func_call = NewFuncCall(gsl::narrow_cast<uint16_t>(func_entry->func_id),
-                                     /* client_id= */ 0, next_call_id_.fetch_add(1));
-    VLOG(1) << "OnNewHttpFuncCall: " << FuncCallDebugString(func_call);
+    FuncCall func_call = FuncCallHelper::New(gsl::narrow_cast<uint16_t>(func_entry->func_id),
+                                             /* client_id= */ 0, next_call_id_.fetch_add(1));
+    VLOG(1) << "OnNewHttpFuncCall: " << FuncCallHelper::DebugString(func_call);
     func_call_context->set_func_call(func_call);
     OnNewFuncCallCommon(connection->ref_self(), func_call_context);
 }
@@ -158,11 +152,11 @@ void Server::OnNewGrpcFuncCall(GrpcConnection* connection, FuncCallContext* func
         connection->OnFuncCallFinished(func_call_context);
         return;
     }
-    FuncCall func_call = NewFuncCallWithMethod(
+    FuncCall func_call = FuncCallHelper::NewWithMethod(
         gsl::narrow_cast<uint16_t>(func_entry->func_id),
         gsl::narrow_cast<uint16_t>(func_entry->grpc_method_ids.at(method_name)),
         /* client_id= */ 0, next_call_id_.fetch_add(1));
-    VLOG(1) << "OnNewGrpcFuncCall: " << FuncCallDebugString(func_call);
+    VLOG(1) << "OnNewGrpcFuncCall: " << FuncCallHelper::DebugString(func_call);
     func_call_context->set_func_call(func_call);
     OnNewFuncCallCommon(connection->ref_self(), func_call_context);
 }
@@ -175,9 +169,9 @@ void Server::DiscardFuncCall(FuncCallContext* func_call_context) {
 void Server::OnRecvEngineMessage(EngineConnection* src_connection, const GatewayMessage& message,
                                  std::span<const char> payload) {
     int64_t current_timestamp = GetMonotonicMicroTimestamp();
-    if (IsFuncCallCompleteMessage(message)
-            || IsFuncCallFailedMessage(message)) {
-        FuncCall func_call = GetFuncCallFromMessage(message);
+    if (GatewayMessageHelper::IsFuncCallComplete(message)
+            || GatewayMessageHelper::IsFuncCallFailed(message)) {
+        FuncCall func_call = GatewayMessageHelper::GetFuncCall(message);
         FuncCallContext* func_call_context = nullptr;
         std::shared_ptr<server::ConnectionBase> connection;
         FuncCallContext* next_func_call = nullptr;
@@ -229,10 +223,10 @@ void Server::OnRecvEngineMessage(EngineConnection* src_connection, const Gateway
             }
         }
         if (func_call_context != nullptr) {
-            if (IsFuncCallCompleteMessage(message)) {
+            if (GatewayMessageHelper::IsFuncCallComplete(message)) {
                 func_call_context->set_status(FuncCallContext::kSuccess);
                 func_call_context->append_output(payload);
-            } else if (IsFuncCallFailedMessage(message)) {
+            } else if (GatewayMessageHelper::IsFuncCallFailed(message)) {
                 func_call_context->set_status(FuncCallContext::kFailed);
             } else {
                 HLOG(FATAL) << "Unreachable";
@@ -270,7 +264,7 @@ void Server::TickNewFuncCall(uint16_t func_id, int64_t current_timestamp) {
     per_func_stat->last_request_timestamp = current_timestamp;
 }
 
-uint16_t Server::PickNextNode(const protocol::FuncCall& func_call) {
+uint16_t Server::PickNextNode(const FuncCall& func_call) {
     size_t idx;
     if (absl::GetFlag(FLAGS_lb_per_fn_round_robin)) {
         idx = next_dispatch_node_idx_[func_call.func_id];
@@ -357,7 +351,7 @@ void Server::DispatchFuncCall(std::shared_ptr<server::ConnectionBase> parent_con
     server::ConnectionBase* engine_connection = io_worker->PickConnection(
         EngineConnection::type_id(node_id));
     if (engine_connection != nullptr) {
-        GatewayMessage dispatch_message = NewDispatchFuncCallGatewayMessage(func_call);
+        GatewayMessage dispatch_message = GatewayMessageHelper::NewDispatchFuncCall(func_call);
         dispatch_message.payload_size = func_call_context->input().size();
         engine_connection->as_ptr<EngineConnection>()->SendMessage(
             dispatch_message, func_call_context->input());
@@ -391,7 +385,7 @@ bool Server::OnEngineHandshake(uv_tcp_t* uv_handle, std::span<const char> data) 
     DCHECK_IN_EVENT_LOOP_THREAD(uv_loop());
     DCHECK_GE(data.size(), sizeof(GatewayMessage));
     const GatewayMessage* message = reinterpret_cast<const GatewayMessage*>(data.data());
-    if (!IsEngineHandshakeMessage(*message)) {
+    if (!GatewayMessageHelper::IsEngineHandshake(*message)) {
         HLOG(ERROR) << "Unexpected engine handshake message";
         return false;
     }

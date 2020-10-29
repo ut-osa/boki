@@ -13,16 +13,9 @@ namespace faas {
 namespace worker_v1 {
 
 using protocol::FuncCall;
-using protocol::NewFuncCall;
-using protocol::FuncCallDebugString;
+using protocol::FuncCallHelper;
 using protocol::Message;
-using protocol::GetFuncCallFromMessage;
-using protocol::IsHandshakeResponseMessage;
-using protocol::IsDispatchFuncCallMessage;
-using protocol::IsFuncCallCompleteMessage;
-using protocol::IsFuncCallFailedMessage;
-using protocol::NewFuncWorkerHandshakeMessage;
-using protocol::NewFuncCallFailedMessage;
+using protocol::MessageHelper;
 
 FuncWorker::FuncWorker()
     : func_id_(-1), fprocess_id_(-1), client_id_(0), message_pipe_fd_(-1),
@@ -99,7 +92,7 @@ void FuncWorker::MainServingLoop() {
         Message message;
         PCHECK(io_utils::RecvMessage(input_pipe_fd_, &message, nullptr))
             << "Failed to receive message from engine";
-        if (IsDispatchFuncCallMessage(message)) {
+        if (MessageHelper::IsDispatchFuncCall(message)) {
             ExecuteFunc(message);
         } else {
             LOG(FATAL) << "Unknown message type";
@@ -118,12 +111,12 @@ void FuncWorker::HandshakeWithEngine() {
         LOG(INFO) << "Use extra pipes for messages";
         input_pipe_fd_ = ipc::FifoOpenForRead(ipc::GetFuncWorkerInputFifoName(client_id_));
     }
-    Message message = NewFuncWorkerHandshakeMessage(func_id_, client_id_);
+    Message message = MessageHelper::NewFuncWorkerHandshake(func_id_, client_id_);
     PCHECK(io_utils::SendMessage(engine_sock_fd_, message));
     Message response;
     CHECK(io_utils::RecvMessage(engine_sock_fd_, &response, nullptr))
         << "Failed to receive handshake response from engine";
-    CHECK(IsHandshakeResponseMessage(response))
+    CHECK(MessageHelper::IsHandshakeResponse(response))
         << "Receive invalid handshake response";
     if (use_engine_socket_) {
         output_pipe_fd_ = engine_sock_fd_;
@@ -141,12 +134,12 @@ void FuncWorker::HandshakeWithEngine() {
 void FuncWorker::ExecuteFunc(const Message& dispatch_func_call_message) {
     int32_t dispatch_delay = gsl::narrow_cast<int32_t>(
         GetMonotonicMicroTimestamp() - dispatch_func_call_message.send_timestamp);
-    FuncCall func_call = GetFuncCallFromMessage(dispatch_func_call_message);
-    VLOG(1) << "Execute func_call " << FuncCallDebugString(func_call);
+    FuncCall func_call = MessageHelper::GetFuncCall(dispatch_func_call_message);
+    VLOG(1) << "Execute func_call " << FuncCallHelper::DebugString(func_call);
     std::unique_ptr<ipc::ShmRegion> input_region;
     std::span<const char> input;
     if (!worker_lib::GetFuncCallInput(dispatch_func_call_message, &input, &input_region)) {
-        Message response = NewFuncCallFailedMessage(func_call);
+        Message response = MessageHelper::NewFuncCallFailed(func_call);
         response.send_timestamp = GetMonotonicMicroTimestamp();
         PCHECK(io_utils::SendMessage(output_pipe_fd_, response));
         return;
@@ -158,7 +151,7 @@ void FuncWorker::ExecuteFunc(const Message& dispatch_func_call_message) {
     int32_t processing_time = gsl::narrow_cast<int32_t>(
         GetMonotonicMicroTimestamp() - start_timestamp);
     ReclaimInvokeFuncResources();
-    VLOG(1) << "Finish executing func_call " << FuncCallDebugString(func_call);
+    VLOG(1) << "Finish executing func_call " << FuncCallHelper::DebugString(func_call);
     Message response;
     if (use_fifo_for_nested_call_) {
         worker_lib::FifoFuncCallFinished(
@@ -183,10 +176,10 @@ bool FuncWorker::InvokeFunc(const char* func_name, const char* input_data, size_
         LOG(ERROR) << "Function " << func_name << " does not exist";
         return false;
     }
-    FuncCall func_call = NewFuncCall(
+    FuncCall func_call = FuncCallHelper::New(
         gsl::narrow_cast<uint16_t>(func_entry->func_id),
         client_id_, next_call_id_.fetch_add(1));
-    VLOG(1) << "Invoke func_call " << FuncCallDebugString(func_call);
+    VLOG(1) << "Invoke func_call " << FuncCallHelper::DebugString(func_call);
     Message invoke_func_message;
     std::unique_ptr<ipc::ShmRegion> input_region;
     if (!worker_lib::PrepareNewFuncCall(
@@ -204,7 +197,7 @@ bool FuncWorker::InvokeFunc(const char* func_name, const char* input_data, size_
 
 bool FuncWorker::WaitInvokeFunc(Message* invoke_func_message,
                                 const char** output_data, size_t* output_length) {
-    FuncCall func_call = GetFuncCallFromMessage(*invoke_func_message);
+    FuncCall func_call = MessageHelper::GetFuncCall(*invoke_func_message);
     // Send message to engine (dispatcher)
     {
         absl::MutexLock lk(&mu_);
@@ -219,11 +212,11 @@ bool FuncWorker::WaitInvokeFunc(Message* invoke_func_message,
     VLOG(1) << "InvokeFuncMessage sent to engine";
     Message result_message;
     CHECK(io_utils::RecvMessage(input_pipe_fd_, &result_message, nullptr));
-    if (IsFuncCallFailedMessage(result_message)) {
+    if (MessageHelper::IsFuncCallFailed(result_message)) {
         absl::MutexLock lk(&mu_);
         ongoing_invoke_func_ = false;
         return false;
-    } else if (!IsFuncCallCompleteMessage(result_message)) {
+    } else if (!MessageHelper::IsFuncCallComplete(result_message)) {
         LOG(FATAL) << "Unknown message type";
     }
     InvokeFuncResource invoke_func_resource = {
@@ -257,7 +250,7 @@ bool FuncWorker::WaitInvokeFunc(Message* invoke_func_message,
         CHECK(size >= sizeof(Message));
         memcpy(buffer, &result_message, sizeof(Message));
         Message* message_copy = reinterpret_cast<Message*>(buffer);
-        std::span<const char> output = GetInlineDataFromMessage(*message_copy);
+        std::span<const char> output = MessageHelper::GetInlineData(*message_copy);
         invoke_func_resource.pipe_buffer = buffer;
         *output_data = output.data();
         *output_length = output.size();
@@ -269,7 +262,7 @@ bool FuncWorker::WaitInvokeFunc(Message* invoke_func_message,
 
 bool FuncWorker::FifoWaitInvokeFunc(Message* invoke_func_message,
                                     const char** output_data, size_t* output_length) {
-    FuncCall func_call = GetFuncCallFromMessage(*invoke_func_message);
+    FuncCall func_call = MessageHelper::GetFuncCall(*invoke_func_message);
     // Create fifo for output
     if (!ipc::FifoCreate(ipc::GetFuncCallOutputFifoName(func_call.full_call_id))) {
         LOG(ERROR) << "FifoCreate failed";

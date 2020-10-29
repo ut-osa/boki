@@ -22,20 +22,10 @@ namespace faas {
 namespace engine {
 
 using protocol::FuncCall;
-using protocol::FuncCallDebugString;
 using protocol::Message;
+using protocol::MessageHelper;
 using protocol::GatewayMessage;
-using protocol::GetFuncCallFromMessage;
-using protocol::GetInlineDataFromMessage;
-using protocol::IsLauncherHandshakeMessage;
-using protocol::IsFuncWorkerHandshakeMessage;
-using protocol::IsInvokeFuncMessage;
-using protocol::IsFuncCallCompleteMessage;
-using protocol::IsFuncCallFailedMessage;
-using protocol::NewHandshakeResponseMessage;
-using protocol::NewFuncCallCompleteGatewayMessage;
-using protocol::NewFuncCallFailedGatewayMessage;
-using protocol::ComputeMessageDelay;
+using protocol::GatewayMessageHelper;
 
 Engine::Engine()
     : gateway_port_(-1),
@@ -157,8 +147,8 @@ void Engine::OnConnectionClose(ConnectionBase* connection) {
 bool Engine::OnNewHandshake(MessageConnection* connection,
                             const Message& handshake_message, Message* response,
                             std::span<const char>* response_payload) {
-    if (!IsLauncherHandshakeMessage(handshake_message)
-          && !IsFuncWorkerHandshakeMessage(handshake_message)) {
+    if (!MessageHelper::IsLauncherHandshake(handshake_message)
+          && !MessageHelper::IsFuncWorkerHandshake(handshake_message)) {
         HLOG(ERROR) << "Received message is not a handshake message";
         return false;
     }
@@ -169,8 +159,8 @@ bool Engine::OnNewHandshake(MessageConnection* connection,
         return false;
     }
     bool success;
-    if (IsLauncherHandshakeMessage(handshake_message)) {
-        std::span<const char> payload = GetInlineDataFromMessage(handshake_message);
+    if (MessageHelper::IsLauncherHandshake(handshake_message)) {
+        std::span<const char> payload = MessageHelper::GetInlineData(handshake_message);
         if (payload.size() != docker_utils::kContainerIdLength) {
             HLOG(ERROR) << "Launcher handshake does not have container ID in inline data";
             return false;
@@ -187,15 +177,15 @@ bool Engine::OnNewHandshake(MessageConnection* connection,
     if (!success) {
         return false;
     }
-    if (IsLauncherHandshakeMessage(handshake_message)) {
-        *response = NewHandshakeResponseMessage(func_config_json_.size());
+    if (MessageHelper::IsLauncherHandshake(handshake_message)) {
+        *response = MessageHelper::NewHandshakeResponse(func_config_json_.size());
         if (func_worker_use_engine_socket_) {
             response->flags |= protocol::kFuncWorkerUseEngineSocketFlag;
         }
         *response_payload = std::span<const char>(func_config_json_.data(),
                                                   func_config_json_.size());
     } else {
-        *response = NewHandshakeResponseMessage(0);
+        *response = MessageHelper::NewHandshakeResponse(0);
         if (use_fifo_for_nested_call_) {
             response->flags |= protocol::kUseFifoForNestedCallFlag;
         }
@@ -206,8 +196,8 @@ bool Engine::OnNewHandshake(MessageConnection* connection,
 
 void Engine::OnRecvGatewayMessage(GatewayConnection* connection, const GatewayMessage& message,
                                   std::span<const char> payload) {
-    if (IsDispatchFuncCallMessage(message)) {
-        FuncCall func_call = GetFuncCallFromMessage(message);
+    if (GatewayMessageHelper::IsDispatchFuncCall(message)) {
+        FuncCall func_call = GatewayMessageHelper::GetFuncCall(message);
         OnExternalFuncCall(func_call, payload);
     } else {
         HLOG(ERROR) << "Unknown engine message type";
@@ -215,9 +205,9 @@ void Engine::OnRecvGatewayMessage(GatewayConnection* connection, const GatewayMe
 }
 
 void Engine::OnRecvMessage(MessageConnection* connection, const Message& message) {
-    int32_t message_delay = ComputeMessageDelay(message);
-    if (IsInvokeFuncMessage(message)) {
-        FuncCall func_call = GetFuncCallFromMessage(message);
+    int32_t message_delay = MessageHelper::ComputeMessageDelay(message);
+    if (MessageHelper::IsInvokeFunc(message)) {
+        FuncCall func_call = MessageHelper::GetFuncCall(message);
         FuncCall parent_func_call;
         parent_func_call.full_call_id = message.parent_call_id;
         Dispatcher* dispatcher = nullptr;
@@ -244,14 +234,15 @@ void Engine::OnRecvMessage(MessageConnection* connection, const Message& message
                 success = dispatcher->OnNewFuncCall(
                     func_call, parent_func_call,
                     /* input_size= */ gsl::narrow_cast<size_t>(message.payload_size),
-                    GetInlineDataFromMessage(message), /* shm_input= */ false);
+                    MessageHelper::GetInlineData(message), /* shm_input= */ false);
             }
         }
         if (!success) {
             HLOG(ERROR) << "Dispatcher failed for func_id " << func_call.func_id;
         }
-    } else if (IsFuncCallCompleteMessage(message) || IsFuncCallFailedMessage(message)) {
-        FuncCall func_call = GetFuncCallFromMessage(message);
+    } else if (MessageHelper::IsFuncCallComplete(message)
+               || MessageHelper::IsFuncCallFailed(message)) {
+        FuncCall func_call = MessageHelper::GetFuncCall(message);
         Dispatcher* dispatcher = nullptr;
         std::unique_ptr<ipc::ShmRegion> input_region = nullptr;
         {
@@ -259,7 +250,7 @@ void Engine::OnRecvMessage(MessageConnection* connection, const Message& message
             if (message_delay >= 0) {
                 message_delay_stat_.AddSample(message_delay);
             }
-            if (IsFuncCallCompleteMessage(message)) {
+            if (MessageHelper::IsFuncCallComplete(message)) {
                 if ((func_call.client_id == 0 && message.payload_size < 0)
                       || (func_call.client_id > 0
                           && message.payload_size + sizeof(int32_t) > PIPE_BUF)) {
@@ -273,7 +264,7 @@ void Engine::OnRecvMessage(MessageConnection* connection, const Message& message
         }
         bool success = false;
         if (dispatcher != nullptr) {
-            if (IsFuncCallCompleteMessage(message)) {
+            if (MessageHelper::IsFuncCallComplete(message)) {
                 success = dispatcher->OnFuncCallCompleted(
                     func_call, message.processing_time, message.dispatch_delay,
                     /* output_size= */ gsl::narrow_cast<size_t>(std::abs(message.payload_size)));
@@ -289,7 +280,7 @@ void Engine::OnRecvMessage(MessageConnection* connection, const Message& message
                                                       message.processing_time);
                         }
                     } else {
-                        ExternalFuncCallCompleted(func_call, GetInlineDataFromMessage(message),
+                        ExternalFuncCallCompleted(func_call, MessageHelper::GetInlineData(message),
                                                   message.processing_time);
                     }
                 }
@@ -382,7 +373,7 @@ void Engine::ExternalFuncCallCompleted(const protocol::FuncCall& func_call,
         HLOG(ERROR) << "There is not GatewayConnection associated with current IOWorker";
         return;
     }
-    GatewayMessage message = NewFuncCallCompleteGatewayMessage(func_call, processing_time);
+    GatewayMessage message = GatewayMessageHelper::NewFuncCallComplete(func_call, processing_time);
     message.payload_size = output.size();
     gateway_connection->as_ptr<GatewayConnection>()->SendMessage(message, output);
 }
@@ -397,7 +388,7 @@ void Engine::ExternalFuncCallFailed(const protocol::FuncCall& func_call, int sta
         HLOG(ERROR) << "There is not GatewayConnection associated with current IOWorker";
         return;
     }
-    GatewayMessage message = NewFuncCallFailedGatewayMessage(func_call, status_code);
+    GatewayMessage message = GatewayMessageHelper::NewFuncCallFailed(func_call, status_code);
     gateway_connection->as_ptr<GatewayConnection>()->SendMessage(message);
 }
 

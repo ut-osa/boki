@@ -11,7 +11,6 @@ namespace faas {
 namespace engine {
 
 using protocol::Message;
-using protocol::NewCreateFuncWorkerMessage;
 
 WorkerManager::WorkerManager(Engine* engine)
     : engine_(engine), next_client_id_(1) {}
@@ -136,7 +135,7 @@ bool WorkerManager::RequestNewFuncWorkerInternal(MessageConnection* launcher_con
         CHECK(ipc::FifoCreate(ipc::GetFuncWorkerOutputFifoName(client_id)))
             << "FifoCreate failed";
     }
-    Message message = NewCreateFuncWorkerMessage(client_id);
+    Message message = protocol::MessageHelper::NewCreateFuncWorker(client_id);
     launcher_connection->WriteMessage(message);
     *out_client_id = client_id;
     return true;

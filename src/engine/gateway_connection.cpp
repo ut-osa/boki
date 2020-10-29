@@ -18,7 +18,7 @@ namespace faas {
 namespace engine {
 
 using protocol::GatewayMessage;
-using protocol::NewEngineHandshakeGatewayMessage;
+using protocol::GatewayMessageHelper;
 
 GatewayConnection::GatewayConnection(Engine* engine, uint16_t conn_id, int sockfd)
     : ConnectionBase(kTypeId),
@@ -41,7 +41,7 @@ void GatewayConnection::Start(IOWorker* io_worker) {
     }
     current_io_uring()->PrepareBuffers(kBufGroup, kBufSize);
     URING_DCHECK_OK(current_io_uring()->RegisterFd(sockfd_));
-    handshake_message_ = NewEngineHandshakeGatewayMessage(engine_->node_id(), conn_id_);
+    handshake_message_ = GatewayMessageHelper::NewEngineHandshake(engine_->node_id(), conn_id_);
     URING_DCHECK_OK(current_io_uring()->SendAll(
         sockfd_, std::span<const char>(reinterpret_cast<const char*>(&handshake_message_),
                                        sizeof(GatewayMessage)),

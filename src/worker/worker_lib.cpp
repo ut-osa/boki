@@ -8,12 +8,7 @@ namespace worker_lib {
 
 using protocol::FuncCall;
 using protocol::Message;
-using protocol::IsDispatchFuncCallMessage;
-using protocol::GetFuncCallFromMessage;
-using protocol::GetInlineDataFromMessage;
-using protocol::SetInlineDataInMessage;
-using protocol::NewFuncCallCompleteMessage;
-using protocol::NewFuncCallFailedMessage;
+using protocol::MessageHelper;
 
 namespace {
 
@@ -76,11 +71,11 @@ bool WriteOutputToFifo(const FuncCall& func_call,
 bool GetFuncCallInput(const Message& dispatch_func_call_message,
                       std::span<const char>* input,
                       std::unique_ptr<ipc::ShmRegion>* shm_region) {
-    if (!IsDispatchFuncCallMessage(dispatch_func_call_message)) {
+    if (!MessageHelper::IsDispatchFuncCall(dispatch_func_call_message)) {
         LOG(ERROR) << "Expect DispatchFuncCall message in GetFuncCallInput";
         return false;
     }
-    FuncCall func_call = GetFuncCallFromMessage(dispatch_func_call_message);
+    FuncCall func_call = MessageHelper::GetFuncCall(dispatch_func_call_message);
     if (dispatch_func_call_message.payload_size < 0) {
         // Input in shm
         auto input_region = ipc::ShmOpen(ipc::GetFuncCallInputShmName(func_call.full_call_id));
@@ -92,7 +87,7 @@ bool GetFuncCallInput(const Message& dispatch_func_call_message,
         *shm_region = std::move(input_region);
     } else {
         // Input in message's inline data
-        *input = GetInlineDataFromMessage(dispatch_func_call_message);
+        *input = MessageHelper::GetInlineData(dispatch_func_call_message);
     }
     return true;
 }
@@ -101,20 +96,20 @@ void FifoFuncCallFinished(const FuncCall& func_call,
                           bool success, std::span<const char> output, int32_t processing_time,
                           char* pipe_buf, Message* response) {
     if (success) {
-        *response = NewFuncCallCompleteMessage(func_call, processing_time);
+        *response = MessageHelper::NewFuncCallComplete(func_call, processing_time);
     } else {
-        *response = NewFuncCallFailedMessage(func_call);
+        *response = MessageHelper::NewFuncCallFailed(func_call);
     }
     if (func_call.client_id == 0) {
         // FuncCall from gateway, will use message's inline data if possible
         if (success) {
             if (output.size() <= MESSAGE_INLINE_DATA_SIZE) {
-                SetInlineDataInMessage(response, output);
+                MessageHelper::SetInlineData(response, output);
             } else {
                 if (WriteOutputToShm(func_call, output)) {
                     response->payload_size = -gsl::narrow_cast<int32_t>(output.size());
                 } else {
-                    *response = NewFuncCallFailedMessage(func_call);
+                    *response = MessageHelper::NewFuncCallFailed(func_call);
                 }
             }
         }
@@ -123,7 +118,7 @@ void FifoFuncCallFinished(const FuncCall& func_call,
         if (WriteOutputToFifo(func_call, success, output, pipe_buf)) {
             response->payload_size = gsl::narrow_cast<int32_t>(output.size());
         } else {
-            *response = NewFuncCallFailedMessage(func_call);
+            *response = MessageHelper::NewFuncCallFailed(func_call);
         }
     }
 }
@@ -132,18 +127,18 @@ void FuncCallFinished(const protocol::FuncCall& func_call,
                       bool success, std::span<const char> output, int32_t processing_time,
                       protocol::Message* response) {
     if (success) {
-        *response = NewFuncCallCompleteMessage(func_call, processing_time);
+        *response = MessageHelper::NewFuncCallComplete(func_call, processing_time);
         if (output.size() <= MESSAGE_INLINE_DATA_SIZE) {
-            SetInlineDataInMessage(response, output);
+            MessageHelper::SetInlineData(response, output);
         } else {
             if (WriteOutputToShm(func_call, output)) {
                 response->payload_size = -gsl::narrow_cast<int32_t>(output.size());
             } else {
-                *response = NewFuncCallFailedMessage(func_call);
+                *response = MessageHelper::NewFuncCallFailed(func_call);
             }
         }
     } else {
-        *response = NewFuncCallFailedMessage(func_call);
+        *response = MessageHelper::NewFuncCallFailed(func_call);
     }
 }
 
@@ -151,9 +146,9 @@ bool PrepareNewFuncCall(const FuncCall& func_call, uint64_t parent_func_call,
                         std::span<const char> input,
                         std::unique_ptr<ipc::ShmRegion>* shm_region,
                         Message* invoke_func_message) {
-    *invoke_func_message = NewInvokeFuncMessage(func_call, parent_func_call);
+    *invoke_func_message = MessageHelper::NewInvokeFunc(func_call, parent_func_call);
     if (input.size() <= MESSAGE_INLINE_DATA_SIZE) {
-        SetInlineDataInMessage(invoke_func_message, input);
+        MessageHelper::SetInlineData(invoke_func_message, input);
     } else {
         // Create shm for input
         auto input_region = ipc::ShmCreate(
