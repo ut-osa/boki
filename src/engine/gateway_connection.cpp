@@ -1,18 +1,12 @@
 #include "engine/gateway_connection.h"
 
+#include "common/flags.h"
 #include "utils/socket.h"
 #include "engine/engine.h"
 
 #define HLOG(l) LOG(l) << log_header_
 #define HPLOG(l) PLOG(l) << log_header_
 #define HVLOG(l) VLOG(l) << log_header_
-
-#include <absl/flags/flag.h>
-
-ABSL_FLAG(bool, gateway_conn_enable_nodelay, true,
-          "Enable TCP_NODELAY for connections to gateway");
-ABSL_FLAG(bool, gateway_conn_enable_keepalive, true,
-          "Enable TCP keep-alive for connections to gateway");
 
 namespace faas {
 namespace engine {
@@ -33,10 +27,10 @@ void GatewayConnection::Start(IOWorker* io_worker) {
     DCHECK(state_ == kCreated);
     DCHECK(io_worker->WithinMyEventLoopThread());
     io_worker_ = io_worker;
-    if (absl::GetFlag(FLAGS_gateway_conn_enable_nodelay)) {
+    if (absl::GetFlag(FLAGS_tcp_enable_nodelay)) {
         CHECK(utils::SetTcpSocketNoDelay(sockfd_));
     }
-    if (absl::GetFlag(FLAGS_gateway_conn_enable_keepalive)) {
+    if (absl::GetFlag(FLAGS_tcp_enable_keepalive)) {
         CHECK(utils::SetTcpSocketKeepAlive(sockfd_));
     }
     current_io_uring()->PrepareBuffers(kBufGroup, kBufSize);

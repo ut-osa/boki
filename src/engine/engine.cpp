@@ -9,12 +9,6 @@
 #include "utils/socket.h"
 #include "worker/worker_lib.h"
 
-#include <absl/flags/flag.h>
-
-ABSL_FLAG(bool, disable_monitor, false, "");
-ABSL_FLAG(bool, func_worker_use_engine_socket, false, "");
-ABSL_FLAG(bool, use_fifo_for_nested_call, false, "");
-
 #define HLOG(l) LOG(l) << "Engine: "
 #define HVLOG(l) VLOG(l) << "Engine: "
 
@@ -32,13 +26,17 @@ Engine::Engine()
       listen_backlog_(kDefaultListenBackLog),
       num_io_workers_(kDefaultNumIOWorkers),
       gateway_conn_per_worker_(kDefaultGatewayConnPerWorker),
+      engine_conn_per_worker_(kDefaultEngineConnPerWorker),
       engine_tcp_port_(-1),
+      shared_log_tcp_port_(-1),
       func_worker_use_engine_socket_(absl::GetFlag(FLAGS_func_worker_use_engine_socket)),
       use_fifo_for_nested_call_(absl::GetFlag(FLAGS_use_fifo_for_nested_call)),
       server_sockfd_(-1),
+      shared_log_sockfd_(-1),
       next_ipc_conn_worker_id_(0),
+      next_shared_log_conn_worker_id_(0),
       worker_manager_(new WorkerManager(this)),
-      monitor_(absl::GetFlag(FLAGS_disable_monitor) ? nullptr : new Monitor(this)),
+      monitor_(absl::GetFlag(FLAGS_enable_monitor) ? new Monitor(this) : nullptr),
       tracer_(new Tracer(this)),
       inflight_external_requests_(0),
       last_external_request_timestamp_(-1),
@@ -109,6 +107,25 @@ void Engine::StartInternal() {
     }
     ListenForNewConnections(server_sockfd_,
                             absl::bind_front(&Engine::OnNewMessageConnection, this));
+    // Setup shared log
+    if (absl::GetFlag(FLAGS_enable_shared_log)) {
+        CHECK_NE(shared_log_tcp_port_, -1);
+        // Setup SharedLogMessageHub for each IOWorker
+        for (size_t i = 0; i < io_workers_.size(); i++) {
+            auto hub = std::make_unique<SharedLogMessageHub>(this);
+            RegisterConnection(io_workers_[i], hub.get());
+            shared_log_message_hubs_.insert(std::move(hub));
+        }
+        // Listen on shared_log_tcp_port
+        shared_log_sockfd_ = utils::TcpSocketBindAndListen(
+            "0.0.0.0", shared_log_tcp_port_, listen_backlog_);
+        CHECK(shared_log_sockfd_ != -1)
+            << fmt::format("Failed to listen on 0.0.0.0:{}", shared_log_tcp_port_);
+        HLOG(INFO) << fmt::format("Listen on 0.0.0.0:{} for shared log related connections",
+                                  shared_log_tcp_port_);
+        ListenForNewConnections(shared_log_tcp_port_,
+                                absl::bind_front(&Engine::OnNewSharedLogConnection, this));
+    }
     // Initialize tracer
     tracer_->Init();
 }
@@ -139,8 +156,15 @@ void Engine::OnConnectionClose(ConnectionBase* connection) {
         HLOG(WARNING) << fmt::format("Gateway connection (conn_id={}) disconencted",
                                      gateway_connection->conn_id());
         gateway_connections_.erase(connection->id());
+    } else if (connection->type() == IncomingSharedLogConnection::kTypeId) {
+        DCHECK(shared_log_connections_.contains(connection->id()));
+        shared_log_connections_.erase(connection->id());
+    } else if (connection->type() == SharedLogMessageHub::kTypeId) {
+        if (state_.load() != kStopping) {
+            HLOG(FATAL) << "SharedLogMessageHub should not be closed";
+        }
     } else {
-        HLOG(ERROR) << "Unknown connection type!";
+        HLOG(FATAL) << "Unknown connection type!";
     }
 }
 
@@ -204,101 +228,122 @@ void Engine::OnRecvGatewayMessage(GatewayConnection* connection, const GatewayMe
     }
 }
 
-void Engine::OnRecvMessage(MessageConnection* connection, const Message& message) {
+void Engine::HandleInvokeFuncMessage(const Message& message) {
+    DCHECK(MessageHelper::IsInvokeFunc(message));
     int32_t message_delay = MessageHelper::ComputeMessageDelay(message);
+    FuncCall func_call = MessageHelper::GetFuncCall(message);
+    FuncCall parent_func_call;
+    parent_func_call.full_call_id = message.parent_call_id;
+    Dispatcher* dispatcher = nullptr;
+    {
+        absl::MutexLock lk(&mu_);
+        incoming_internal_requests_stat_.Tick();
+        if (message.payload_size < 0) {
+            input_use_shm_stat_.Tick();
+        }
+        if (message_delay >= 0) {
+            message_delay_stat_.AddSample(message_delay);
+        }
+        dispatcher = GetOrCreateDispatcherLocked(func_call.func_id);
+    }
+    bool success = false;
+    if (dispatcher != nullptr) {
+        if (message.payload_size < 0) {
+            success = dispatcher->OnNewFuncCall(
+                func_call, parent_func_call,
+                /* input_size= */ gsl::narrow_cast<size_t>(-message.payload_size),
+                std::span<const char>(), /* shm_input= */ true);
+            
+        } else {
+            success = dispatcher->OnNewFuncCall(
+                func_call, parent_func_call,
+                /* input_size= */ gsl::narrow_cast<size_t>(message.payload_size),
+                MessageHelper::GetInlineData(message), /* shm_input= */ false);
+        }
+    }
+    if (!success) {
+        HLOG(ERROR) << "Dispatcher failed for func_id " << func_call.func_id;
+    }
+}
+
+void Engine::HandleFuncCallCompleteOrFailedMessage(const Message& message) {
+    DCHECK(MessageHelper::IsFuncCallComplete(message) || MessageHelper::IsFuncCallFailed(message));
+    int32_t message_delay = MessageHelper::ComputeMessageDelay(message);
+    FuncCall func_call = MessageHelper::GetFuncCall(message);
+    Dispatcher* dispatcher = nullptr;
+    std::unique_ptr<ipc::ShmRegion> input_region = nullptr;
+    {
+        absl::MutexLock lk(&mu_);
+        if (message_delay >= 0) {
+            message_delay_stat_.AddSample(message_delay);
+        }
+        if (MessageHelper::IsFuncCallComplete(message)) {
+            if ((func_call.client_id == 0 && message.payload_size < 0)
+                    || (func_call.client_id > 0
+                        && message.payload_size + sizeof(int32_t) > PIPE_BUF)) {
+                output_use_shm_stat_.Tick();
+            }
+        }
+        if (func_call.client_id == 0) {
+            input_region = GrabExternalFuncCallShmInput(func_call);
+        }
+        dispatcher = GetOrCreateDispatcherLocked(func_call.func_id);
+    }
+    bool success = false;
+    if (dispatcher != nullptr) {
+        if (MessageHelper::IsFuncCallComplete(message)) {
+            success = dispatcher->OnFuncCallCompleted(
+                func_call, message.processing_time, message.dispatch_delay,
+                /* output_size= */ gsl::narrow_cast<size_t>(std::abs(message.payload_size)));
+            if (success && func_call.client_id == 0) {
+                if (message.payload_size < 0) {
+                    auto output_region = ipc::ShmOpen(
+                        ipc::GetFuncCallOutputShmName(func_call.full_call_id));
+                    if (output_region == nullptr) {
+                        ExternalFuncCallFailed(func_call);
+                    } else {
+                        output_region->EnableRemoveOnDestruction();
+                        ExternalFuncCallCompleted(func_call, output_region->to_span(),
+                                                    message.processing_time);
+                    }
+                } else {
+                    ExternalFuncCallCompleted(func_call, MessageHelper::GetInlineData(message),
+                                                message.processing_time);
+                }
+            }
+        } else {
+            success = dispatcher->OnFuncCallFailed(func_call, message.dispatch_delay);
+            if (success && func_call.client_id == 0) {
+                ExternalFuncCallFailed(func_call);
+            }
+        }
+    }
+    if (success && func_call.client_id > 0 && !use_fifo_for_nested_call_) {
+        Message message_copy = message;
+        worker_manager_->GetFuncWorker(func_call.client_id)->SendMessage(&message_copy);
+    }
+}
+
+void Engine::HandleSharedLogOpMessage(const Message& message) {
+    DCHECK(MessageHelper::IsSharedLogOp(message));
+}
+
+void Engine::OnRecvMessage(MessageConnection* connection, const Message& message) {
     if (MessageHelper::IsInvokeFunc(message)) {
-        FuncCall func_call = MessageHelper::GetFuncCall(message);
-        FuncCall parent_func_call;
-        parent_func_call.full_call_id = message.parent_call_id;
-        Dispatcher* dispatcher = nullptr;
-        {
-            absl::MutexLock lk(&mu_);
-            incoming_internal_requests_stat_.Tick();
-            if (message.payload_size < 0) {
-                input_use_shm_stat_.Tick();
-            }
-            if (message_delay >= 0) {
-                message_delay_stat_.AddSample(message_delay);
-            }
-            dispatcher = GetOrCreateDispatcherLocked(func_call.func_id);
-        }
-        bool success = false;
-        if (dispatcher != nullptr) {
-            if (message.payload_size < 0) {
-                success = dispatcher->OnNewFuncCall(
-                    func_call, parent_func_call,
-                    /* input_size= */ gsl::narrow_cast<size_t>(-message.payload_size),
-                    std::span<const char>(), /* shm_input= */ true);
-                
-            } else {
-                success = dispatcher->OnNewFuncCall(
-                    func_call, parent_func_call,
-                    /* input_size= */ gsl::narrow_cast<size_t>(message.payload_size),
-                    MessageHelper::GetInlineData(message), /* shm_input= */ false);
-            }
-        }
-        if (!success) {
-            HLOG(ERROR) << "Dispatcher failed for func_id " << func_call.func_id;
-        }
+        HandleInvokeFuncMessage(message);
     } else if (MessageHelper::IsFuncCallComplete(message)
                || MessageHelper::IsFuncCallFailed(message)) {
-        FuncCall func_call = MessageHelper::GetFuncCall(message);
-        Dispatcher* dispatcher = nullptr;
-        std::unique_ptr<ipc::ShmRegion> input_region = nullptr;
-        {
-            absl::MutexLock lk(&mu_);
-            if (message_delay >= 0) {
-                message_delay_stat_.AddSample(message_delay);
-            }
-            if (MessageHelper::IsFuncCallComplete(message)) {
-                if ((func_call.client_id == 0 && message.payload_size < 0)
-                      || (func_call.client_id > 0
-                          && message.payload_size + sizeof(int32_t) > PIPE_BUF)) {
-                    output_use_shm_stat_.Tick();
-                }
-            }
-            if (func_call.client_id == 0) {
-                input_region = GrabExternalFuncCallShmInput(func_call);
-            }
-            dispatcher = GetOrCreateDispatcherLocked(func_call.func_id);
-        }
-        bool success = false;
-        if (dispatcher != nullptr) {
-            if (MessageHelper::IsFuncCallComplete(message)) {
-                success = dispatcher->OnFuncCallCompleted(
-                    func_call, message.processing_time, message.dispatch_delay,
-                    /* output_size= */ gsl::narrow_cast<size_t>(std::abs(message.payload_size)));
-                if (success && func_call.client_id == 0) {
-                    if (message.payload_size < 0) {
-                        auto output_region = ipc::ShmOpen(
-                            ipc::GetFuncCallOutputShmName(func_call.full_call_id));
-                        if (output_region == nullptr) {
-                            ExternalFuncCallFailed(func_call);
-                        } else {
-                            output_region->EnableRemoveOnDestruction();
-                            ExternalFuncCallCompleted(func_call, output_region->to_span(),
-                                                      message.processing_time);
-                        }
-                    } else {
-                        ExternalFuncCallCompleted(func_call, MessageHelper::GetInlineData(message),
-                                                  message.processing_time);
-                    }
-                }
-            } else {
-                success = dispatcher->OnFuncCallFailed(func_call, message.dispatch_delay);
-                if (success && func_call.client_id == 0) {
-                    ExternalFuncCallFailed(func_call);
-                }
-            }
-        }
-        if (success && func_call.client_id > 0 && !use_fifo_for_nested_call_) {
-            Message message_copy = message;
-            worker_manager_->GetFuncWorker(func_call.client_id)->SendMessage(&message_copy);
-        }
+        HandleFuncCallCompleteOrFailedMessage(message);
+    } else if (MessageHelper::IsSharedLogOp(message)) {
+        HandleSharedLogOpMessage(message);
     } else {
         LOG(ERROR) << "Unknown message type!";
     }
     ProcessDiscardedFuncCallIfNecessary();
+}
+
+void Engine::OnRecvSharedLogMessage(const protocol::Message& message) {
+
 }
 
 void Engine::OnExternalFuncCall(const FuncCall& func_call, std::span<const char> input) {
@@ -362,34 +407,30 @@ void Engine::OnExternalFuncCall(const FuncCall& func_call, std::span<const char>
     }
 }
 
-void Engine::ExternalFuncCallCompleted(const protocol::FuncCall& func_call,
-                                       std::span<const char> output, int32_t processing_time) {
-    inflight_external_requests_.fetch_add(-1);
+void Engine::SendGatewayMessage(const protocol::GatewayMessage& message,
+                                std::span<const char> payload) {
     IOWorker* io_worker = IOWorker::current();
     DCHECK(io_worker != nullptr);
-    ConnectionBase* gateway_connection = io_worker->PickConnection(
-        GatewayConnection::kTypeId);
-    if (gateway_connection == nullptr) {
+    ConnectionBase* conn = io_worker->PickConnection(GatewayConnection::kTypeId);
+    if (conn == nullptr) {
         HLOG(ERROR) << "There is not GatewayConnection associated with current IOWorker";
         return;
     }
+    conn->as_ptr<GatewayConnection>()->SendMessage(message, payload);
+}
+
+void Engine::ExternalFuncCallCompleted(const protocol::FuncCall& func_call,
+                                       std::span<const char> output, int32_t processing_time) {
+    inflight_external_requests_.fetch_add(-1);
     GatewayMessage message = GatewayMessageHelper::NewFuncCallComplete(func_call, processing_time);
     message.payload_size = output.size();
-    gateway_connection->as_ptr<GatewayConnection>()->SendMessage(message, output);
+    SendGatewayMessage(message, output);
 }
 
 void Engine::ExternalFuncCallFailed(const protocol::FuncCall& func_call, int status_code) {
     inflight_external_requests_.fetch_add(-1);
-    IOWorker* io_worker = IOWorker::current();
-    DCHECK(io_worker != nullptr);
-    ConnectionBase* gateway_connection = io_worker->PickConnection(
-        GatewayConnection::kTypeId);
-    if (gateway_connection == nullptr) {
-        HLOG(ERROR) << "There is not GatewayConnection associated with current IOWorker";
-        return;
-    }
     GatewayMessage message = GatewayMessageHelper::NewFuncCallFailed(func_call, status_code);
-    gateway_connection->as_ptr<GatewayConnection>()->SendMessage(message);
+    SendGatewayMessage(message);
 }
 
 Dispatcher* Engine::GetOrCreateDispatcher(uint16_t func_id) {
@@ -473,6 +514,18 @@ void Engine::OnNewMessageConnection(int sockfd) {
     DCHECK_GE(connection->id(), 0);
     DCHECK(!message_connections_.contains(connection->id()));
     message_connections_[connection->id()] = std::move(connection);
+}
+
+void Engine::OnNewSharedLogConnection(int sockfd) {
+    HLOG(INFO) << "New shared log connection";
+    std::shared_ptr<ConnectionBase> connection(new IncomingSharedLogConnection(this, sockfd));
+    DCHECK_LT(next_shared_log_conn_worker_id_, io_workers_.size());
+    IOWorker* io_worker = io_workers_[next_shared_log_conn_worker_id_];
+    next_shared_log_conn_worker_id_ = (next_shared_log_conn_worker_id_ + 1) % io_workers_.size();
+    RegisterConnection(io_worker, connection.get());
+    DCHECK_GE(connection->id(), 0);
+    DCHECK(!shared_log_connections_.contains(connection->id()));
+    shared_log_connections_[connection->id()] = std::move(connection);
 }
 
 }  // namespace engine

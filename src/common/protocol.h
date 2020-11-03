@@ -63,7 +63,7 @@ public:
     }
 
 private:
-    FuncCallHelper() = delete;
+    DISALLOW_IMPLICIT_CONSTRUCTORS(FuncCallHelper);
 };
 
 #undef NEW_EMPTY_FUNC_CALL
@@ -87,10 +87,13 @@ enum class MessageType : uint16_t {
 enum class SharedLogOpType : uint16_t {
     APPEND     = 0,
     REPLICATED = 1,
-    READ_AT    = 2,
-    READ_NEXT  = 3,
-    TRIM       = 4
+    DISCARDED  = 2,
+    READ_AT    = 3,
+    READ_NEXT  = 4,
+    TRIM       = 5
 };
+
+constexpr uint32_t kDefaultLogTag = std::numeric_limits<uint32_t>::max();
 
 constexpr uint32_t kFuncWorkerUseEngineSocketFlag = 1;
 constexpr uint32_t kUseFifoForNestedCallFlag = 2;
@@ -102,26 +105,28 @@ struct Message {
         uint16_t method_id    : 6;
         uint16_t client_id    : 14;
         uint32_t call_id;
-    }  __attribute__ ((packed));
+    } __attribute__ ((packed));
     union {
         uint64_t parent_call_id;  // Used in INVOKE_FUNC, saved as full_call_id
         struct {
             int32_t dispatch_delay;   // Used in FUNC_CALL_COMPLETE, FUNC_CALL_FAILED
             int32_t processing_time;  // Used in FUNC_CALL_COMPLETE
         } __attribute__ ((packed));
+        uint64_t log_seqnum;  // Used in SHARED_LOG_OP
     };
     int64_t send_timestamp;
-    int32_t payload_size;  // Used in HANDSHAKE_RESPONSE, INVOKE_FUNC, FUNC_CALL_COMPLETE
+    int32_t payload_size;  // Used in HANDSHAKE_RESPONSE, INVOKE_FUNC, FUNC_CALL_COMPLETE, SHARED_LOG_OP
     uint32_t flags;
 
     struct {
-        uint16_t log_op  : 4;
-        uint64_t log_tag : 60;
+        uint16_t log_op;
+        uint16_t padding1;
     } __attribute__ ((packed));
-    uint64_t log_id;
-    uint64_t log_seqnum;
 
-    char padding[__FAAS_CACHE_LINE_SIZE - 56];
+    uint32_t log_tag;
+    uint64_t log_localid;
+
+    char padding2[__FAAS_CACHE_LINE_SIZE - 48];
     char inline_data[__FAAS_MESSAGE_SIZE - __FAAS_CACHE_LINE_SIZE]
         __attribute__ ((aligned (__FAAS_CACHE_LINE_SIZE)));
 };
@@ -136,7 +141,7 @@ struct GatewayMessage {
         uint16_t method_id    : 6;
         uint16_t client_id    : 14;
         uint32_t call_id;
-    }  __attribute__ ((packed));
+    } __attribute__ ((packed));
     union {
         // Used in ENGINE_HANDSHAKE
         struct {
@@ -185,6 +190,10 @@ public:
         return static_cast<MessageType>(message.message_type) == MessageType::FUNC_CALL_FAILED;
     }
 
+    static bool IsSharedLogOp(const Message& message) {
+        return static_cast<MessageType>(message.message_type) == MessageType::SHARED_LOG_OP;
+    }
+
     static void SetFuncCall(Message* message, const FuncCall& func_call) {
         message->func_id = func_call.func_id;
         message->method_id = func_call.method_id;
@@ -214,13 +223,18 @@ public:
 
     static std::span<const char> GetInlineData(const Message& message) {
         if (IsInvokeFunc(message) || IsDispatchFuncCall(message)
-              || IsFuncCallComplete(message) || IsLauncherHandshake(message)) {
+              || IsFuncCallComplete(message) || IsLauncherHandshake(message)
+              || IsSharedLogOp(message)) {
             if (message.payload_size > 0) {
                 return std::span<const char>(
                     message.inline_data, gsl::narrow_cast<size_t>(message.payload_size));
             }
         }
         return std::span<const char>();
+    }
+
+    static SharedLogOpType GetSharedLogOpType(const Message& message) {
+        return static_cast<SharedLogOpType>(message.log_op);
     }
 
     static int32_t ComputeMessageDelay(const Message& message) {
@@ -293,10 +307,26 @@ public:
         return message;
     }
 
+    static Message NewSharedLogAppend(uint32_t log_tag) {
+        NEW_EMPTY_MESSAGE(message);
+        message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
+        message.log_op = static_cast<uint16_t>(SharedLogOpType::APPEND);
+        message.log_tag = log_tag;
+        return message;
+    }
+
+    static Message NewSharedLogReadAt(uint64_t log_seqnum) {
+        NEW_EMPTY_MESSAGE(message);
+        message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
+        message.log_op = static_cast<uint16_t>(SharedLogOpType::READ_AT);
+        message.log_seqnum = log_seqnum;
+        return message;
+    }
+
 #undef NEW_EMPTY_MESSAGE
 
 private:
-    MessageHelper() = delete;
+    DISALLOW_IMPLICIT_CONSTRUCTORS(MessageHelper);
 };
 
 class GatewayMessageHelper {
@@ -373,7 +403,7 @@ public:
 #undef NEW_EMPTY_GATEWAY_MESSAGE
 
 private:
-    GatewayMessageHelper() = delete;
+    DISALLOW_IMPLICIT_CONSTRUCTORS(GatewayMessageHelper);
 };
 
 }  // namespace protocol

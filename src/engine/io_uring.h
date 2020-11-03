@@ -19,6 +19,9 @@ public:
     bool RegisterFd(int fd);
     bool UnregisterFd(int fd);
 
+    typedef std::function<void(int /* status */)> ConnectCallback;
+    bool Connect(int fd, const struct sockaddr* addr, size_t addrlen, ConnectCallback cb);
+
     typedef std::function<bool(int /* status */, std::span<const char> /* data */)> ReadCallback;
     bool StartRead(int fd, uint16_t buf_gid, ReadCallback cb);
     bool StartRecv(int fd, uint16_t buf_gid, ReadCallback cb);
@@ -50,7 +53,7 @@ private:
     absl::flat_hash_map</* gid */ uint16_t, std::unique_ptr<utils::BufferPool>> buf_pools_;
     std::vector<int> ref_counts_;
 
-    enum OpType { kRead, kWrite, kSendAll, kClose, kCancel };
+    enum OpType { kConnect, kRead, kWrite, kSendAll, kClose, kCancel };
     enum {
         kOpFlagRepeat    = 1 << 0,
         kOpFlagUseRecv   = 1 << 1,
@@ -60,11 +63,19 @@ private:
     static constexpr size_t kInvalidFdIndex = std::numeric_limits<size_t>::max();
     struct Op {
         uint64_t id;         // Lower 8-bit stores type
-        size_t   fd_idx;     // Used by kRead, kWrite, kSendAll, kClose
+        size_t   fd_idx;     // Used by kConnect, kRead, kWrite, kSendAll, kClose
         uint16_t buf_gid;    // Used by kRead
         uint16_t flags;
-        char*    buf;        // Used by kRead, kWrite, kSendAll
-        size_t   buf_len;    // Used by kRead, kWrite, kSendAll
+        union {
+            char* buf;                    // Used by kRead
+            const char* data;             // Used by kWrite, kSendAll
+            const struct sockaddr* addr;  // Used by kConnect
+        };
+        union {
+            size_t buf_len;   // Used by kRead
+            size_t data_len;  // Used by kWrite, kSendAll
+            size_t addrlen;   // Used by kConnect
+        };
         uint64_t next_op;    // Used by kSendAll
     };
 
@@ -75,6 +86,7 @@ private:
     std::vector<Op*> read_ops_;
     std::vector<Op*> last_send_op_;
 
+    absl::flat_hash_map</* op_id */ uint64_t, ConnectCallback> connect_cbs_;
     absl::flat_hash_map</* op_id */ uint64_t, ReadCallback> read_cbs_;
     absl::flat_hash_map</* op_id */ uint64_t, WriteCallback> write_cbs_;
     absl::flat_hash_map</* op_id */ uint64_t, SendAllCallback> sendall_cbs_;
@@ -92,6 +104,7 @@ private:
 
     bool StartReadInternal(int fd, uint16_t buf_gid, uint16_t flags, ReadCallback cb);
 
+    Op* AllocConnectOp(size_t fd_idx, const struct sockaddr* addr, size_t addrlen);
     Op* AllocReadOp(size_t fd_idx, uint16_t buf_gid, std::span<char> buf, uint16_t flags);
     Op* AllocWriteOp(size_t fd_idx, std::span<const char> data);
     Op* AllocSendAllOp(size_t fd_idx, std::span<const char> data);
@@ -103,6 +116,7 @@ private:
     void RefFd(size_t fd_idx);
     void UnrefFd(size_t fd_idx);
 
+    void HandleConnectComplete(Op* op, int res);
     void HandleReadOpComplete(Op* op, int res);
     void HandleWriteOpComplete(Op* op, int res);
     void HandleSendallOpComplete(Op* op, int res);

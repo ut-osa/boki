@@ -2,8 +2,10 @@
 
 #include "base/common.h"
 #include "common/protocol.h"
+#include "common/flags.h"
 #include "common/func_config.h"
 #include "ipc/shm_region.h"
+#include "log/core.h"
 #include "engine/server_base.h"
 #include "engine/gateway_connection.h"
 #include "engine/message_connection.h"
@@ -11,6 +13,7 @@
 #include "engine/worker_manager.h"
 #include "engine/monitor.h"
 #include "engine/tracer.h"
+#include "engine/shared_log.h"
 
 namespace faas {
 namespace engine {
@@ -20,6 +23,7 @@ public:
     static constexpr int kDefaultListenBackLog = 64;
     static constexpr int kDefaultNumIOWorkers = 1;
     static constexpr int kDefaultGatewayConnPerWorker = 2;
+    static constexpr int kDefaultEngineConnPerWorker = 2;
 
     Engine();
     ~Engine();
@@ -30,21 +34,23 @@ public:
     }
     void set_num_io_workers(int value) { num_io_workers_ = value; }
     void set_gateway_conn_per_worker(int value) { gateway_conn_per_worker_ = value; }
+    void set_engine_conn_per_worker(int value) { engine_conn_per_worker_ = value; }
     void set_node_id(uint16_t value) { node_id_ = value; }
     void set_func_config_file(std::string_view path) {
         func_config_file_ = std::string(path);
     }
-    void set_engine_tcp_port(int port) {
-        engine_tcp_port_ = port;
-    }
+    void set_engine_tcp_port(int port) { engine_tcp_port_ = port; }
+    void set_shared_log_tcp_port(int port) { shared_log_tcp_port_ = port; }
 
     uint16_t node_id() const { return node_id_; }
     FuncConfig* func_config() { return &func_config_; }
     int engine_tcp_port() const { return engine_tcp_port_; }
-    bool func_worker_use_engine_socket() { return func_worker_use_engine_socket_; }
+    bool func_worker_use_engine_socket() const { return func_worker_use_engine_socket_; }
+    int engine_conn_per_worker() const { return engine_conn_per_worker_; }
     WorkerManager* worker_manager() { return worker_manager_.get(); }
     Monitor* monitor() { return monitor_.get(); }
     Tracer* tracer() { return tracer_.get(); }
+    log::Core* log_core() { return log_core_.get(); }
 
     // Must be thread-safe
     bool OnNewHandshake(MessageConnection* connection,
@@ -55,6 +61,9 @@ public:
     void OnRecvGatewayMessage(GatewayConnection* connection,
                               const protocol::GatewayMessage& message,
                               std::span<const char> payload);
+    void OnRecvSharedLogMessage(const protocol::Message& message);
+    void SendGatewayMessage(const protocol::GatewayMessage& message,
+                            std::span<const char> payload = std::span<const char>());
     Dispatcher* GetOrCreateDispatcher(uint16_t func_id);
     void DiscardFuncCall(const protocol::FuncCall& func_call);
 
@@ -66,7 +75,9 @@ private:
     int listen_backlog_;
     int num_io_workers_;
     int gateway_conn_per_worker_;
+    int engine_conn_per_worker_;
     int engine_tcp_port_;
+    int shared_log_tcp_port_;
     uint16_t node_id_;
     std::string func_config_file_;
     std::string func_config_json_;
@@ -75,15 +86,21 @@ private:
     bool use_fifo_for_nested_call_;
 
     int server_sockfd_;
+    int shared_log_sockfd_;
 
     std::vector<IOWorker*> io_workers_;
     size_t next_ipc_conn_worker_id_;
+    size_t next_shared_log_conn_worker_id_;
 
     absl::flat_hash_map</* id */ int, std::shared_ptr<ConnectionBase>> message_connections_;
     absl::flat_hash_map</* id */ int, std::shared_ptr<ConnectionBase>> gateway_connections_;
+    absl::flat_hash_map</* id */ int, std::shared_ptr<ConnectionBase>> shared_log_connections_;
+    absl::flat_hash_set<std::unique_ptr<SharedLogMessageHub>> shared_log_message_hubs_;
+
     std::unique_ptr<WorkerManager> worker_manager_;
     std::unique_ptr<Monitor> monitor_;
     std::unique_ptr<Tracer> tracer_;
+    std::unique_ptr<log::Core> log_core_;
 
     std::atomic<int> inflight_external_requests_;
 
@@ -110,6 +127,12 @@ private:
     void OnConnectionClose(ConnectionBase* connection) override;
 
     void OnNewMessageConnection(int sockfd);
+    void OnNewSharedLogConnection(int sockfd);
+
+    // Must be thread-safe
+    void HandleInvokeFuncMessage(const protocol::Message& message);
+    void HandleFuncCallCompleteOrFailedMessage(const protocol::Message& message);
+    void HandleSharedLogOpMessage(const protocol::Message& message);
 
     void OnExternalFuncCall(const protocol::FuncCall& func_call, std::span<const char> input);
     void ExternalFuncCallCompleted(const protocol::FuncCall& func_call,

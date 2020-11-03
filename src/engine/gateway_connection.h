@@ -2,7 +2,6 @@
 
 #include "base/common.h"
 #include "common/protocol.h"
-#include "common/stat.h"
 #include "utils/appendable_buffer.h"
 #include "engine/io_worker.h"
 
@@ -26,7 +25,7 @@ public:
     void ScheduleClose() override;
 
     void SendMessage(const protocol::GatewayMessage& message,
-                     std::span<const char> payload = std::span<const char>());
+                     std::span<const char> payload);
 
 private:
     enum State { kCreated, kHandshake, kRunning, kClosing, kClosed };
@@ -44,7 +43,6 @@ private:
 
     void ProcessGatewayMessages();
     bool OnRecvData(int status, std::span<const char> data);
-    void CloseCallback();
 
     DISALLOW_COPY_AND_ASSIGN(GatewayConnection);
 };

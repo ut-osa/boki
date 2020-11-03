@@ -1,15 +1,7 @@
 #include "engine/io_uring.h"
 
 #include "common/time.h"
-
-#include <absl/flags/flag.h>
-
-ABSL_FLAG(int, io_uring_entries, 128, "");
-ABSL_FLAG(int, io_uring_fd_slots, 128, "");
-ABSL_FLAG(bool, io_uring_sqpoll, false, "");
-ABSL_FLAG(int, io_uring_sq_thread_idle_ms, 1, "");
-ABSL_FLAG(int, io_uring_cq_nr_wait, 1, "");
-ABSL_FLAG(int, io_uring_cq_wait_timeout_us, 0, "");
+#include "common/flags.h"
 
 #define ERRNO_LOGSTR(errno) fmt::format("{} [{}]", strerror(errno), errno)
 
@@ -139,6 +131,15 @@ bool IOUring::UnregisterFd(int fd) {
     fd_indices_.erase(fd);
     LOG(INFO) << fmt::format("io_uring[{}]: unregister fd {}, {} registered fds in total",
                              uring_id_, fd, fd_indices_.size());
+    return true;
+}
+
+bool IOUring::Connect(int fd, const struct sockaddr* addr, size_t addrlen, ConnectCallback cb) {
+    CHECK_AND_GET_FD_INDEX(fd, fd_idx);
+    CHECK_IF_CLOSED(fd_idx);
+    Op* op = AllocConnectOp(fd_idx, addr, addrlen);
+    connect_cbs_[op->id] = cb;
+    EnqueueOp(op);
     return true;
 }
 
@@ -305,6 +306,15 @@ void IOUring::EventLoopRunOnce(int* inflight_ops) {
     OP_VAR->next_op = kInvalidOpId;      \
     ops_[op->id] = op
 
+IOUring::Op* IOUring::AllocConnectOp(size_t fd_idx, const struct sockaddr* addr, size_t addrlen) {
+    ALLOC_OP(kConnect, op);
+    op->fd_idx = fd_idx;
+    op->addr = addr;
+    op->addrlen = addrlen;
+    RefFd(fd_idx);
+    return op;
+}
+
 IOUring::Op* IOUring::AllocReadOp(size_t fd_idx, uint16_t buf_gid, std::span<char> buf,
                                   uint16_t flags) {
     ALLOC_OP(kRead, op);
@@ -321,8 +331,8 @@ IOUring::Op* IOUring::AllocReadOp(size_t fd_idx, uint16_t buf_gid, std::span<cha
 IOUring::Op* IOUring::AllocWriteOp(size_t fd_idx, std::span<const char> data) {
     ALLOC_OP(kWrite, op);
     op->fd_idx = fd_idx;
-    op->buf = const_cast<char*>(data.data());
-    op->buf_len = data.size();
+    op->data = data.data();
+    op->data_len = data.size();
     RefFd(fd_idx);
     return op;
 }
@@ -330,8 +340,8 @@ IOUring::Op* IOUring::AllocWriteOp(size_t fd_idx, std::span<const char> data) {
 IOUring::Op* IOUring::AllocSendAllOp(size_t fd_idx, std::span<const char> data) {
     ALLOC_OP(kSendAll, op);
     op->fd_idx = fd_idx;
-    op->buf = const_cast<char*>(data.data());
-    op->buf_len = data.size();
+    op->data = data.data();
+    op->data_len = data.size();
     RefFd(fd_idx);
     return op;
 }
@@ -356,6 +366,10 @@ void IOUring::EnqueueOp(Op* op) {
                            op->id, op_type(op), fds_[op->fd_idx]);
     struct io_uring_sqe* sqe = io_uring_get_sqe(&ring_);
     switch (op_type(op)) {
+    case kConnect:
+        io_uring_prep_connect(sqe, op->fd_idx, op->addr, op->addrlen);
+        io_uring_sqe_set_flags(sqe, IOSQE_FIXED_FILE | IOSQE_ASYNC);
+        break;
     case kRead:
         if (op->flags & kOpFlagUseRecv) {
             io_uring_prep_recv(sqe, op->fd_idx, op->buf, op->buf_len, 0);
@@ -365,16 +379,15 @@ void IOUring::EnqueueOp(Op* op) {
         io_uring_sqe_set_flags(sqe, IOSQE_FIXED_FILE | IOSQE_ASYNC);
         break;
     case kWrite:
-        io_uring_prep_write(sqe, op->fd_idx, op->buf, op->buf_len, 0);
+        io_uring_prep_write(sqe, op->fd_idx, op->data, op->data_len, 0);
         io_uring_sqe_set_flags(sqe, IOSQE_FIXED_FILE);
         break;
     case kSendAll:
-        io_uring_prep_send(sqe, op->fd_idx, op->buf, op->buf_len, 0);
+        io_uring_prep_send(sqe, op->fd_idx, op->data, op->data_len, 0);
         io_uring_sqe_set_flags(sqe, IOSQE_FIXED_FILE);
         break;
     case kClose:
         io_uring_prep_close(sqe, fds_[op->fd_idx]);
-        // io_uring_sqe_set_flags(sqe, IOSQE_FIXED_FILE);
         break;
     case kCancel:
         io_uring_prep_cancel(sqe, reinterpret_cast<void*>(op->next_op), 0);
@@ -388,6 +401,9 @@ void IOUring::OnOpComplete(Op* op, struct io_uring_cqe* cqe) {
     VLOG(1) << fmt::format("Op completed: id={}, type={}, fd={}, res={}",
                            op->id, op_type(op), fds_[op->fd_idx], res);
     switch (op_type(op)) {
+    case kConnect:
+        HandleConnectComplete(op, res);
+        break;
     case kRead:
         HandleReadOpComplete(op, res);
         break;
@@ -427,6 +443,18 @@ void IOUring::UnrefFd(size_t fd_idx) {
         DCHECK(!close_cbs_[fd_idx]);
         cb();
     }
+}
+
+void IOUring::HandleConnectComplete(Op* op, int res) {
+    DCHECK_EQ(op_type(op), kConnect);
+    DCHECK(connect_cbs_.contains(op->id));
+    if (res >= 0) {
+        connect_cbs_[op->id](0);
+    } else {
+        errno = -res;
+        connect_cbs_[op->id](-1);
+    }
+    connect_cbs_.erase(op->id);
 }
 
 void IOUring::HandleReadOpComplete(Op* op, int res) {

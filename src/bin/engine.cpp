@@ -13,6 +13,8 @@ ABSL_FLAG(std::string, gateway_addr, "127.0.0.1", "Gateway address");
 ABSL_FLAG(int, gateway_port, 10007, "Gataway port");
 ABSL_FLAG(int, engine_tcp_port, -1,
           "If set, Launcher and FuncWorker will communicate with engine via localhost TCP socket");
+ABSL_FLAG(int, shared_log_tcp_port, -1,
+          "Port to listen for shared log connections from other nodes.");
 ABSL_FLAG(int, num_io_workers, 1, "Number of IO workers.");
 ABSL_FLAG(int, gateway_conn_per_worker, 2, "Number of gateway connections per IO worker.");
 ABSL_FLAG(int, node_id, -1,
