@@ -236,6 +236,7 @@ void IOWorker::StopInternal() {
         return;
     }
     HLOG(INFO) << "Start stopping process";
+    state_.store(kStopping);
     if (connections_.empty() && connections_on_closing_ == 0) {
         CloseWorkerFds();
     } else {
@@ -244,7 +245,6 @@ void IOWorker::StopInternal() {
             connection->ScheduleClose();
         }
     }
-    state_.store(kStopping);
 }
 
 void IOWorker::CloseWorkerFds() {

@@ -459,7 +459,6 @@ void IOUring::HandleConnectComplete(Op* op, int res) {
 
 void IOUring::HandleReadOpComplete(Op* op, int res) {
     DCHECK_EQ(op_type(op), kRead);
-    read_ops_[op->fd_idx] = nullptr;
     DCHECK(read_cbs_.contains(op->id));
     bool repeat = false;
     if (res >= 0) {
@@ -470,6 +469,7 @@ void IOUring::HandleReadOpComplete(Op* op, int res) {
         errno = -res;
         repeat = read_cbs_[op->id](-1, std::span<const char>());
     }
+    read_ops_[op->fd_idx] = nullptr;
     if ((op->flags & kOpFlagRepeat) != 0
             && (op->flags & kOpFlagCancelled) == 0
             && repeat) {
