@@ -104,7 +104,8 @@ void NodeManager::NewConnectedNode(uint16_t node_id) {
     connected_node_list_.push_back(node);
     connected_nodes_[node_id] = std::unique_ptr<Node>(node);
     max_running_requests_ = absl::GetFlag(FLAGS_max_running_requests) * connected_nodes_.size();
-    HLOG(INFO) << "Number of connected nodes: " << connected_nodes_.size();
+    HLOG(INFO) << fmt::format("Node with id {} connected, total number of connected nodes: {}",
+                              node_id, connected_nodes_.size());
 }
 
 bool NodeManager::SendMessage(uint16_t node_id, const protocol::GatewayMessage& message,

@@ -339,27 +339,6 @@ bool Server::DispatchFuncCall(std::shared_ptr<server::ConnectionBase> parent_con
         FinishFuncCall(std::move(parent_connection), func_call_context);
     }
     return success;
-    //     engine_connection->as_ptr<EngineConnection>()->SendMessage(
-    //         dispatch_message, func_call_context->input());
-    // server::IOWorker* io_worker = server::IOWorker::current();
-    // DCHECK(io_worker != nullptr);
-    // server::ConnectionBase* engine_connection = io_worker->PickConnection(
-    //     EngineConnection::type_id(node_id));
-    // if (engine_connection != nullptr) {
-    //     GatewayMessage dispatch_message = GatewayMessageHelper::NewDispatchFuncCall(func_call);
-    //     dispatch_message.payload_size = func_call_context->input().size();
-    //     engine_connection->as_ptr<EngineConnection>()->SendMessage(
-    //         dispatch_message, func_call_context->input());
-    // } else {
-    //     HLOG(WARNING) << "There is no engine connection for node_id=" << node_id;
-    //     {
-    //         absl::MutexLock lk(&mu_);
-    //         DCHECK(running_func_calls_.contains(func_call.full_call_id));
-    //         running_func_calls_.erase(func_call.full_call_id);
-    //     }
-    //     func_call_context->set_status(FuncCallContext::kNotFound);
-    //     FinishFuncCall(std::move(parent_connection), func_call_context);
-    // }
 }
 
 void Server::FinishFuncCall(std::shared_ptr<server::ConnectionBase> parent_connection,
