@@ -36,6 +36,12 @@ void GatewayConnection::Start(IOWorker* io_worker) {
     current_io_uring()->PrepareBuffers(kBufGroup, kBufSize);
     URING_DCHECK_OK(current_io_uring()->RegisterFd(sockfd_));
     handshake_message_ = GatewayMessageHelper::NewEngineHandshake(engine_->node_id(), conn_id_);
+    if (absl::GetFlag(FLAGS_enable_shared_log)) {
+        std::string addr_port = fmt::format(
+            "{}:{}", engine_->shared_log_tcp_host(), engine_->shared_log_tcp_port());
+        CHECK_LT(addr_port.length(), sizeof(handshake_message_.shared_log_addr));
+        memcpy(&handshake_message_.shared_log_addr, addr_port.data(), addr_port.size());
+    }
     URING_DCHECK_OK(current_io_uring()->SendAll(
         sockfd_, std::span<const char>(reinterpret_cast<const char*>(&handshake_message_),
                                        sizeof(GatewayMessage)),

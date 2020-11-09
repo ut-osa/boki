@@ -1,8 +1,9 @@
-#include "engine/shared_log.h"
+#include "engine/shared_log_connection.h"
 
 #include "common/flags.h"
 #include "utils/socket.h"
 #include "engine/engine.h"
+#include "engine/shared_log_engine.h"
 
 #define HLOG(l) LOG(l) << log_header_
 #define HPLOG(l) PLOG(l) << log_header_
@@ -71,9 +72,9 @@ bool IncomingSharedLogConnection::OnRecvData(int status, std::span<const char> d
     return true;
 }
 
-SharedLogMessageHub::SharedLogMessageHub(Engine* engine)
+SharedLogMessageHub::SharedLogMessageHub(Engine* engine, SharedLogEngine* shared_log_engine)
     : ConnectionBase(kTypeId),
-      engine_(engine), state_(kCreated),
+      engine_(engine), shared_log_engine_(shared_log_engine), state_(kCreated),
       log_header_("SharedLogMessageHub: ") {
 }
 
@@ -248,7 +249,7 @@ void SharedLogMessageHub::SendMessage(uint16_t view_id, uint16_t node_id,
 
 void SharedLogMessageHub::SetupConnections(uint16_t view_id, uint16_t node_id) {
     DCHECK(io_worker_->WithinMyEventLoopThread());
-    const log::View* view = engine_->log_core()->GetView(view_id);
+    const log::View* view = shared_log_engine_->log_core()->GetView(view_id);
     DCHECK(view != nullptr);
     struct sockaddr_in addr;
     if (!utils::FillTcpSocketAddr(&addr, view->get_host(node_id), view->get_port(node_id))) {

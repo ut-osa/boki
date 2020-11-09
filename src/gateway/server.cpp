@@ -3,16 +3,11 @@
 #include "ipc/base.h"
 #include "ipc/shm_region.h"
 #include "common/time.h"
+#include "common/flags.h"
 #include "utils/fs.h"
 #include "utils/io.h"
 #include "utils/docker.h"
 #include "worker/worker_lib.h"
-
-#include <absl/flags/flag.h>
-
-ABSL_FLAG(size_t, max_running_requests, 0, "");
-ABSL_FLAG(bool, lb_per_fn_round_robin, false, "");
-ABSL_FLAG(bool, lb_pick_least_load, false, "");
 
 #define HLOG(l) LOG(l) << "Server: "
 #define HVLOG(l) VLOG(l) << "Server: "
@@ -31,11 +26,12 @@ Server::Server()
       grpc_port_(-1),
       listen_backlog_(kDefaultListenBackLog),
       num_io_workers_(kDefaultNumIOWorkers),
-      max_running_requests_(0),
       next_http_conn_worker_id_(0),
       next_grpc_conn_worker_id_(0),
       next_http_connection_id_(0),
       next_grpc_connection_id_(0),
+      node_manager_(this),
+      shared_log_(absl::GetFlag(FLAGS_enable_shared_log) ? new SharedLog(this) : nullptr),
       read_buffer_pool_("HandshakeRead", 128),
       next_call_id_(1),
       last_request_timestamp_(-1),
@@ -166,76 +162,101 @@ void Server::DiscardFuncCall(FuncCallContext* func_call_context) {
     discarded_func_calls_.insert(func_call_context->func_call().full_call_id);
 }
 
-void Server::OnRecvEngineMessage(EngineConnection* src_connection, const GatewayMessage& message,
+void Server::OnNewConnectedNode(EngineConnection* connection) {
+    if (absl::GetFlag(FLAGS_enable_shared_log)) {
+        shared_log_->OnNewNodeConnected(connection->node_id(), connection->shared_log_addr());
+    }
+    TryDispatchingPendingFuncCalls();
+}
+
+void Server::TryDispatchingPendingFuncCalls() {
+    mu_.Lock();
+    while (!pending_func_calls_.empty()) {
+        FuncCallState state = std::move(pending_func_calls_.front());
+        pending_func_calls_.pop_front();
+        FuncCall func_call = state.func_call;
+        if (discarded_func_calls_.contains(func_call.full_call_id)) {
+            discarded_func_calls_.erase(func_call.full_call_id);
+            continue;
+        }
+        std::shared_ptr<server::ConnectionBase> parent_connection;
+        if (!connections_.contains(state.connection_id)) {
+            continue;
+        }
+        parent_connection = connections_[state.connection_id];
+        mu_.Unlock();
+        uint16_t node_id;
+        bool node_picked = node_manager_.PickNodeForNewFuncCall(func_call, &node_id);
+        bool dispatch_success = false;
+        if (node_picked) {
+            dispatch_success = DispatchFuncCall(std::move(parent_connection),
+                                                state.context, node_id);
+        }
+        mu_.Lock();
+        if (!node_picked) {
+            pending_func_calls_.push_front(std::move(state));
+            break;
+        }
+        state.dispatch_timestamp = GetMonotonicMicroTimestamp();
+        queueing_delay_stat_.AddSample(gsl::narrow_cast<int32_t>(
+            state.dispatch_timestamp - state.recv_timestamp));
+        if (dispatch_success) {
+            running_func_calls_[func_call.full_call_id] = std::move(state);
+            running_requests_stat_.AddSample(
+                gsl::narrow_cast<uint16_t>(running_func_calls_.size()));
+        }
+    }
+    mu_.Unlock();
+}
+
+void Server::HandleFuncCallCompleteOrFailedMessage(uint16_t node_id,
+                                                   const protocol::GatewayMessage& message,
+                                                   std::span<const char> payload) {
+    DCHECK(GatewayMessageHelper::IsFuncCallComplete(message)
+             || GatewayMessageHelper::IsFuncCallFailed(message));
+    FuncCall func_call = GatewayMessageHelper::GetFuncCall(message);
+    node_manager_.FuncCallFinished(func_call, node_id);
+    FuncCallContext* func_call_context = nullptr;
+    std::shared_ptr<server::ConnectionBase> parent_connection;
+    {
+        absl::MutexLock lk(&mu_);
+        if (running_func_calls_.contains(func_call.full_call_id)) {
+            const FuncCallState& full_call_state = running_func_calls_[func_call.full_call_id];
+            // Check if corresponding connection is still active
+            if (connections_.contains(full_call_state.connection_id)
+                    && !discarded_func_calls_.contains(func_call.full_call_id)) {
+                parent_connection = connections_[full_call_state.connection_id];
+                func_call_context = full_call_state.context;
+            }
+            if (discarded_func_calls_.contains(func_call.full_call_id)) {
+                discarded_func_calls_.erase(func_call.full_call_id);
+            }
+            dispatch_overhead_stat_.AddSample(gsl::narrow_cast<int32_t>(
+                GetMonotonicMicroTimestamp()
+                - full_call_state.dispatch_timestamp
+                - message.processing_time));
+            running_func_calls_.erase(func_call.full_call_id);
+        }
+    }
+    if (func_call_context != nullptr) {
+        if (GatewayMessageHelper::IsFuncCallComplete(message)) {
+            func_call_context->set_status(FuncCallContext::kSuccess);
+            func_call_context->append_output(payload);
+        } else if (GatewayMessageHelper::IsFuncCallFailed(message)) {
+            func_call_context->set_status(FuncCallContext::kFailed);
+        } else {
+            HLOG(FATAL) << "Unreachable";
+        }
+        FinishFuncCall(std::move(parent_connection), func_call_context);
+    }
+    TryDispatchingPendingFuncCalls();
+}
+
+void Server::OnRecvEngineMessage(EngineConnection* connection, const GatewayMessage& message,
                                  std::span<const char> payload) {
-    int64_t current_timestamp = GetMonotonicMicroTimestamp();
     if (GatewayMessageHelper::IsFuncCallComplete(message)
             || GatewayMessageHelper::IsFuncCallFailed(message)) {
-        FuncCall func_call = GatewayMessageHelper::GetFuncCall(message);
-        FuncCallContext* func_call_context = nullptr;
-        std::shared_ptr<server::ConnectionBase> connection;
-        FuncCallContext* next_func_call = nullptr;
-        std::shared_ptr<server::ConnectionBase> next_connection;
-        uint16_t node_id = 0;
-        {
-            absl::MutexLock lk(&mu_);
-            if (running_func_calls_.contains(func_call.full_call_id)) {
-                const FuncCallState& full_call_state = running_func_calls_[func_call.full_call_id];
-                // Check if corresponding connection is still active
-                if (connections_.contains(full_call_state.connection_id)
-                      && !discarded_func_calls_.contains(func_call.full_call_id)) {
-                    connection = connections_[full_call_state.connection_id];
-                    func_call_context = full_call_state.context;
-                }
-                if (discarded_func_calls_.contains(func_call.full_call_id)) {
-                    discarded_func_calls_.erase(func_call.full_call_id);
-                }
-                dispatch_overhead_stat_.AddSample(gsl::narrow_cast<int32_t>(
-                    current_timestamp - full_call_state.dispatch_timestamp - message.processing_time));
-                running_func_calls_.erase(func_call.full_call_id);
-                FuncCallState state;
-                if (max_running_requests_ == 0 || running_func_calls_.size() < max_running_requests_) {
-                    while (!pending_func_calls_.empty()) {
-                        state = std::move(pending_func_calls_.front());
-                        pending_func_calls_.pop();
-                        if (discarded_func_calls_.contains(state.func_call.full_call_id)) {
-                            discarded_func_calls_.erase(state.func_call.full_call_id);
-                            continue;
-                        }
-                        if (connections_.contains(state.connection_id)) {
-                            next_connection = connections_[state.connection_id];
-                            next_func_call = state.context;
-                            break;
-                        }
-                    }
-                }
-                inflight_requests_per_node_[src_connection->node_id()]--;
-                if (next_func_call != nullptr) {
-                    FuncCall func_call = next_func_call->func_call();
-                    state.dispatch_timestamp = current_timestamp;
-                    queueing_delay_stat_.AddSample(gsl::narrow_cast<int32_t>(
-                        current_timestamp - state.recv_timestamp));
-                    running_func_calls_[func_call.full_call_id] = std::move(state);
-                    node_id = PickNextNode(func_call);
-                    running_requests_stat_.AddSample(
-                        gsl::narrow_cast<uint16_t>(running_func_calls_.size()));
-                }
-            }
-        }
-        if (func_call_context != nullptr) {
-            if (GatewayMessageHelper::IsFuncCallComplete(message)) {
-                func_call_context->set_status(FuncCallContext::kSuccess);
-                func_call_context->append_output(payload);
-            } else if (GatewayMessageHelper::IsFuncCallFailed(message)) {
-                func_call_context->set_status(FuncCallContext::kFailed);
-            } else {
-                HLOG(FATAL) << "Unreachable";
-            }
-            FinishFuncCall(std::move(connection), func_call_context);
-        }
-        if (next_func_call != nullptr) {
-            DispatchFuncCall(std::move(next_connection), next_func_call, node_id);
-        }
+        HandleFuncCallCompleteOrFailedMessage(connection->node_id(), message, payload);
     } else {
         HLOG(ERROR) << "Unknown engine message type";
     }
@@ -264,37 +285,22 @@ void Server::TickNewFuncCall(uint16_t func_id, int64_t current_timestamp) {
     per_func_stat->last_request_timestamp = current_timestamp;
 }
 
-uint16_t Server::PickNextNode(const FuncCall& func_call) {
-    size_t idx;
-    if (absl::GetFlag(FLAGS_lb_per_fn_round_robin)) {
-        idx = next_dispatch_node_idx_[func_call.func_id];
-        next_dispatch_node_idx_[func_call.func_id] = (idx + 1) % connected_nodes_.size();
-    } else if (absl::GetFlag(FLAGS_lb_pick_least_load)) {
-        idx = 0;
-        for (size_t i = 1; i < connected_nodes_.size(); i++) {
-            if (inflight_requests_per_node_[connected_nodes_[i]]
-                  < inflight_requests_per_node_[connected_nodes_[idx]]) {
-                idx = i;
-            }
-        }
-    } else {
-        idx = absl::Uniform<size_t>(random_bit_gen_, 0, connected_nodes_.size());
-    }
-    dispatched_requests_stat_[idx]->Tick();
-    uint16_t node_id = connected_nodes_[idx];
-    inflight_requests_per_node_[node_id]++;
-    return node_id;
-}
-
 void Server::OnNewFuncCallCommon(std::shared_ptr<server::ConnectionBase> parent_connection,
                                  FuncCallContext* func_call_context) {
     FuncCall func_call = func_call_context->func_call();
-    uint16_t node_id = 0;
-    bool server_overloaded = false;
-    bool no_connected_nodes = false;
+    FuncCallState state = {
+        .func_call = func_call,
+        .connection_id = parent_connection->id(),
+        .context = func_call_context,
+        .recv_timestamp = 0,
+        .dispatch_timestamp = 0
+    };
+    uint16_t node_id;
+    bool node_picked = node_manager_.PickNodeForNewFuncCall(func_call, &node_id);
     {
         absl::MutexLock lk(&mu_);
         int64_t current_timestamp = GetMonotonicMicroTimestamp();
+        state.recv_timestamp = current_timestamp;
         incoming_requests_stat_.Tick();
         if (current_timestamp <= last_request_timestamp_) {
             current_timestamp = last_request_timestamp_ + 1;
@@ -307,64 +313,53 @@ void Server::OnNewFuncCallCommon(std::shared_ptr<server::ConnectionBase> parent_
         }
         last_request_timestamp_ = current_timestamp;
         TickNewFuncCall(func_call.func_id, current_timestamp);
-        if (connected_nodes_.size() == 0) {
-            no_connected_nodes = true;
-        } else {
-            FuncCallState state = {
-                .func_call = func_call,
-                .connection_id = parent_connection->id(),
-                .context = func_call_context,
-                .recv_timestamp = current_timestamp,
-                .dispatch_timestamp = 0
-            };
-            if (max_running_requests_ > 0 && running_func_calls_.size() >= max_running_requests_) {
-                pending_func_calls_.push(std::move(state));
-                server_overloaded = true;
-            } else {
-                state.dispatch_timestamp = current_timestamp;
-                running_func_calls_[func_call.full_call_id] = std::move(state);
-                node_id = PickNextNode(func_call);
-                running_requests_stat_.AddSample(
-                    gsl::narrow_cast<uint16_t>(running_func_calls_.size()));
-            }
-            inflight_requests_stat_.AddSample(
-                gsl::narrow_cast<uint16_t>(running_func_calls_.size() + pending_func_calls_.size()));
+        if (!node_picked) {
+            pending_func_calls_.push_back(std::move(state));
         }
     }
-    if (server_overloaded) {
-        return;
-    }
-    if (no_connected_nodes) {
-        HLOG(ERROR) << "There is no node connected";
-        func_call_context->set_status(FuncCallContext::kNoNode);
-        FinishFuncCall(std::move(parent_connection), func_call_context);
-    } else {
-        DispatchFuncCall(std::move(parent_connection), func_call_context, node_id);
+    if (node_picked && DispatchFuncCall(std::move(parent_connection),
+                                        func_call_context, node_id)) {
+        absl::MutexLock lk(&mu_);
+        state.dispatch_timestamp = state.recv_timestamp;
+        running_func_calls_[func_call.full_call_id] = std::move(state);
+        running_requests_stat_.AddSample(
+            gsl::narrow_cast<uint16_t>(running_func_calls_.size()));
     }
 }
 
-void Server::DispatchFuncCall(std::shared_ptr<server::ConnectionBase> parent_connection,
+bool Server::DispatchFuncCall(std::shared_ptr<server::ConnectionBase> parent_connection,
                               FuncCallContext* func_call_context, uint16_t node_id) {
     FuncCall func_call = func_call_context->func_call();
-    server::IOWorker* io_worker = server::IOWorker::current();
-    DCHECK(io_worker != nullptr);
-    server::ConnectionBase* engine_connection = io_worker->PickConnection(
-        EngineConnection::type_id(node_id));
-    if (engine_connection != nullptr) {
-        GatewayMessage dispatch_message = GatewayMessageHelper::NewDispatchFuncCall(func_call);
-        dispatch_message.payload_size = func_call_context->input().size();
-        engine_connection->as_ptr<EngineConnection>()->SendMessage(
-            dispatch_message, func_call_context->input());
-    } else {
-        HLOG(WARNING) << "There is no engine connection for node_id=" << node_id;
-        {
-            absl::MutexLock lk(&mu_);
-            DCHECK(running_func_calls_.contains(func_call.full_call_id));
-            running_func_calls_.erase(func_call.full_call_id);
-        }
+    GatewayMessage dispatch_message = GatewayMessageHelper::NewDispatchFuncCall(func_call);
+    dispatch_message.payload_size = func_call_context->input().size();
+    bool success = node_manager_.SendMessage(node_id, dispatch_message, func_call_context->input());
+    if (!success) {
+        node_manager_.FuncCallFinished(func_call, node_id);
         func_call_context->set_status(FuncCallContext::kNotFound);
         FinishFuncCall(std::move(parent_connection), func_call_context);
     }
+    return success;
+    //     engine_connection->as_ptr<EngineConnection>()->SendMessage(
+    //         dispatch_message, func_call_context->input());
+    // server::IOWorker* io_worker = server::IOWorker::current();
+    // DCHECK(io_worker != nullptr);
+    // server::ConnectionBase* engine_connection = io_worker->PickConnection(
+    //     EngineConnection::type_id(node_id));
+    // if (engine_connection != nullptr) {
+    //     GatewayMessage dispatch_message = GatewayMessageHelper::NewDispatchFuncCall(func_call);
+    //     dispatch_message.payload_size = func_call_context->input().size();
+    //     engine_connection->as_ptr<EngineConnection>()->SendMessage(
+    //         dispatch_message, func_call_context->input());
+    // } else {
+    //     HLOG(WARNING) << "There is no engine connection for node_id=" << node_id;
+    //     {
+    //         absl::MutexLock lk(&mu_);
+    //         DCHECK(running_func_calls_.contains(func_call.full_call_id));
+    //         running_func_calls_.erase(func_call.full_call_id);
+    //     }
+    //     func_call_context->set_status(FuncCallContext::kNotFound);
+    //     FinishFuncCall(std::move(parent_connection), func_call_context);
+    // }
 }
 
 void Server::FinishFuncCall(std::shared_ptr<server::ConnectionBase> parent_connection,
@@ -395,18 +390,12 @@ bool Server::OnEngineHandshake(uv_tcp_t* uv_handle, std::span<const char> data) 
                                          data.size() - sizeof(GatewayMessage));
     std::shared_ptr<server::ConnectionBase> connection(
         new EngineConnection(this, node_id, conn_id, remaining_data));
-    if (!connected_node_set_.contains(node_id)) {
-        connected_node_set_.insert(node_id);
-        absl::MutexLock lk(&mu_);
-        connected_nodes_.push_back(node_id);
-        dispatched_requests_stat_.emplace_back(new stat::Counter(
-            stat::Counter::StandardReportCallback(fmt::format("dispatched_requests[{}]", node_id))));
-        HLOG(INFO) << "Number of connected nodes: " << connected_nodes_.size();
-        max_running_requests_ = absl::GetFlag(FLAGS_max_running_requests) * connected_nodes_.size();
+    if (absl::GetFlag(FLAGS_enable_shared_log)) {
+        connection->as_ptr<EngineConnection>()->set_shared_log_addr(message->shared_log_addr);
     }
     size_t worker_id = conn_id % io_workers_.size();
-    HLOG(INFO) << fmt::format("New engine connection (node_id={}, conn_id={}) assigned to IO worker {}",
-                              node_id, conn_id, worker_id);
+    HLOG(INFO) << fmt::format("New engine connection (node_id={}, conn_id={}), "
+                              "assigned to IO worker {}", node_id, conn_id, worker_id);
     server::IOWorker* io_worker = io_workers_[worker_id];
     RegisterConnection(io_worker, connection.get(), UV_AS_STREAM(uv_handle));
     DCHECK_GE(connection->id(), 0);

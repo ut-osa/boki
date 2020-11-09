@@ -26,8 +26,11 @@ public:
     uint16_t node_id() const { return node_id_; }
     uint16_t conn_id() const { return conn_id_; }
 
+    std::string_view shared_log_addr() const { return shared_log_addr_; }
+    void set_shared_log_addr(std::string_view addr) { shared_log_addr_ = std::string(addr); }
+
     uv_stream_t* InitUVHandle(uv_loop_t* uv_loop) override;
-    void Start(server::IOWorker* io_worker) override;
+    void Start() override;
     void ScheduleClose() override;
 
     void SendMessage(const protocol::GatewayMessage& message, std::span<const char> payload);
@@ -38,7 +41,7 @@ private:
     Server* server_;
     uint16_t node_id_;
     uint16_t conn_id_;
-    server::IOWorker* io_worker_;
+    std::string shared_log_addr_;
     State state_;
     uv_tcp_t uv_tcp_handle_;
 

@@ -28,10 +28,9 @@ uv_stream_t* EngineConnection::InitUVHandle(uv_loop_t* uv_loop) {
     return UV_AS_STREAM(&uv_tcp_handle_);
 }
 
-void EngineConnection::Start(server::IOWorker* io_worker) {
+void EngineConnection::Start() {
     DCHECK(state_ == kCreated);
     DCHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
-    io_worker_ = io_worker;
     uv_tcp_handle_.data = this;
     if (absl::GetFlag(FLAGS_tcp_enable_nodelay)) {
         UV_DCHECK_OK(uv_tcp_nodelay(&uv_tcp_handle_, 1));
@@ -43,6 +42,11 @@ void EngineConnection::Start(server::IOWorker* io_worker) {
                                &EngineConnection::BufferAllocCallback,
                                &EngineConnection::RecvDataCallback));
     state_ = kRunning;
+    server_->node_manager()->OnNewEngineConnection(this);
+    if (absl::GetFlag(FLAGS_enable_shared_log)) {
+        DCHECK(!shared_log_addr_.empty());
+        DCHECK_NOTNULL(server_->shared_log())->OnNewNodeConnected(node_id_, shared_log_addr_);
+    }
     ProcessGatewayMessages();
 }
 
@@ -148,6 +152,7 @@ UV_WRITE_CB_FOR_CLASS(EngineConnection, DataSent) {
 UV_CLOSE_CB_FOR_CLASS(EngineConnection, Close) {
     DCHECK(state_ == kClosing);
     state_ = kClosed;
+    server_->node_manager()->OnEngineConnectionClosed(this);
     io_worker_->OnConnectionClose(this);
 }
 

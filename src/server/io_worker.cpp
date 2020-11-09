@@ -200,7 +200,8 @@ UV_READ_CB_FOR_CLASS(IOWorker, NewConnection) {
     free(buf->base);
     uv_stream_t* client = connection->InitUVHandle(&uv_loop_);
     UV_DCHECK_OK(uv_accept(UV_AS_STREAM(&pipe_to_server_), client));
-    connection->Start(this);
+    connection->set_io_worker(this);
+    connection->Start();
     DCHECK(connection->id() >= 0);
     DCHECK(!connections_.contains(connection->id()));
     connections_[connection->id()] = connection;

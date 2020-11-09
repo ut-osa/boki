@@ -77,6 +77,9 @@ void Dispatcher::OnFuncWorkerDisconnected(FuncWorker* func_worker) {
     DCHECK_EQ(func_id_, func_worker->func_id());
     uint16_t client_id = func_worker->client_id();
     absl::MutexLock lk(&mu_);
+    if (running_workers_.contains(client_id)) {
+        // TODO: how to handle this?
+    }
     DCHECK(workers_.contains(client_id));
     workers_.erase(client_id);
 }

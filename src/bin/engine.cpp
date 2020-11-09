@@ -13,6 +13,8 @@ ABSL_FLAG(std::string, gateway_addr, "127.0.0.1", "Gateway address");
 ABSL_FLAG(int, gateway_port, 10007, "Gataway port");
 ABSL_FLAG(int, engine_tcp_port, -1,
           "If set, Launcher and FuncWorker will communicate with engine via localhost TCP socket");
+ABSL_FLAG(std::string, shared_log_tcp_host, "",
+          "Hostname for shared log connections from other nodes.");
 ABSL_FLAG(int, shared_log_tcp_port, -1,
           "Port to listen for shared log connections from other nodes.");
 ABSL_FLAG(int, num_io_workers, 1, "Number of IO workers.");
@@ -32,11 +34,16 @@ static void SignalHandlerToStopEngine(int signal) {
     }
 }
 
-static uint16_t GenerateNodeId() {
+static std::string GetHostname() {
     std::string hostname;
     if (!faas::fs_utils::ReadContents("/proc/sys/kernel/hostname", &hostname)) {
         LOG(FATAL) << "Failed to read /proc/sys/kernel/hostname";
     }
+    return hostname;
+}
+
+static uint16_t GenerateNodeId() {
+    std::string hostname = GetHostname();
     uint16_t result = 0;
     for (const char ch : hostname) {
         // Let overflow happens freely here
@@ -68,6 +75,13 @@ int main(int argc, char* argv[]) {
         engine->set_node_id(gsl::narrow_cast<uint16_t>(node_id));
     }
     engine->set_func_config_file(absl::GetFlag(FLAGS_func_config_file));
+    engine->set_shared_log_tcp_port(absl::GetFlag(FLAGS_shared_log_tcp_port));
+    std::string shared_log_tcp_host = absl::GetFlag(FLAGS_shared_log_tcp_host);
+    if (shared_log_tcp_host.empty()) {
+        engine->set_shared_log_tcp_host(GetHostname());
+    } else {
+        engine->set_shared_log_tcp_host(shared_log_tcp_host);
+    }
 
     engine->Start();
     engine_ptr.store(engine.get());

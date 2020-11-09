@@ -79,9 +79,7 @@ enum class MessageType : uint16_t {
     DISPATCH_FUNC_CALL    = 7,
     FUNC_CALL_COMPLETE    = 8,
     FUNC_CALL_FAILED      = 9,
-    SHARED_LOG_OP         = 10,
-    SHARED_LOG_VIEW       = 11,
-    SHARED_LOG_CUT        = 12
+    SHARED_LOG_OP         = 10
 };
 
 enum class SharedLogOpType : uint16_t {
@@ -93,7 +91,9 @@ enum class SharedLogOpType : uint16_t {
     TRIM       = 5
 };
 
-constexpr uint32_t kDefaultLogTag = std::numeric_limits<uint32_t>::max();
+constexpr uint32_t kDefaultLogTag     = std::numeric_limits<uint32_t>::max();
+constexpr uint64_t kInvalidLogLocalId = std::numeric_limits<uint64_t>::max();
+constexpr uint64_t kInvalidLogSeqNum  = std::numeric_limits<uint64_t>::max();
 
 constexpr uint32_t kFuncWorkerUseEngineSocketFlag = 1;
 constexpr uint32_t kUseFifoForNestedCallFlag = 2;
@@ -147,14 +147,16 @@ struct GatewayMessage {
         struct {
             uint16_t node_id;
             uint16_t conn_id;
+            char     shared_log_addr[32];
         } __attribute__ ((packed));
         int32_t processing_time; // Used in FUNC_CALL_COMPLETE
         int32_t status_code;     // Used in FUNC_CALL_FAILED
+        int32_t msg_seqnum;      // Used in SHARED_LOG_OP
     };
     int32_t payload_size;        // Used in INVOKE_FUNC, FUNC_CALL_COMPLETE
 } __attribute__ ((packed));
 
-static_assert(sizeof(GatewayMessage) == 16, "Unexpected GatewayMessage size");
+static_assert(sizeof(GatewayMessage) == 48, "Unexpected GatewayMessage size");
 
 class MessageHelper {
 public:
@@ -307,11 +309,13 @@ public:
         return message;
     }
 
-    static Message NewSharedLogAppend(uint32_t log_tag) {
+    static Message NewSharedLogAppend(uint32_t log_tag,
+                                      uint64_t log_localid = kInvalidLogLocalId) {
         NEW_EMPTY_MESSAGE(message);
         message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
         message.log_op = static_cast<uint16_t>(SharedLogOpType::APPEND);
         message.log_tag = log_tag;
+        message.log_localid = log_localid;
         return message;
     }
 
@@ -345,6 +349,10 @@ public:
 
     static bool IsFuncCallFailed(const GatewayMessage& message) {
         return static_cast<MessageType>(message.message_type) == MessageType::FUNC_CALL_FAILED;
+    }
+
+    static bool IsSharedLogOp(const GatewayMessage& message) {
+        return static_cast<MessageType>(message.message_type) == MessageType::SHARED_LOG_OP;
     }
 
     static void SetFuncCall(GatewayMessage* message, const FuncCall& func_call) {
@@ -397,6 +405,13 @@ public:
         message.message_type = static_cast<uint16_t>(MessageType::FUNC_CALL_FAILED);
         SetFuncCall(&message, func_call);
         message.status_code = status_code;
+        return message;
+    }
+
+    static GatewayMessage NewSharedLogOp(int32_t msg_seqnum = -1) {
+        NEW_EMPTY_GATEWAY_MESSAGE(message);
+        message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
+        message.msg_seqnum = msg_seqnum;
         return message;
     }
 

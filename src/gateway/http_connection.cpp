@@ -13,7 +13,7 @@ namespace faas {
 namespace gateway {
 
 HttpConnection::HttpConnection(Server* server, int connection_id)
-    : server::ConnectionBase(kTypeId), server_(server), io_worker_(nullptr), state_(kCreated),
+    : server::ConnectionBase(kTypeId), server_(server), state_(kCreated),
       log_header_(fmt::format("HttpConnection[{}]: ", connection_id)) {
     http_parser_init(&http_parser_, HTTP_REQUEST);
     http_parser_.data = this;
@@ -36,10 +36,9 @@ uv_stream_t* HttpConnection::InitUVHandle(uv_loop_t* uv_loop) {
     return UV_AS_STREAM(&uv_tcp_handle_);
 }
 
-void HttpConnection::Start(server::IOWorker* io_worker) {
+void HttpConnection::Start() {
     DCHECK(state_ == kCreated);
     DCHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
-    io_worker_ = io_worker;
     uv_tcp_handle_.data = this;
     response_write_req_.data = this;
     state_ = kRunning;

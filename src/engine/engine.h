@@ -5,7 +5,6 @@
 #include "common/flags.h"
 #include "common/func_config.h"
 #include "ipc/shm_region.h"
-#include "log/core.h"
 #include "engine/server_base.h"
 #include "engine/gateway_connection.h"
 #include "engine/message_connection.h"
@@ -13,7 +12,8 @@
 #include "engine/worker_manager.h"
 #include "engine/monitor.h"
 #include "engine/tracer.h"
-#include "engine/shared_log.h"
+#include "engine/shared_log_connection.h"
+#include "engine/shared_log_engine.h"
 
 namespace faas {
 namespace engine {
@@ -40,17 +40,21 @@ public:
         func_config_file_ = std::string(path);
     }
     void set_engine_tcp_port(int port) { engine_tcp_port_ = port; }
+    void set_shared_log_tcp_host(std::string_view host) {
+        shared_log_tcp_host_ = std::string(host);
+    }
     void set_shared_log_tcp_port(int port) { shared_log_tcp_port_ = port; }
 
     uint16_t node_id() const { return node_id_; }
     FuncConfig* func_config() { return &func_config_; }
     int engine_tcp_port() const { return engine_tcp_port_; }
+    std::string_view shared_log_tcp_host() const { return shared_log_tcp_host_; }
+    int shared_log_tcp_port() const { return shared_log_tcp_port_; }
     bool func_worker_use_engine_socket() const { return func_worker_use_engine_socket_; }
     int engine_conn_per_worker() const { return engine_conn_per_worker_; }
     WorkerManager* worker_manager() { return worker_manager_.get(); }
     Monitor* monitor() { return monitor_.get(); }
     Tracer* tracer() { return tracer_.get(); }
-    log::Core* log_core() { return log_core_.get(); }
 
     // Must be thread-safe
     bool OnNewHandshake(MessageConnection* connection,
@@ -58,17 +62,16 @@ public:
                         protocol::Message* response,
                         std::span<const char>* response_payload);
     void OnRecvMessage(MessageConnection* connection, const protocol::Message& message);
+    void OnRecvSharedLogMessage(const protocol::Message& message);
     void OnRecvGatewayMessage(GatewayConnection* connection,
                               const protocol::GatewayMessage& message,
                               std::span<const char> payload);
-    void OnRecvSharedLogMessage(const protocol::Message& message);
-    void SendGatewayMessage(const protocol::GatewayMessage& message,
-                            std::span<const char> payload = std::span<const char>());
     Dispatcher* GetOrCreateDispatcher(uint16_t func_id);
     void DiscardFuncCall(const protocol::FuncCall& func_call);
 
 private:
     class ExternalFuncCallContext;
+    friend class SharedLogEngine;
 
     std::string gateway_addr_;
     int gateway_port_;
@@ -77,6 +80,7 @@ private:
     int gateway_conn_per_worker_;
     int engine_conn_per_worker_;
     int engine_tcp_port_;
+    std::string shared_log_tcp_host_;
     int shared_log_tcp_port_;
     uint16_t node_id_;
     std::string func_config_file_;
@@ -100,7 +104,7 @@ private:
     std::unique_ptr<WorkerManager> worker_manager_;
     std::unique_ptr<Monitor> monitor_;
     std::unique_ptr<Tracer> tracer_;
-    std::unique_ptr<log::Core> log_core_;
+    std::unique_ptr<SharedLogEngine> shared_log_engine_;
 
     std::atomic<int> inflight_external_requests_;
 
@@ -131,9 +135,12 @@ private:
 
     // Must be thread-safe
     void HandleInvokeFuncMessage(const protocol::Message& message);
-    void HandleFuncCallCompleteOrFailedMessage(const protocol::Message& message);
+    void HandleFuncCallCompleteMessage(const protocol::Message& message);
+    void HandleFuncCallFailedMessage(const protocol::Message& message);
     void HandleSharedLogOpMessage(const protocol::Message& message);
 
+    void SendGatewayMessage(const protocol::GatewayMessage& message,
+                            std::span<const char> payload = std::span<const char>());
     void OnExternalFuncCall(const protocol::FuncCall& func_call, std::span<const char> input);
     void ExternalFuncCallCompleted(const protocol::FuncCall& func_call,
                                    std::span<const char> output, int32_t processing_time);

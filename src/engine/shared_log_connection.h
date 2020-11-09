@@ -9,6 +9,7 @@ namespace faas {
 namespace engine {
 
 class Engine;
+class SharedLogEngine;
 
 class IncomingSharedLogConnection final : public ConnectionBase {
 public:
@@ -43,7 +44,7 @@ class SharedLogMessageHub final : public ConnectionBase {
 public:
     static constexpr int kTypeId = 3;
 
-    explicit SharedLogMessageHub(Engine* engine);
+    SharedLogMessageHub(Engine* engine, SharedLogEngine* shared_log_engine);
     ~SharedLogMessageHub();
 
     void Start(IOWorker* io_worker) override;
@@ -56,6 +57,7 @@ private:
     enum State { kCreated, kRunning, kClosing, kClosed };
 
     Engine* engine_;
+    SharedLogEngine* shared_log_engine_;
     IOWorker* io_worker_;
     State state_;
 

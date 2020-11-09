@@ -77,7 +77,7 @@ struct GrpcConnection::H2StreamContext {
 };
 
 GrpcConnection::GrpcConnection(Server* server, int connection_id)
-    : server::ConnectionBase(kTypeId), server_(server), io_worker_(nullptr),
+    : server::ConnectionBase(kTypeId), server_(server),
       state_(kCreated), log_header_(fmt::format("GrpcConnection[{}]: ", connection_id)),
       h2_session_(nullptr), h2_error_code_(NGHTTP2_NO_ERROR),
       uv_write_for_mem_send_ongoing_(false) {
@@ -112,10 +112,9 @@ uv_stream_t* GrpcConnection::InitUVHandle(uv_loop_t* uv_loop) {
     return UV_AS_STREAM(&uv_tcp_handle_);
 }
 
-void GrpcConnection::Start(server::IOWorker* io_worker) {
+void GrpcConnection::Start() {
     DCHECK(state_ == kCreated);
     DCHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
-    io_worker_ = io_worker;
     uv_tcp_handle_.data = this;
     UV_DCHECK_OK(uv_read_start(UV_AS_STREAM(&uv_tcp_handle_),
                                &GrpcConnection::BufferAllocCallback,

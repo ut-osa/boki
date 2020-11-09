@@ -11,6 +11,8 @@
 #include "gateway/http_connection.h"
 #include "gateway/grpc_connection.h"
 #include "gateway/engine_connection.h"
+#include "gateway/node_manager.h"
+#include "gateway/shared_log.h"
 
 namespace faas {
 namespace gateway {
@@ -33,8 +35,11 @@ public:
         func_config_file_ = std::string(path);
     }
     FuncConfig* func_config() { return &func_config_; }
+    NodeManager* node_manager() { return &node_manager_; }
+    SharedLog* shared_log() { return shared_log_.get(); }
 
     // Must be thread-safe
+    void OnNewConnectedNode(EngineConnection* connection);
     void OnNewHttpFuncCall(HttpConnection* connection, FuncCallContext* func_call_context);
     void OnNewGrpcFuncCall(GrpcConnection* connection, FuncCallContext* func_call_context);
     void DiscardFuncCall(FuncCallContext* func_call_context);
@@ -49,7 +54,6 @@ private:
     int grpc_port_;
     int listen_backlog_;
     int num_io_workers_;
-    size_t max_running_requests_;
     std::string func_config_file_;
     std::string func_config_json_;
     FuncConfig func_config_;
@@ -64,18 +68,19 @@ private:
     int next_http_connection_id_;
     int next_grpc_connection_id_;
 
+    NodeManager node_manager_;
+
+    friend class SharedLog;
+    std::unique_ptr<SharedLog> shared_log_;
+
     class OngoingEngineHandshake;
     friend class OngoingEngineHandshake;
 
     absl::flat_hash_set<std::unique_ptr<OngoingEngineHandshake>> ongoing_engine_handshakes_;
     absl::flat_hash_map</* id */ int, std::shared_ptr<server::ConnectionBase>> engine_connections_;
     utils::BufferPool read_buffer_pool_;
-    absl::flat_hash_set</* node_id */ uint16_t> connected_node_set_;
 
     std::atomic<uint32_t> next_call_id_;
-
-    absl::Mutex mu_;
-    std::vector</* node_id */ uint16_t> connected_nodes_ ABSL_GUARDED_BY(mu_);
 
     struct FuncCallState {
         protocol::FuncCall func_call;
@@ -92,14 +97,11 @@ private:
         explicit PerFuncStat(uint16_t func_id);
     };
 
-    absl::BitGen random_bit_gen_ ABSL_GUARDED_BY(mu_);
-    absl::flat_hash_map</* func_id */ uint16_t, size_t>
-        next_dispatch_node_idx_  ABSL_GUARDED_BY(mu_);
-    absl::flat_hash_map</* func_id */ uint16_t, size_t>
-        inflight_requests_per_node_  ABSL_GUARDED_BY(mu_);
+    absl::Mutex mu_;
+
     absl::flat_hash_map</* full_call_id */ uint64_t, FuncCallState>
         running_func_calls_ ABSL_GUARDED_BY(mu_);
-    std::queue<FuncCallState> pending_func_calls_ ABSL_GUARDED_BY(mu_);
+    std::deque<FuncCallState> pending_func_calls_ ABSL_GUARDED_BY(mu_);
     absl::flat_hash_set</* full_call_id */ uint64_t>
         discarded_func_calls_ ABSL_GUARDED_BY(mu_);
     absl::flat_hash_map</* connection_id */ int,
@@ -112,7 +114,6 @@ private:
     stat::StatisticsCollector<float> requests_instant_rps_stat_ ABSL_GUARDED_BY(mu_);
     stat::StatisticsCollector<uint16_t> inflight_requests_stat_ ABSL_GUARDED_BY(mu_);
     stat::StatisticsCollector<uint16_t> running_requests_stat_ ABSL_GUARDED_BY(mu_);
-    std::vector<std::unique_ptr<stat::Counter>> dispatched_requests_stat_ ABSL_GUARDED_BY(mu_);
     stat::StatisticsCollector<int32_t> queueing_delay_stat_ ABSL_GUARDED_BY(mu_);
     stat::StatisticsCollector<int32_t> dispatch_overhead_stat_ ABSL_GUARDED_BY(mu_);
     absl::flat_hash_map</* func_id */ uint16_t, std::unique_ptr<PerFuncStat>>
@@ -124,13 +125,17 @@ private:
     bool OnEngineHandshake(uv_tcp_t* uv_handle, std::span<const char> data);
     void OnNewFuncCallCommon(std::shared_ptr<server::ConnectionBase> parent_connection,
                              FuncCallContext* func_call_context);
-    void DispatchFuncCall(std::shared_ptr<server::ConnectionBase> parent_connection,
+    bool DispatchFuncCall(std::shared_ptr<server::ConnectionBase> parent_connection,
                           FuncCallContext* func_call_context, uint16_t node_id);
     void FinishFuncCall(std::shared_ptr<server::ConnectionBase> parent_connection,
                         FuncCallContext* func_call_context);
     void TickNewFuncCall(uint16_t func_id, int64_t current_timestamp)
         ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
-    uint16_t PickNextNode(const protocol::FuncCall& func_call) ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
+    void TryDispatchingPendingFuncCalls();
+
+    void HandleFuncCallCompleteOrFailedMessage(uint16_t node_id,
+                                               const protocol::GatewayMessage& message,
+                                               std::span<const char> payload);
 
     DECLARE_UV_CONNECTION_CB_FOR_CLASS(HttpConnection);
     DECLARE_UV_CONNECTION_CB_FOR_CLASS(GrpcConnection);

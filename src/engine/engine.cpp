@@ -20,6 +20,7 @@ using protocol::Message;
 using protocol::MessageHelper;
 using protocol::GatewayMessage;
 using protocol::GatewayMessageHelper;
+using protocol::SharedLogOpType;
 
 Engine::Engine()
     : gateway_port_(-1),
@@ -109,14 +110,15 @@ void Engine::StartInternal() {
                             absl::bind_front(&Engine::OnNewMessageConnection, this));
     // Setup shared log
     if (absl::GetFlag(FLAGS_enable_shared_log)) {
-        CHECK_NE(shared_log_tcp_port_, -1);
+        shared_log_engine_.reset(new SharedLogEngine(this));
         // Setup SharedLogMessageHub for each IOWorker
         for (size_t i = 0; i < io_workers_.size(); i++) {
-            auto hub = std::make_unique<SharedLogMessageHub>(this);
+            auto hub = std::make_unique<SharedLogMessageHub>(this, shared_log_engine_.get());
             RegisterConnection(io_workers_[i], hub.get());
             shared_log_message_hubs_.insert(std::move(hub));
         }
         // Listen on shared_log_tcp_port
+        CHECK_NE(shared_log_tcp_port_, -1);
         shared_log_sockfd_ = utils::TcpSocketBindAndListen(
             "0.0.0.0", shared_log_tcp_port_, listen_backlog_);
         CHECK(shared_log_sockfd_ != -1)
@@ -133,6 +135,9 @@ void Engine::StartInternal() {
 void Engine::StopInternal() {
     if (server_sockfd_ != -1) {
         PCHECK(close(server_sockfd_) == 0) << "Failed to close server fd";
+    }
+    if (shared_log_sockfd_ != -1) {
+        PCHECK(close(shared_log_sockfd_) == 0) << "Failed to close server fd";
     }
 }
 
@@ -223,6 +228,8 @@ void Engine::OnRecvGatewayMessage(GatewayConnection* connection, const GatewayMe
     if (GatewayMessageHelper::IsDispatchFuncCall(message)) {
         FuncCall func_call = GatewayMessageHelper::GetFuncCall(message);
         OnExternalFuncCall(func_call, payload);
+    } else if (GatewayMessageHelper::IsSharedLogOp(message)) {
+        shared_log_engine_->OnSequencerMessage(message.msg_seqnum, payload);
     } else {
         HLOG(ERROR) << "Unknown engine message type";
     }
@@ -266,84 +273,85 @@ void Engine::HandleInvokeFuncMessage(const Message& message) {
     }
 }
 
-void Engine::HandleFuncCallCompleteOrFailedMessage(const Message& message) {
-    DCHECK(MessageHelper::IsFuncCallComplete(message) || MessageHelper::IsFuncCallFailed(message));
+void Engine::HandleFuncCallCompleteMessage(const protocol::Message& message) {
+    DCHECK(MessageHelper::IsFuncCallComplete(message));
     int32_t message_delay = MessageHelper::ComputeMessageDelay(message);
     FuncCall func_call = MessageHelper::GetFuncCall(message);
     Dispatcher* dispatcher = nullptr;
     std::unique_ptr<ipc::ShmRegion> input_region = nullptr;
+    mu_.AssertNotHeld();
     {
         absl::MutexLock lk(&mu_);
         if (message_delay >= 0) {
             message_delay_stat_.AddSample(message_delay);
         }
-        if (MessageHelper::IsFuncCallComplete(message)) {
-            if ((func_call.client_id == 0 && message.payload_size < 0)
-                    || (func_call.client_id > 0
-                        && message.payload_size + sizeof(int32_t) > PIPE_BUF)) {
-                output_use_shm_stat_.Tick();
-            }
+        if ((func_call.client_id == 0 && message.payload_size < 0)
+                || (func_call.client_id > 0 && message.payload_size + sizeof(int32_t) > PIPE_BUF)) {
+            output_use_shm_stat_.Tick();
         }
         if (func_call.client_id == 0) {
             input_region = GrabExternalFuncCallShmInput(func_call);
         }
         dispatcher = GetOrCreateDispatcherLocked(func_call.func_id);
     }
-    bool success = false;
-    if (dispatcher != nullptr) {
-        if (MessageHelper::IsFuncCallComplete(message)) {
-            success = dispatcher->OnFuncCallCompleted(
-                func_call, message.processing_time, message.dispatch_delay,
-                /* output_size= */ gsl::narrow_cast<size_t>(std::abs(message.payload_size)));
-            if (success && func_call.client_id == 0) {
-                if (message.payload_size < 0) {
-                    auto output_region = ipc::ShmOpen(
-                        ipc::GetFuncCallOutputShmName(func_call.full_call_id));
-                    if (output_region == nullptr) {
-                        ExternalFuncCallFailed(func_call);
-                    } else {
-                        output_region->EnableRemoveOnDestruction();
-                        ExternalFuncCallCompleted(func_call, output_region->to_span(),
-                                                    message.processing_time);
-                    }
-                } else {
-                    ExternalFuncCallCompleted(func_call, MessageHelper::GetInlineData(message),
-                                                message.processing_time);
-                }
+    DCHECK(dispatcher != nullptr);
+    bool ret = dispatcher->OnFuncCallCompleted(
+        func_call, message.processing_time, message.dispatch_delay,
+        /* output_size= */ gsl::narrow_cast<size_t>(std::abs(message.payload_size)));
+    if (!ret) {
+        HLOG(ERROR) << "Dispatcher::OnFuncCallCompleted failed";
+        return;
+    }
+    if (func_call.client_id == 0) {
+        if (message.payload_size < 0) {
+            auto output_region = ipc::ShmOpen(
+                ipc::GetFuncCallOutputShmName(func_call.full_call_id));
+            if (output_region == nullptr) {
+                ExternalFuncCallFailed(func_call);
+            } else {
+                output_region->EnableRemoveOnDestruction();
+                ExternalFuncCallCompleted(func_call, output_region->to_span(),
+                                          message.processing_time);
             }
         } else {
-            success = dispatcher->OnFuncCallFailed(func_call, message.dispatch_delay);
-            if (success && func_call.client_id == 0) {
-                ExternalFuncCallFailed(func_call);
-            }
+            ExternalFuncCallCompleted(func_call, MessageHelper::GetInlineData(message),
+                                      message.processing_time);
         }
-    }
-    if (success && func_call.client_id > 0 && !use_fifo_for_nested_call_) {
+    } else if (!use_fifo_for_nested_call_) {
         Message message_copy = message;
         worker_manager_->GetFuncWorker(func_call.client_id)->SendMessage(&message_copy);
     }
 }
 
-void Engine::HandleSharedLogOpMessage(const Message& message) {
-    DCHECK(MessageHelper::IsSharedLogOp(message));
-}
-
-void Engine::OnRecvMessage(MessageConnection* connection, const Message& message) {
-    if (MessageHelper::IsInvokeFunc(message)) {
-        HandleInvokeFuncMessage(message);
-    } else if (MessageHelper::IsFuncCallComplete(message)
-               || MessageHelper::IsFuncCallFailed(message)) {
-        HandleFuncCallCompleteOrFailedMessage(message);
-    } else if (MessageHelper::IsSharedLogOp(message)) {
-        HandleSharedLogOpMessage(message);
-    } else {
-        LOG(ERROR) << "Unknown message type!";
+void Engine::HandleFuncCallFailedMessage(const protocol::Message& message) {
+    DCHECK(MessageHelper::IsFuncCallFailed(message));
+    int32_t message_delay = MessageHelper::ComputeMessageDelay(message);
+    FuncCall func_call = MessageHelper::GetFuncCall(message);
+    Dispatcher* dispatcher = nullptr;
+    std::unique_ptr<ipc::ShmRegion> input_region = nullptr;
+    mu_.AssertNotHeld();
+    {
+        absl::MutexLock lk(&mu_);
+        if (message_delay >= 0) {
+            message_delay_stat_.AddSample(message_delay);
+        }
+        if (func_call.client_id == 0) {
+            input_region = GrabExternalFuncCallShmInput(func_call);
+        }
+        dispatcher = GetOrCreateDispatcherLocked(func_call.func_id);
     }
-    ProcessDiscardedFuncCallIfNecessary();
-}
-
-void Engine::OnRecvSharedLogMessage(const protocol::Message& message) {
-
+    DCHECK(dispatcher != nullptr);
+    bool ret = dispatcher->OnFuncCallFailed(func_call, message.dispatch_delay);
+    if (!ret) {
+        HLOG(ERROR) << "Dispatcher::OnFuncCallFailed failed";
+        return;
+    }
+    if (func_call.client_id == 0) {
+        ExternalFuncCallFailed(func_call);
+    } else if (!use_fifo_for_nested_call_) {
+        Message message_copy = message;
+        worker_manager_->GetFuncWorker(func_call.client_id)->SendMessage(&message_copy);
+    }
 }
 
 void Engine::OnExternalFuncCall(const FuncCall& func_call, std::span<const char> input) {
@@ -362,6 +370,7 @@ void Engine::OnExternalFuncCall(const FuncCall& func_call, std::span<const char>
         }
     }
     Dispatcher* dispatcher = nullptr;
+    mu_.AssertNotHeld();
     {
         absl::MutexLock lk(&mu_);
         incoming_external_requests_stat_.Tick();
@@ -388,23 +397,53 @@ void Engine::OnExternalFuncCall(const FuncCall& func_call, std::span<const char>
         ExternalFuncCallFailed(func_call);
         return;
     }
-    bool success = false;
+    bool ret = false;
     if (input.size() <= MESSAGE_INLINE_DATA_SIZE) {
-        success = dispatcher->OnNewFuncCall(
+        ret = dispatcher->OnNewFuncCall(
             func_call, protocol::kInvalidFuncCall,
             input.size(), /* inline_input= */ input, /* shm_input= */ false);
     } else {
-        success = dispatcher->OnNewFuncCall(
+        ret = dispatcher->OnNewFuncCall(
             func_call, protocol::kInvalidFuncCall,
             input.size(), /* inline_input= */ std::span<const char>(), /* shm_input= */ true);
     }
-    if (!success) {
+    if (!ret) {
+        HLOG(ERROR) << "Dispatcher::OnNewFuncCall failed";
         {
             absl::MutexLock lk(&mu_);
             input_region = GrabExternalFuncCallShmInput(func_call);
         }
         ExternalFuncCallFailed(func_call);
     }
+}
+
+void Engine::HandleSharedLogOpMessage(const Message& message) {
+    DCHECK(MessageHelper::IsSharedLogOp(message));
+    if (shared_log_engine_ == nullptr) {
+        HLOG(ERROR) << "Shared log disabled!";
+        return;
+    }
+    shared_log_engine_->OnMessageFromFuncWorker(message);
+}
+
+void Engine::OnRecvMessage(MessageConnection* connection, const Message& message) {
+    if (MessageHelper::IsInvokeFunc(message)) {
+        HandleInvokeFuncMessage(message);
+    } else if (MessageHelper::IsFuncCallComplete(message)) {
+        HandleFuncCallCompleteMessage(message);
+    } else if (MessageHelper::IsFuncCallFailed(message)) {
+        HandleFuncCallFailedMessage(message);
+    } else if (MessageHelper::IsSharedLogOp(message)) {
+        HandleSharedLogOpMessage(message);
+    } else {
+        LOG(ERROR) << "Unknown message type!";
+    }
+    ProcessDiscardedFuncCallIfNecessary();
+}
+
+void Engine::OnRecvSharedLogMessage(const protocol::Message& message) {
+    DCHECK(MessageHelper::IsSharedLogOp(message));
+    DCHECK_NOTNULL(shared_log_engine_)->OnMessageFromOtherEngine(message);
 }
 
 void Engine::SendGatewayMessage(const protocol::GatewayMessage& message,
