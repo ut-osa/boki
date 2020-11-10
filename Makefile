@@ -41,7 +41,7 @@ ifneq ("$(wildcard config.mk)","")
     include config.mk
 endif
 
-ifneq (,findstring $(CXX),clang)
+ifneq (,$(findstring clang,$(CXX)))
     COMPILE_FLAGS += -Wthread-safety -Wno-unused-private-field
 endif
 
