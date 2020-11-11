@@ -25,3 +25,6 @@
 [submodule "deps/liburing"]
 	path = deps/liburing
 	url = https://github.com/axboe/liburing.git
+[submodule "deps/protobuf"]
+	path = deps/protobuf
+	url = https://github.com/protocolbuffers/protobuf.git

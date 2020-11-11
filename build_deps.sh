@@ -38,6 +38,11 @@ cd $BASE_DIR/deps/http-parser && make clean && make package && \
 cd $BASE_DIR/deps/liburing && make clean && \
   ./configure --prefix=${DEPS_INSTALL_PATH} && make install
 
+# Build protobuf
+cd $BASE_DIR/deps/protobuf && ./autogen.sh && \
+  ./configure --prefix=${DEPS_INSTALL_PATH} && \
+  make clean && make -j$(nproc) install
+
 # Build libuv
 cd $BASE_DIR/deps/libuv && rm -rf build && mkdir -p build && cd build && \
   cmake -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DLIBUV_BUILD_TESTS=OFF \
