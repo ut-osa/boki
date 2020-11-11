@@ -17,6 +17,9 @@
 # Editor related
 /.vscode/
 
+# Protobuf generated code
+/src/proto/*.pb.*
+
 # Misc
 /tmp/
 /config.mk

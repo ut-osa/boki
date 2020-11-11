@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package faas.log;
+
+option optimize_for = LITE_RUNTIME;
+
+enum FsmRecordType {
+    INVALID    = 0;
+    NEW_VIEW   = 1;
+    GLOBAL_CUT = 2;
+}
+
+message NodeProto {
+    uint32 node_id = 1;
+    string addr = 2;
+}
+
+message NewViewRecordProto {
+    uint32 view_id = 1;
+    repeated NodeProto nodes = 2;
+}
+
+message GlobalCutRecordProto {
+    uint32 view_id = 1;
+    repeated uint32 cuts = 2;
+}
+
+message FsmRecordProto {
+    uint32 seqnum = 1;
+    FsmRecordType type = 2;
+    NewViewRecordProto new_view_record = 3;
+    GlobalCutRecordProto global_cut_record = 4;
+}
+
+message SequencerMsgProto {
+    uint32 seqnum = 1;
+    repeated FsmRecordProto fsm_records = 2;
+}

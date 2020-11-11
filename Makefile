@@ -18,11 +18,13 @@ INCLUDES = -I$(SRC_PATH) -I./include -I./deps/out/include \
 	-DFMT_HEADER_ONLY -I./deps/fmt/include \
 	-I./deps/GSL/include \
 	-I./deps/json/single_include
+# Protobuf compiler
+PROTOC = ./deps/out/bin/protoc
 # General linker settings
 ABSL_LIBRARIES = $(shell find deps/out/lib/libabsl_*.a -printf '%f\n' \
                    | sed -e 's/libabsl_\([a-z0-9_]\+\)\.a/-labsl_\1/g')
 LINK_FLAGS = -Ldeps/out/lib \
-    -Wl,-Bstatic -luv_a -lhttp_parser -lnghttp2 -luring \
+    -Wl,-Bstatic -luv_a -lhttp_parser -lnghttp2 -luring -lprotobuf-lite \
     -Wl,--start-group $(ABSL_LIBRARIES) -Wl,--end-group \
     -Wl,-Bdynamic -lpthread -ldl -Wl,--gc-sections
 # Additional release-specific linker settings
@@ -95,9 +97,16 @@ BIN_SOURCES = $(shell find $(SRC_PATH)/bin -name '*.$(SRC_EXT)' -printf '%T@\t%p
 BENCH_BIN_SOURCES = $(shell find $(SRC_PATH)/bin -name 'bench_*.$(SRC_EXT)' -printf '%T@\t%p\n' \
                       | sort -k 1nr | cut -f2-)
 
+# Protobuf related
+PROTO_SOURCES = $(shell find $(SRC_PATH)/proto -name '*.proto' -printf '%T@\t%p\n' \
+                  | sort -k 1nr | cut -f2-)
+PROTO_HEADERS = $(PROTO_SOURCES:$(SRC_PATH)/proto/%.proto=$(SRC_PATH)/proto/%.pb.h)
+PROTO_OBJECTS = $(PROTO_SOURCES:$(SRC_PATH)/proto/%.proto=$(BUILD_PATH)/proto/%.pb.o)
+
 # Set the object file names, with the source directory stripped
 # from the path, and the build path prepended in its place
 OBJECTS = $(SOURCES:$(SRC_PATH)/%.$(SRC_EXT)=$(BUILD_PATH)/%.o)
+OBJECTS += $(PROTO_OBJECTS)
 # Set the dependency files that will be used to add header dependencies
 DEPS = $(OBJECTS:.o=.d)
 
@@ -139,13 +148,18 @@ dirs:
 clean:
 	@echo "Deleting directories"
 	@$(RM) -r build bin
+	@echo "Deleting protobuf generated code"
+	@$(RM) -f src/proto/*.pb.h src/proto/*.pb.cc src/proto/*.pb.cpp
 
 binary: $(TARGET_BINS)
+
+# Proto files must be compiled before all objects
+$(OBJECTS): $(PROTO_HEADERS)
 
 # Link the executable
 $(BIN_PATH)/%: $(BUILD_PATH)/bin/%.o $(NON_BIN_OBJECTS)
 	@echo "Linking: $@"
-	$(CMD_PREFIX)$(CXX) $(NON_BIN_OBJECTS) $< $(LDFLAGS) $(LINK_FLAGS) -o $@
+	$(CMD_PREFIX)$(CXX) $^ $(LDFLAGS) $(LINK_FLAGS) -o $@
 
 .SECONDARY: $(OBJECTS)
 
@@ -158,3 +172,11 @@ $(BIN_PATH)/%: $(BUILD_PATH)/bin/%.o $(NON_BIN_OBJECTS)
 $(BUILD_PATH)/%.o: $(SRC_PATH)/%.$(SRC_EXT)
 	@echo "Compiling: $< -> $@"
 	$(CMD_PREFIX)$(CXX) $(CXXFLAGS) $(COMPILE_FLAGS) -MP -MMD -c $< -o $@
+
+# Protobuf-related rules
+$(SRC_PATH)/proto/%.pb.cc $(SRC_PATH)/proto/%.pb.h: $(SRC_PATH)/proto/%.proto
+	@echo "Compiling proto file $<"
+	$(CMD_PREFIX)$(PROTOC) --proto_path=$(SRC_PATH)/proto --cpp_out=$(SRC_PATH)/proto $<
+$(SRC_PATH)/proto/%.pb.h: $(SRC_PATH)/proto/%.pb.cc
+$(SRC_PATH)/proto/%.pb.cpp: $(SRC_PATH)/proto/%.pb.cc
+	@cp $(realpath $<) $@
