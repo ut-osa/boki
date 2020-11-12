@@ -1,7 +1,6 @@
 #pragma once
 
 #include "log/common.h"
-#include "log/view.h"
 
 namespace faas {
 namespace log {
@@ -12,9 +11,6 @@ public:
     ~Sequencer();
 
 private:
-    View* current_view_;
-    std::vector<std::unique_ptr<View>> views_;
-
     DISALLOW_COPY_AND_ASSIGN(Sequencer);
 };
 
