@@ -1,5 +1,7 @@
 #include "log/fsm.h"
 
+#include "common/protocol.h"
+
 #define HLOG(l) LOG(l) << "LogFsm: "
 #define HVLOG(l) VLOG(l) << "LogFsm: "
 
@@ -7,7 +9,9 @@ namespace faas {
 namespace log {
 
 Fsm::Fsm()
-    : next_record_seqnum_(0),
+    : new_view_cb_([] (const View*) {}),
+      log_replicated_cb_([] (uint64_t, uint64_t, uint32_t) {}),
+      next_record_seqnum_(0),
       next_log_seqnum_(0) {}
 
 Fsm::~Fsm() {}
@@ -32,6 +36,35 @@ void Fsm::OnRecvRecord(const FsmRecordProto& record) {
     }
 }
 
+void Fsm::NewView(int replicas, const NodeVec& nodes, FsmRecordProto* record) {
+    record->Clear();
+    record->set_seqnum(next_record_seqnum_);
+    record->set_type(FsmRecordType::NEW_VIEW);
+    NewViewRecordProto* new_view_record = record->mutable_new_view_record();
+    new_view_record->set_view_id(next_view_id());
+    new_view_record->set_replicas(replicas);
+    for (const auto& node : nodes) {
+        NodeProto* node_proto = new_view_record->add_nodes();
+        node_proto->set_id(node.first);
+        node_proto->set_addr(node.second);
+    }
+    ApplyRecord(*record);
+}
+
+void Fsm::NewGlobalCut(const CutVec& cuts, FsmRecordProto* record) {
+    record->Clear();
+    record->set_seqnum(next_record_seqnum_);
+    record->set_type(FsmRecordType::GLOBAL_CUT);
+    GlobalCutRecordProto* global_cut_record = record->mutable_global_cut_record();
+    global_cut_record->set_start_seqnum(next_log_seqnum_);
+    global_cut_record->set_end_seqnum(protocol::kInvalidLogSeqNum);
+    for (size_t i = 0; i < cuts.size(); i++) {
+        global_cut_record->add_localid_cuts(cuts[i]);
+    }
+    ApplyRecord(*record);
+    global_cut_record->set_end_seqnum(next_log_seqnum_);
+}
+
 void Fsm::ApplyRecord(const FsmRecordProto& record) {
     DCHECK_EQ(record.seqnum(), next_record_seqnum_);
     next_record_seqnum_++;
@@ -50,13 +83,16 @@ void Fsm::ApplyRecord(const FsmRecordProto& record) {
 
 void Fsm::ApplyNewViewRecord(const NewViewRecordProto& record) {
     View* view = new View(record);
+    if (view->id() != next_view_id()) {
+        HLOG(FATAL) << "View ID not increasing!";
+    }
     views_.emplace_back(view);
     next_log_seqnum_ = BuildSeqNum(view->id(), 0);
     new_view_cb_(view);
 }
 
 void Fsm::ApplyGlobalCutRecord(const GlobalCutRecordProto& record) {
-    View* view = current_view();
+    const View* view = current_view();
     DCHECK(view != nullptr);
     if (record.start_seqnum() != next_log_seqnum_) {
         HLOG(FATAL) << "Inconsistent start_seqnum from GlobalCutRecordProto";
@@ -77,17 +113,19 @@ void Fsm::ApplyGlobalCutRecord(const GlobalCutRecordProto& record) {
         uint16_t node_id = view->node(i);
         uint32_t start_localid = previous_cut == nullptr ? 0 : previous_cut->localid_cuts[i];
         uint32_t end_localid = new_cut->localid_cuts[i];
-        if (start_localid >= end_localid) {
+        if (start_localid < end_localid) {
+            log_replicated_cb_(
+                /* start_localid= */ BuildLocalId(view->id(), node_id, start_localid),
+                /* start_seqnum= */  next_log_seqnum_,
+                /* delta= */         end_localid - start_localid
+            );
+            next_log_seqnum_ += end_localid - start_localid;
+        } else if (start_localid > end_localid) {
             HLOG(FATAL) << "localid_cuts from GlobalCutRecordProto not increasing";
         }
-        uint64_t start_seqnum = next_log_seqnum_;
-        uint64_t end_seqnum = start_seqnum + (end_localid - start_localid);
-        log_replicated_cb_(std::make_pair(BuildLocalId(view->id(), node_id, start_localid),
-                                          BuildLocalId(view->id(), node_id, end_localid)),
-                           std::make_pair(start_seqnum, end_seqnum));
-        next_log_seqnum_ = end_seqnum;
     }
-    if (next_log_seqnum_ != record.end_seqnum()) {
+    if (record.end_seqnum() != protocol::kInvalidLogSeqNum
+            && next_log_seqnum_ != record.end_seqnum()) {
         HLOG(FATAL) << "Inconsistent end_seqnum from GlobalCutRecordProto";
     }
 }
@@ -106,8 +144,8 @@ Fsm::View::View(const NewViewRecordProto& proto)
 
 Fsm::View::~View() {}
 
-void Fsm::View::ForEachBackNode(uint16_t primary_node_id,
-                           std::function<void(uint16_t /* node_id */)> cb) const {
+void Fsm::View::ForEachBackupNode(uint16_t primary_node_id,
+                                  std::function<void(uint16_t /* node_id */)> cb) const {
     size_t base = node_indices_.at(primary_node_id);
     for (size_t i = 1; i < replicas_; i++) {
         size_t node_id = node_ids_[(base + i) % node_ids_.size()];

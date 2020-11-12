@@ -229,7 +229,7 @@ void Engine::OnRecvGatewayMessage(GatewayConnection* connection, const GatewayMe
         FuncCall func_call = GatewayMessageHelper::GetFuncCall(message);
         OnExternalFuncCall(func_call, payload);
     } else if (GatewayMessageHelper::IsSharedLogOp(message)) {
-        shared_log_engine_->OnSequencerMessage(message.msg_seqnum, payload);
+        shared_log_engine_->OnSequencerMessage(payload);
     } else {
         HLOG(ERROR) << "Unknown engine message type";
     }

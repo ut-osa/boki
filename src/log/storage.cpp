@@ -3,18 +3,16 @@
 namespace faas {
 namespace log {
 
-Storage::Storage() {
-}
+InMemoryStorage::InMemoryStorage() {}
 
-Storage::~Storage() {
-}
+InMemoryStorage::~InMemoryStorage() {}
 
-void Storage::Add(std::unique_ptr<LogEntry> log_entry) {
+void InMemoryStorage::Add(std::unique_ptr<LogEntry> log_entry) {
     uint64_t seqnum = log_entry->seqnum;
     entries_[seqnum] = std::move(log_entry);
 }
 
-bool Storage::Read(uint64_t log_seqnum, std::span<const char>* data) {
+bool InMemoryStorage::Read(uint64_t log_seqnum, std::span<const char>* data) {
     if (!entries_.contains(log_seqnum)) {
         return false;
     }

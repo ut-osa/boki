@@ -151,9 +151,8 @@ struct GatewayMessage {
         } __attribute__ ((packed));
         int32_t processing_time; // Used in FUNC_CALL_COMPLETE
         int32_t status_code;     // Used in FUNC_CALL_FAILED
-        int32_t msg_seqnum;      // Used in SHARED_LOG_OP
     };
-    int32_t payload_size;        // Used in INVOKE_FUNC, FUNC_CALL_COMPLETE
+    int32_t payload_size;        // Used in INVOKE_FUNC, FUNC_CALL_COMPLETE, SHARED_LOG_OP
 } __attribute__ ((packed));
 
 static_assert(sizeof(GatewayMessage) == 48, "Unexpected GatewayMessage size");
@@ -408,10 +407,9 @@ public:
         return message;
     }
 
-    static GatewayMessage NewSharedLogOp(int32_t msg_seqnum = -1) {
+    static GatewayMessage NewSharedLogOp() {
         NEW_EMPTY_GATEWAY_MESSAGE(message);
         message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
-        message.msg_seqnum = msg_seqnum;
         return message;
     }
 

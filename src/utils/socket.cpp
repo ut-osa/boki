@@ -1,6 +1,10 @@
 #define __FAAS_USED_IN_BINDING
 #include "utils/socket.h"
 
+#ifdef __FAAS_HAVE_ABSL
+#include <absl/strings/numbers.h>
+#endif
+
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -217,6 +221,24 @@ bool FillTcpSocketAddr(struct sockaddr_in* addr, std::string_view host_or_ip, ui
         result = result->ai_next;
     }
     return false;
+}
+
+bool ParseHostPort(std::string_view addr_str, std::string_view* host, uint16_t* port) {
+#ifdef __FAAS_HAVE_ABSL
+    size_t pos = addr_str.find_last_of(":");
+    if (pos == std::string::npos) {
+        return false;
+    }
+    *host = addr_str.substr(0, pos);
+    int parsed_port;
+    if (!absl::SimpleAtoi(addr_str.substr(pos + 1), &parsed_port)) {
+        return false;
+    }
+    *port = gsl::narrow_cast<uint16_t>(parsed_port);
+    return true;
+#else
+    LOG(FATAL) << "Not implemented";
+#endif
 }
 
 }  // namespace utils

@@ -12,24 +12,38 @@ public:
 
     class View;
 
-    typedef std::function<void(View*)> NewViewCallback;
+    typedef std::function<void(const View*)> NewViewCallback;
     void SetNewViewCallback(NewViewCallback cb);
 
-    typedef std::function<void(std::pair<uint64_t, uint64_t> /* localid_range */,
-                               std::pair<uint64_t, uint64_t> /* seqnum_range */)>
+    typedef std::function<void(uint64_t /* start_localid */, uint64_t /* start_seqnum */,
+                               uint32_t /* delta */)>
             LogReplicatedCallback;
     void SetLogReplicatedCallback(LogReplicatedCallback cb);
 
-    View* current_view() {
+    const View* current_view() const {
         return views_.empty() ? nullptr : views_.back().get();
     }
 
-    uint16_t next_view_id() const {
-        return gsl::narrow_cast<uint16_t>(views_.size());
+    const View* view_with_id(uint16_t view_id) const {
+        if (view_id < views_.size()) {
+            return views_.at(view_id).get();
+        } else {
+            return nullptr;
+        }
     }
+
+    bool LogSeqNumToLocalId(uint64_t seqnum, uint64_t* localid);
 
     // Called by followers
     void OnRecvRecord(const FsmRecordProto& record);
+
+    // Called by the leader
+    typedef std::vector<std::pair</* node_id */ uint16_t, /* addr */ std::string>> NodeVec;
+    void NewView(int replicas, const NodeVec& nodes, FsmRecordProto* record);
+
+    // Called by the leader
+    typedef std::vector<uint32_t> CutVec;
+    void NewGlobalCut(const CutVec& cuts, FsmRecordProto* record);
 
 private:
     NewViewCallback       new_view_cb_;
@@ -48,6 +62,10 @@ private:
     };
     std::vector<std::unique_ptr<GlobalCut>> global_cuts_;
 
+    uint16_t next_view_id() const {
+        return gsl::narrow_cast<uint16_t>(views_.size());
+    }
+
     void ApplyRecord(const FsmRecordProto& record);
     void ApplyNewViewRecord(const NewViewRecordProto& record);
     void ApplyGlobalCutRecord(const GlobalCutRecordProto& record);
@@ -61,6 +79,7 @@ public:
     ~View();
 
     uint16_t id() const { return id_; }
+    size_t replicas() const { return replicas_; }
 
     size_t num_nodes() const { return node_ids_.size(); }
     uint16_t node(size_t idx) const { return node_ids_[idx]; }
@@ -69,12 +88,12 @@ public:
         return node_indices_.contains(node_id);
     }
 
-    std::string get_addr(uint16_t node_id) const {
+    std::string_view get_addr(uint16_t node_id) const {
         return node_addr_.at(node_id);
     }
 
-    void ForEachBackNode(uint16_t primary_node_id,
-                         std::function<void(uint16_t /* node_id */)> cb) const;
+    void ForEachBackupNode(uint16_t primary_node_id,
+                           std::function<void(uint16_t /* node_id */)> cb) const;
 
 private:
     uint16_t id_;

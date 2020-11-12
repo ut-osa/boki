@@ -249,10 +249,11 @@ void SharedLogMessageHub::SendMessage(uint16_t view_id, uint16_t node_id,
 
 void SharedLogMessageHub::SetupConnections(uint16_t view_id, uint16_t node_id) {
     DCHECK(io_worker_->WithinMyEventLoopThread());
-    const log::View* view = shared_log_engine_->log_core()->GetView(view_id);
-    DCHECK(view != nullptr);
+    std::string_view host;
+    uint16_t port;
+    CHECK(utils::ParseHostPort(shared_log_engine_->GetNodeAddr(view_id, node_id), &host, &port));
     struct sockaddr_in addr;
-    if (!utils::FillTcpSocketAddr(&addr, view->get_host(node_id), view->get_port(node_id))) {
+    if (!utils::FillTcpSocketAddr(&addr, host, port)) {
         HLOG(FATAL) << fmt::format("Cannot resolve address for node {}", node_id);
     }
     for (int i = 0; i < engine_->engine_conn_per_worker(); i++) {

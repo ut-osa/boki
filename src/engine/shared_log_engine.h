@@ -2,7 +2,8 @@
 
 #include "base/common.h"
 #include "common/protocol.h"
-#include "log/core.h"
+#include "log/engine_core.h"
+#include "log/storage.h"
 
 namespace faas {
 namespace engine {
@@ -14,22 +15,24 @@ public:
     explicit SharedLogEngine(Engine* engine);
     ~SharedLogEngine();
 
-    const log::Core* log_core() const { return &log_core_; }
-
-    void OnSequencerMessage(int seqnum, std::span<const char> data);
+    void OnSequencerMessage(std::span<const char> data);
     void OnMessageFromOtherEngine(const protocol::Message& message);
     void OnMessageFromFuncWorker(const protocol::Message& message);
-    void OnLogReplicated(std::pair<uint64_t, uint64_t> localid_range,
-                         std::pair<uint64_t, uint64_t> seqnum_range);
-    void OnLogDiscarded(uint64_t localid);
-    void AppendBackupLog(uint16_t view_id, uint16_t backup_node_id,
-                         uint64_t log_localid, uint32_t log_tag,
-                         std::span<const char> data);
-    void SendSequencerMessage(std::span<const char> data);
+
+    std::string_view GetNodeAddr(uint16_t view_id, uint16_t node_id);
 
 private:
     Engine* engine_;
-    log::Core log_core_;
+
+    absl::Mutex mu_;
+
+    log::EngineCore core_ ABSL_GUARDED_BY(mu_);
+    std::unique_ptr<log::StorageInterface> storage_;
+
+    void LogDiscarded(std::unique_ptr<log::LogEntry> log_entry);
+    void AppendBackupLog(uint16_t view_id, uint16_t backup_node_id,
+                         const log::LogEntry* log_entry);
+    void SendSequencerMessage(std::span<const char> data);
 
     DISALLOW_COPY_AND_ASSIGN(SharedLogEngine);
 };
