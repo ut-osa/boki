@@ -3,6 +3,7 @@ syntax = "proto3";
 package faas.log;
 
 option optimize_for = LITE_RUNTIME;
+option cc_enable_arenas = true;
 
 enum FsmRecordType {
     INVALID    = 0;
@@ -11,18 +12,20 @@ enum FsmRecordType {
 }
 
 message NodeProto {
-    uint32 node_id = 1;
+    uint32 id = 1;
     string addr = 2;
 }
 
 message NewViewRecordProto {
     uint32 view_id = 1;
-    repeated NodeProto nodes = 2;
+    uint32 replicas = 2;
+    repeated NodeProto nodes = 3;
 }
 
 message GlobalCutRecordProto {
-    uint32 view_id = 1;
-    repeated uint32 cuts = 2;
+    uint64 start_seqnum = 1;
+    uint64 end_seqnum = 2;
+    repeated uint32 localid_cuts = 3;
 }
 
 message FsmRecordProto {
@@ -33,6 +36,5 @@ message FsmRecordProto {
 }
 
 message SequencerMsgProto {
-    uint32 seqnum = 1;
     repeated FsmRecordProto fsm_records = 2;
 }
