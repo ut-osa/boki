@@ -5,13 +5,13 @@
 namespace faas {
 namespace log {
 
-class Sequencer {
+class SequencerCore {
 public:
-    Sequencer();
-    ~Sequencer();
+    SequencerCore();
+    ~SequencerCore();
 
 private:
-    DISALLOW_COPY_AND_ASSIGN(Sequencer);
+    DISALLOW_COPY_AND_ASSIGN(SequencerCore);
 };
 
 }  // namespace log

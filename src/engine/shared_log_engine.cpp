@@ -32,7 +32,13 @@ SharedLogEngine::SharedLogEngine(Engine* engine)
 SharedLogEngine::~SharedLogEngine() {}
 
 void SharedLogEngine::OnSequencerMessage(std::span<const char> data) {
-    // TODO
+    log::SequencerMsgProto message_proto;
+    if (!message_proto.ParseFromArray(data.data(), data.size())) {
+        HLOG(ERROR) << "Failed to parse sequencer message!";
+        return;
+    }
+    absl::MutexLock lk(&mu_);
+    core_.NewSequencerMessage(message_proto);
 }
 
 void SharedLogEngine::OnMessageFromOtherEngine(const protocol::Message& message) {
@@ -75,6 +81,7 @@ void SharedLogEngine::OnMessageFromFuncWorker(const protocol::Message& message) 
 }
 
 void SharedLogEngine::LogDiscarded(std::unique_ptr<log::LogEntry> log_entry) {
+    HLOG(INFO) << fmt::format("Log with localid {} discarded", log_entry->localid);
     // TODO
 }
 

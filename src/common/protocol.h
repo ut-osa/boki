@@ -157,6 +157,15 @@ struct GatewayMessage {
 
 static_assert(sizeof(GatewayMessage) == 48, "Unexpected GatewayMessage size");
 
+struct SequencerMessage {
+    uint16_t message_type;
+    uint16_t node_id;
+    uint32_t payload_size;
+    char     shared_log_addr[32];  // Used in ENGINE_HANDSHAKE
+} __attribute__ ((packed));
+
+static_assert(sizeof(SequencerMessage) == 40, "Unexpected SequencerMessage size");
+
 class MessageHelper {
 public:
     static bool IsLauncherHandshake(const Message& message) {
@@ -417,6 +426,44 @@ public:
 
 private:
     DISALLOW_IMPLICIT_CONSTRUCTORS(GatewayMessageHelper);
+};
+
+class SequencerMessageHelper {
+public:
+    static bool IsEngineHandshake(const SequencerMessage& message) {
+        return static_cast<MessageType>(message.message_type) == MessageType::ENGINE_HANDSHAKE;
+    }
+
+    static bool IsSharedLogOp(const SequencerMessage& message) {
+        return static_cast<MessageType>(message.message_type) == MessageType::SHARED_LOG_OP;
+    }
+
+#define NEW_EMPTY_SEQUENCER_MESSAGE(MSG_VAR) \
+    SequencerMessage MSG_VAR; memset(&MSG_VAR, 0, sizeof(SequencerMessage))
+
+    static SequencerMessage NewEngineHandshake(uint16_t node_id,
+                                               std::string_view shared_log_addr) {
+        NEW_EMPTY_SEQUENCER_MESSAGE(message);
+        message.message_type = static_cast<uint16_t>(MessageType::ENGINE_HANDSHAKE);
+        message.node_id = node_id;
+        if (shared_log_addr.length() + 1 > sizeof(message.shared_log_addr)) {
+            LOG(FATAL) << "shared_log_addr is too long";
+        }
+        memcpy(message.shared_log_addr, shared_log_addr.data(), shared_log_addr.length());
+        return message;
+    }
+
+    static SequencerMessage NewSharedLogOp(std::span<const char> payload) {
+        NEW_EMPTY_SEQUENCER_MESSAGE(message);
+        message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
+        message.payload_size = gsl::narrow_cast<uint32_t>(payload.size());
+        return message;
+    }
+
+#undef NEW_EMPTY_SEQUENCER_MESSAGE
+
+private:
+    DISALLOW_IMPLICIT_CONSTRUCTORS(SequencerMessageHelper);
 };
 
 }  // namespace protocol

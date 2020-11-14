@@ -1,8 +1,5 @@
 #include "base/init.h"
 #include "base/common.h"
-#include "ipc/base.h"
-#include "utils/docker.h"
-#include "utils/env_variables.h"
 #include "gateway/server.h"
 
 #include <signal.h>

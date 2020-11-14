@@ -207,6 +207,9 @@ struct SharedLogMessageHub::NodeContext {
     void reset(uint16_t view_id) {
         this->view_id = view_id;
         this->pending_messages.clear();
+        for (Connection* conn : this->active_connections) {
+            conn->ScheduleClose();
+        }
         this->active_connections.clear();
         this->next_connection = this->active_connections.begin();
     }
@@ -215,6 +218,10 @@ struct SharedLogMessageHub::NodeContext {
 void SharedLogMessageHub::SendMessage(uint16_t view_id, uint16_t node_id,
                                       const protocol::Message& message) {
     DCHECK(io_worker_->WithinMyEventLoopThread());
+    if (state_ != kRunning) {
+        HLOG(WARNING) << "Not in running state, will not send this message";
+        return;
+    }
     NodeContext* ctx = nullptr;
     if (!node_ctxes_.contains(node_id)) {
         ctx = new NodeContext;
@@ -244,6 +251,7 @@ void SharedLogMessageHub::SendMessage(uint16_t view_id, uint16_t node_id,
     if (++ctx->next_connection == ctx->active_connections.end()) {
         ctx->next_connection = ctx->active_connections.begin();
     }
+    DCHECK_EQ(conn->view_id(), view_id);
     conn->SendMessage(message);
 }
 
@@ -288,7 +296,8 @@ void SharedLogMessageHub::OnConnectionClosing(Connection* conn) {
     DCHECK(io_worker_->WithinMyEventLoopThread());
     if (node_ctxes_.contains(conn->node_id())) {
         NodeContext* ctx = node_ctxes_[conn->node_id()].get();
-        if (ctx->active_connections.contains(conn)) {
+        if (ctx->view_id == conn->view_id()) {
+            DCHECK(ctx->active_connections.contains(conn));
             ctx->active_connections.erase(conn);
             ctx->next_connection = ctx->active_connections.begin();
         }
