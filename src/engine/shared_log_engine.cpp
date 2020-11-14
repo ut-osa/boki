@@ -97,9 +97,9 @@ void SharedLogEngine::AppendBackupLog(uint16_t view_id, uint16_t backup_node_id,
 }
 
 void SharedLogEngine::SendSequencerMessage(std::span<const char> data) {
-    GatewayMessage message = GatewayMessageHelper::NewSharedLogOp();
-    message.payload_size = data.size();
-    engine_->SendGatewayMessage(message, data);
+    // GatewayMessage message = GatewayMessageHelper::NewSharedLogOp();
+    // message.payload_size = data.size();
+    // engine_->SendGatewayMessage(message, data);
 }
 
 std::string_view SharedLogEngine::GetNodeAddr(uint16_t view_id, uint16_t node_id) {

@@ -147,15 +147,14 @@ struct GatewayMessage {
         struct {
             uint16_t node_id;
             uint16_t conn_id;
-            char     shared_log_addr[32];
         } __attribute__ ((packed));
         int32_t processing_time; // Used in FUNC_CALL_COMPLETE
         int32_t status_code;     // Used in FUNC_CALL_FAILED
     };
-    int32_t payload_size;        // Used in INVOKE_FUNC, FUNC_CALL_COMPLETE, SHARED_LOG_OP
+    int32_t payload_size;        // Used in INVOKE_FUNC, FUNC_CALL_COMPLETE
 } __attribute__ ((packed));
 
-static_assert(sizeof(GatewayMessage) == 48, "Unexpected GatewayMessage size");
+static_assert(sizeof(GatewayMessage) == 16, "Unexpected GatewayMessage size");
 
 struct SequencerMessage {
     uint16_t message_type;
@@ -359,10 +358,6 @@ public:
         return static_cast<MessageType>(message.message_type) == MessageType::FUNC_CALL_FAILED;
     }
 
-    static bool IsSharedLogOp(const GatewayMessage& message) {
-        return static_cast<MessageType>(message.message_type) == MessageType::SHARED_LOG_OP;
-    }
-
     static void SetFuncCall(GatewayMessage* message, const FuncCall& func_call) {
         message->func_id = func_call.func_id;
         message->method_id = func_call.method_id;
@@ -413,12 +408,6 @@ public:
         message.message_type = static_cast<uint16_t>(MessageType::FUNC_CALL_FAILED);
         SetFuncCall(&message, func_call);
         message.status_code = status_code;
-        return message;
-    }
-
-    static GatewayMessage NewSharedLogOp() {
-        NEW_EMPTY_GATEWAY_MESSAGE(message);
-        message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
         return message;
     }
 

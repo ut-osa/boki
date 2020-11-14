@@ -1,19 +1,11 @@
 #include "engine/dispatcher.h"
 
 #include "ipc/base.h"
+#include "engine/flags.h"
 #include "engine/engine.h"
-
-#include <absl/flags/flag.h>
 
 #define HLOG(l) LOG(l) << log_header_
 #define HVLOG(l) VLOG(l) << log_header_
-
-ABSL_FLAG(double, max_relative_queueing_delay, 0.0, "");
-ABSL_FLAG(double, concurrency_limit_coef, 1.0, "");
-ABSL_FLAG(double, expected_concurrency_coef, 1.0, "");
-ABSL_FLAG(int, min_worker_request_interval_ms, 200, "");
-ABSL_FLAG(bool, always_request_worker_if_possible, false, "");
-ABSL_FLAG(bool, disable_concurrency_limiter, false, "");
 
 namespace faas {
 namespace engine {

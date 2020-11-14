@@ -12,14 +12,12 @@
 #include "gateway/grpc_connection.h"
 #include "gateway/engine_connection.h"
 #include "gateway/node_manager.h"
-#include "gateway/shared_log.h"
 
 namespace faas {
 namespace gateway {
 
 class Server final : public server::ServerBase {
 public:
-    static constexpr int kDefaultListenBackLog = 64;
     static constexpr int kDefaultNumIOWorkers = 1;
 
     Server();
@@ -36,7 +34,6 @@ public:
     }
     FuncConfig* func_config() { return &func_config_; }
     NodeManager* node_manager() { return &node_manager_; }
-    SharedLog* shared_log() { return shared_log_.get(); }
 
     // Must be thread-safe
     void OnNewConnectedNode(EngineConnection* connection);
@@ -69,9 +66,6 @@ private:
     int next_grpc_connection_id_;
 
     NodeManager node_manager_;
-
-    friend class SharedLog;
-    std::unique_ptr<SharedLog> shared_log_;
 
     class OngoingEngineHandshake;
     friend class OngoingEngineHandshake;

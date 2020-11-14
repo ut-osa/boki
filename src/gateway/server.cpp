@@ -24,14 +24,12 @@ Server::Server()
     : engine_conn_port_(-1),
       http_port_(-1),
       grpc_port_(-1),
-      listen_backlog_(kDefaultListenBackLog),
       num_io_workers_(kDefaultNumIOWorkers),
       next_http_conn_worker_id_(0),
       next_grpc_conn_worker_id_(0),
       next_http_connection_id_(0),
       next_grpc_connection_id_(0),
       node_manager_(this),
-      shared_log_(absl::GetFlag(FLAGS_enable_shared_log) ? new SharedLog(this) : nullptr),
       read_buffer_pool_("HandshakeRead", 128),
       next_call_id_(1),
       last_request_timestamp_(-1),
@@ -77,26 +75,27 @@ void Server::StartInternal() {
     CHECK_NE(engine_conn_port_, -1);
     CHECK_NE(http_port_, -1);
     // Listen on address:engine_conn_port for engine connections
+    int listen_backlog = absl::GetFlag(FLAGS_socket_listen_backlog);
     UV_CHECK_OK(uv_ip4_addr(address_.c_str(), engine_conn_port_, &bind_addr));
     UV_CHECK_OK(uv_tcp_bind(&uv_engine_conn_handle_, (const struct sockaddr *)&bind_addr, 0));
     HLOG(INFO) << fmt::format("Listen on {}:{} for engine connections",
                               address_, engine_conn_port_);
     UV_CHECK_OK(uv_listen(
-        UV_AS_STREAM(&uv_engine_conn_handle_), listen_backlog_,
+        UV_AS_STREAM(&uv_engine_conn_handle_), listen_backlog,
         &Server::EngineConnectionCallback));
     // Listen on address:http_port for HTTP requests
     UV_CHECK_OK(uv_ip4_addr(address_.c_str(), http_port_, &bind_addr));
     UV_CHECK_OK(uv_tcp_bind(&uv_http_handle_, (const struct sockaddr *)&bind_addr, 0));
     HLOG(INFO) << fmt::format("Listen on {}:{} for HTTP requests", address_, http_port_);
     UV_CHECK_OK(uv_listen(
-        UV_AS_STREAM(&uv_http_handle_), listen_backlog_,
+        UV_AS_STREAM(&uv_http_handle_), listen_backlog,
         &Server::HttpConnectionCallback));
     // Listen on address:grpc_port for HTTP requests
     UV_CHECK_OK(uv_ip4_addr(address_.c_str(), grpc_port_, &bind_addr));
     UV_CHECK_OK(uv_tcp_bind(&uv_grpc_handle_, (const struct sockaddr *)&bind_addr, 0));
     HLOG(INFO) << fmt::format("Listen on {}:{} for gRPC requests", address_, grpc_port_);
     UV_CHECK_OK(uv_listen(
-        UV_AS_STREAM(&uv_grpc_handle_), listen_backlog_,
+        UV_AS_STREAM(&uv_grpc_handle_), listen_backlog,
         &Server::GrpcConnectionCallback));
 }
 
@@ -163,9 +162,6 @@ void Server::DiscardFuncCall(FuncCallContext* func_call_context) {
 }
 
 void Server::OnNewConnectedNode(EngineConnection* connection) {
-    if (absl::GetFlag(FLAGS_enable_shared_log)) {
-        shared_log_->OnNewNodeConnected(connection->node_id(), connection->shared_log_addr());
-    }
     TryDispatchingPendingFuncCalls();
 }
 
@@ -369,9 +365,6 @@ bool Server::OnEngineHandshake(uv_tcp_t* uv_handle, std::span<const char> data) 
                                          data.size() - sizeof(GatewayMessage));
     std::shared_ptr<server::ConnectionBase> connection(
         new EngineConnection(this, node_id, conn_id, remaining_data));
-    if (absl::GetFlag(FLAGS_enable_shared_log)) {
-        connection->as_ptr<EngineConnection>()->set_shared_log_addr(message->shared_log_addr);
-    }
     size_t worker_id = conn_id % io_workers_.size();
     HLOG(INFO) << fmt::format("New engine connection (node_id={}, conn_id={}), "
                               "assigned to IO worker {}", node_id, conn_id, worker_id);

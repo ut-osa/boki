@@ -8,6 +8,7 @@
 #include "utils/docker.h"
 #include "utils/socket.h"
 #include "worker/worker_lib.h"
+#include "engine/flags.h"
 
 #define HLOG(l) LOG(l) << "Engine: "
 #define HVLOG(l) VLOG(l) << "Engine: "
@@ -24,10 +25,7 @@ using protocol::SharedLogOpType;
 
 Engine::Engine()
     : gateway_port_(-1),
-      listen_backlog_(kDefaultListenBackLog),
       num_io_workers_(kDefaultNumIOWorkers),
-      gateway_conn_per_worker_(kDefaultGatewayConnPerWorker),
-      engine_conn_per_worker_(kDefaultEngineConnPerWorker),
       engine_tcp_port_(-1),
       shared_log_tcp_port_(-1),
       func_worker_use_engine_socket_(absl::GetFlag(FLAGS_func_worker_use_engine_socket)),
@@ -73,10 +71,9 @@ void Engine::StartInternal() {
         io_workers_.push_back(io_worker);
     }
     // Connect to gateway
-    CHECK_GT(gateway_conn_per_worker_, 0);
     CHECK(!gateway_addr_.empty());
     CHECK_NE(gateway_port_, -1);
-    int total_gateway_conn = num_io_workers_ * gateway_conn_per_worker_;
+    int total_gateway_conn = num_io_workers_ * absl::GetFlag(FLAGS_gateway_conn_per_worker);
     for (int i = 0; i < total_gateway_conn; i++) {
         int sockfd = utils::TcpSocketConnect(gateway_addr_, gateway_port_);
         CHECK(sockfd != -1)
@@ -90,18 +87,19 @@ void Engine::StartInternal() {
         gateway_connections_[connection->id()] = std::move(connection);
     }
     // Listen on ipc_path
+    int listen_backlog = absl::GetFlag(FLAGS_socket_listen_backlog);
     if (engine_tcp_port_ == -1) {
         std::string ipc_path(ipc::GetEngineUnixSocketPath());
         if (fs_utils::Exists(ipc_path)) {
             PCHECK(fs_utils::Remove(ipc_path));
         }
-        server_sockfd_ = utils::UnixDomainSocketBindAndListen(ipc_path, listen_backlog_);
+        server_sockfd_ = utils::UnixDomainSocketBindAndListen(ipc_path, listen_backlog);
         CHECK(server_sockfd_ != -1)
             << fmt::format("Failed to listen on {}", ipc_path);
         HLOG(INFO) << fmt::format("Listen on {} for IPC connections", ipc_path);
     } else {
         server_sockfd_ = utils::TcpSocketBindAndListen(
-            "0.0.0.0", engine_tcp_port_, listen_backlog_);
+            "0.0.0.0", engine_tcp_port_, listen_backlog);
         CHECK(server_sockfd_ != -1)
             << fmt::format("Failed to listen on 0.0.0.0:{}", engine_tcp_port_);
         HLOG(INFO) << fmt::format("Listen on 0.0.0.0:{} for IPC connections", engine_tcp_port_);
@@ -120,7 +118,7 @@ void Engine::StartInternal() {
         // Listen on shared_log_tcp_port
         CHECK_NE(shared_log_tcp_port_, -1);
         shared_log_sockfd_ = utils::TcpSocketBindAndListen(
-            "0.0.0.0", shared_log_tcp_port_, listen_backlog_);
+            "0.0.0.0", shared_log_tcp_port_, listen_backlog);
         CHECK(shared_log_sockfd_ != -1)
             << fmt::format("Failed to listen on 0.0.0.0:{}", shared_log_tcp_port_);
         HLOG(INFO) << fmt::format("Listen on 0.0.0.0:{} for shared log related connections",
@@ -228,8 +226,6 @@ void Engine::OnRecvGatewayMessage(GatewayConnection* connection, const GatewayMe
     if (GatewayMessageHelper::IsDispatchFuncCall(message)) {
         FuncCall func_call = GatewayMessageHelper::GetFuncCall(message);
         OnExternalFuncCall(func_call, payload);
-    } else if (GatewayMessageHelper::IsSharedLogOp(message)) {
-        shared_log_engine_->OnSequencerMessage(payload);
     } else {
         HLOG(ERROR) << "Unknown engine message type";
     }

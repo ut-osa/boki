@@ -2,7 +2,6 @@
 
 #include "base/common.h"
 #include "common/protocol.h"
-#include "common/flags.h"
 #include "common/func_config.h"
 #include "ipc/shm_region.h"
 #include "engine/server_base.h"
@@ -20,10 +19,7 @@ namespace engine {
 
 class Engine final : public ServerBase {
 public:
-    static constexpr int kDefaultListenBackLog = 64;
     static constexpr int kDefaultNumIOWorkers = 1;
-    static constexpr int kDefaultGatewayConnPerWorker = 2;
-    static constexpr int kDefaultEngineConnPerWorker = 2;
 
     Engine();
     ~Engine();
@@ -33,8 +29,6 @@ public:
         gateway_port_ = port;
     }
     void set_num_io_workers(int value) { num_io_workers_ = value; }
-    void set_gateway_conn_per_worker(int value) { gateway_conn_per_worker_ = value; }
-    void set_engine_conn_per_worker(int value) { engine_conn_per_worker_ = value; }
     void set_node_id(uint16_t value) { node_id_ = value; }
     void set_func_config_file(std::string_view path) {
         func_config_file_ = std::string(path);
@@ -51,7 +45,6 @@ public:
     std::string_view shared_log_tcp_host() const { return shared_log_tcp_host_; }
     int shared_log_tcp_port() const { return shared_log_tcp_port_; }
     bool func_worker_use_engine_socket() const { return func_worker_use_engine_socket_; }
-    int engine_conn_per_worker() const { return engine_conn_per_worker_; }
     WorkerManager* worker_manager() { return worker_manager_.get(); }
     Monitor* monitor() { return monitor_.get(); }
     Tracer* tracer() { return tracer_.get(); }
@@ -75,10 +68,7 @@ private:
 
     std::string gateway_addr_;
     int gateway_port_;
-    int listen_backlog_;
     int num_io_workers_;
-    int gateway_conn_per_worker_;
-    int engine_conn_per_worker_;
     int engine_tcp_port_;
     std::string shared_log_tcp_host_;
     int shared_log_tcp_port_;

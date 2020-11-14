@@ -43,10 +43,6 @@ void EngineConnection::Start() {
                                &EngineConnection::RecvDataCallback));
     state_ = kRunning;
     server_->node_manager()->OnNewEngineConnection(this);
-    if (absl::GetFlag(FLAGS_enable_shared_log)) {
-        DCHECK(!shared_log_addr_.empty());
-        DCHECK_NOTNULL(server_->shared_log())->OnNewNodeConnected(node_id_, shared_log_addr_);
-    }
     ProcessGatewayMessages();
 }
 

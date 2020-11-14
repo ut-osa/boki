@@ -1,16 +1,11 @@
 #include "engine/tracer.h"
 
+#include "engine/flags.h"
 #include "engine/engine.h"
 #include "engine/worker_manager.h"
 
-#include <absl/flags/flag.h>
-
 #define HLOG(l) LOG(l) << "Tracer: "
 #define HVLOG(l) VLOG(l) << "Tracer: "
-
-ABSL_FLAG(double, instant_rps_p_norm, 1.0, "");
-ABSL_FLAG(double, instant_rps_ema_alpha, 0.001, "");
-ABSL_FLAG(double, instant_rps_ema_tau_ms, 0, "");
 
 namespace faas {
 namespace engine {

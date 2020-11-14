@@ -3,11 +3,8 @@
 #include "common/time.h"
 #include "ipc/base.h"
 #include "ipc/fifo.h"
+#include "engine/flags.h"
 #include "engine/engine.h"
-
-#include <absl/flags/flag.h>
-
-ABSL_FLAG(bool, func_worker_pipe_direct_write, false, "");
 
 #define HLOG(l) LOG(l) << log_header_
 #define HPLOG(l) PLOG(l) << log_header_
