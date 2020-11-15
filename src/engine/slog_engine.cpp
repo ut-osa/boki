@@ -43,7 +43,7 @@ void SLogEngine::OnSequencerMessage(const SequencerMessage& message,
         absl::MutexLock lk(&mu_);
         core_.NewFsmRecordsMessage(message_proto);
     } else {
-        HLOG(ERROR) << "Unknown message type!";
+        HLOG(ERROR) << fmt::format("Unknown message type: {}!", message.message_type);
     }
 }
 

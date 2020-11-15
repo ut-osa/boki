@@ -27,6 +27,7 @@ NodeManager::~NodeManager() {
 void NodeManager::Start(uv_loop_t* uv_loop, std::string_view listen_addr, uint16_t listen_port) {
     uv_loop_ = uv_loop;
     UV_CHECK_OK(uv_tcp_init(uv_loop, &uv_handle_));
+    uv_handle_.data = this;
     struct sockaddr_in bind_addr;
     std::string addr(listen_addr);
     UV_CHECK_OK(uv_ip4_addr(addr.c_str(), listen_port, &bind_addr));
@@ -126,6 +127,7 @@ void NodeManager::Connection::SendMessage(const SequencerMessage& message,
     }
     memcpy(buf.base, &message, sizeof(SequencerMessage));
     memcpy(buf.base + sizeof(SequencerMessage), payload.data(), payload.size());
+    buf.len = sizeof(SequencerMessage) + payload.size();
     uv_write_t* write_req = node_manager_->write_req_pool_.Get();
     write_req->data = buf.base;
     UV_DCHECK_OK(uv_write(write_req, UV_AS_STREAM(&uv_handle_),
@@ -216,6 +218,7 @@ void NodeManager::ScheduleStop() {
         return;
     }
     DCHECK(state_ == kRunning);
+    uv_close(UV_AS_HANDLE(&uv_handle_), &NodeManager::CloseCallback);
     for (const auto& connection : connections_) {
         connection->ScheduleClose();
     }
@@ -255,6 +258,8 @@ void NodeManager::OnConnectionHandshaked(Connection* connection) {
     }
     ctx->active_connections.insert(connection);
     ctx->next_connection = ctx->active_connections.begin();
+    HLOG(INFO) << fmt::format("New connection from node {}, in total {} connections",
+                              node_id, ctx->active_connections.size());
     if (new_node) {
         server_->OnNewNodeConnected(node_id, connection->shared_log_addr());
     }
@@ -294,6 +299,12 @@ UV_CONNECTION_CB_FOR_CLASS(NodeManager, EngineConnection) {
         connections_.insert(std::move(conn));
     } else {
         HLOG(ERROR) << "Failed to accept new engine connection";
+    }
+}
+
+UV_CLOSE_CB_FOR_CLASS(NodeManager, Close) {
+    if (connections_.empty()) {
+        state_ = kStopped;
     }
 }
 

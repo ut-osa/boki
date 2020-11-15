@@ -23,6 +23,7 @@ void SequencerCore::OnNewNodeConnected(uint16_t node_id, std::string_view addr) 
         HLOG(WARNING) << fmt::format("Node {} already in connected node set", node_id);
         return;
     }
+    HLOG(INFO) << fmt::format("Node {} connected with address {}", node_id, addr);
     conencted_nodes_[node_id] = std::string(addr);
     SendAllFsmRecords(node_id);
     NewView();
@@ -33,6 +34,7 @@ void SequencerCore::OnNodeDisconnected(uint16_t node_id) {
         HLOG(WARNING) << fmt::format("Node {} not in connected node set", node_id);
         return;
     }
+    HLOG(INFO) << fmt::format("Node {} disconnected", node_id);
     conencted_nodes_.erase(node_id);
     NewView();
 }

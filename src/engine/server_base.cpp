@@ -138,6 +138,7 @@ void ServerBase::DoStop() {
         HLOG(WARNING) << "Already in stopping state";
         return;
     }
+    state_.store(kStopping);
     HLOG(INFO) << "Start stopping process";
     for (const auto& io_worker : io_workers_) {
         io_worker->ScheduleStop();
@@ -149,7 +150,6 @@ void ServerBase::DoStop() {
     }
     HLOG(INFO) << "All IOWorker finish";
     StopInternal();
-    state_.store(kStopping);
 }
 
 void ServerBase::DoReadClosedConnection(int pipefd) {

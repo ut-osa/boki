@@ -42,6 +42,8 @@ private:
 
     void EventLoopThreadMain();
 
+    void SendFsmRecordsMessage(uint16_t node_id, std::span<const char> data);
+
     DECLARE_UV_ASYNC_CB_FOR_CLASS(Stop);
 
     DISALLOW_COPY_AND_ASSIGN(Server);

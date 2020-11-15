@@ -65,7 +65,8 @@ private:
     struct NodeContext;
     absl::flat_hash_map</* node_id */ uint16_t,
                         std::unique_ptr<NodeContext>> node_ctxes_;
-    absl::flat_hash_set<std::unique_ptr<Connection>> connections_;
+    absl::flat_hash_map<int, std::unique_ptr<Connection>> connections_;
+    int next_connection_id_;
 
     void SetupConnections(uint16_t view_id, uint16_t node_id);
     void OnConnectionConnected(Connection* connection);

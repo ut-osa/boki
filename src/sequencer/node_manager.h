@@ -56,6 +56,7 @@ private:
     void OnConnectionClosed(Connection* connection);
 
     DECLARE_UV_CONNECTION_CB_FOR_CLASS(EngineConnection);
+    DECLARE_UV_CLOSE_CB_FOR_CLASS(Close);
 
     DISALLOW_COPY_AND_ASSIGN(NodeManager);
 };

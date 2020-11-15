@@ -88,11 +88,12 @@ void SLogMessageHub::Start(IOWorker* io_worker) {
 
 class SLogMessageHub::Connection {
 public:
-    Connection(SLogMessageHub* hub,
+    Connection(SLogMessageHub* hub, int conn_id,
                uint16_t view_id, uint16_t node_id,
                const struct sockaddr_in* addr);
     ~Connection();
 
+    int id() const { return id_; }
     uint16_t view_id() const { return view_id_; }
     uint16_t node_id() const { return node_id_; }
 
@@ -105,6 +106,7 @@ private:
     enum State { kCreated, kConnecting, kRunning, kClosing, kClosed };
 
     SLogMessageHub* hub_;
+    int id_;
     uint16_t view_id_;
     uint16_t node_id_;
     struct sockaddr_in addr_;
@@ -117,10 +119,10 @@ private:
     DISALLOW_COPY_AND_ASSIGN(Connection);
 };
 
-SLogMessageHub::Connection::Connection(SLogMessageHub* hub,
+SLogMessageHub::Connection::Connection(SLogMessageHub* hub, int conn_id,
                                        uint16_t view_id, uint16_t node_id,
                                        const struct sockaddr_in* addr)
-    : hub_(hub), view_id_(view_id), node_id_(node_id),
+    : hub_(hub), id_(conn_id), view_id_(view_id), node_id_(node_id),
       state_(kCreated), sockfd_(-1),
       log_header_("OutgoingSLogConnection: ") {
     memcpy(&addr_, addr, sizeof(struct sockaddr_in));
@@ -265,9 +267,10 @@ void SLogMessageHub::SetupConnections(uint16_t view_id, uint16_t node_id) {
     }
     size_t conn_per_worker = absl::GetFlag(FLAGS_shared_log_conn_per_worker);
     for (size_t i = 0; i < conn_per_worker; i++) {
-        std::unique_ptr<Connection> conn(new Connection(this, view_id, node_id, &addr));
+        std::unique_ptr<Connection> conn(
+            new Connection(this, next_connection_id_++, view_id, node_id, &addr));
         conn->Start(io_worker_);
-        connections_.insert(std::move(conn));
+        connections_[conn->id()] = std::move(conn);
     }
 }
 
@@ -306,8 +309,8 @@ void SLogMessageHub::OnConnectionClosing(Connection* conn) {
 
 void SLogMessageHub::OnConnectionClosed(Connection* conn) {
     DCHECK(io_worker_->WithinMyEventLoopThread());
-    DCHECK(connections_.contains(conn));
-    connections_.erase(conn);
+    DCHECK(connections_.contains(conn->id()));
+    connections_.erase(conn->id());
     if (state_ == kClosing && connections_.empty()) {
         state_ = kClosed;
         io_worker_->OnConnectionClose(this);
@@ -325,7 +328,8 @@ void SLogMessageHub::ScheduleClose() {
         state_ = kClosed;
         io_worker_->OnConnectionClose(this);
     } else {
-        for (const auto& conn : connections_) {
+        for (const auto& entry : connections_) {
+            Connection* conn = entry.second.get();
             conn->ScheduleClose();
         }
         state_ = kClosing;

@@ -86,6 +86,7 @@ void Fsm::ApplyNewViewRecord(const NewViewRecordProto& record) {
     if (view->id() != next_view_id()) {
         HLOG(FATAL) << "View ID not increasing!";
     }
+    HLOG(INFO) << "Start new view with id " << view->id();
     views_.emplace_back(view);
     next_log_seqnum_ = BuildSeqNum(view->id(), 0);
     new_view_cb_(view);

@@ -155,7 +155,7 @@ void Engine::SetupSharedLog() {
         << fmt::format("Failed to listen on 0.0.0.0:{}", shared_log_tcp_port_);
     HLOG(INFO) << fmt::format("Listen on 0.0.0.0:{} for shared log related connections",
                               shared_log_tcp_port_);
-    ListenForNewConnections(shared_log_tcp_port_,
+    ListenForNewConnections(shared_log_sockfd_,
                             absl::bind_front(&Engine::OnNewSLogConnection, this));
 }
 

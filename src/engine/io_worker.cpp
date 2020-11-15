@@ -240,8 +240,11 @@ void IOWorker::StopInternal() {
     if (connections_.empty() && connections_on_closing_ == 0) {
         CloseWorkerFds();
     } else {
+        std::vector<ConnectionBase*> running_connections;
         for (const auto& entry : connections_) {
-            ConnectionBase* connection = entry.second;
+            running_connections.push_back(entry.second);
+        }
+        for (ConnectionBase* connection : running_connections) {
             connection->ScheduleClose();
         }
     }

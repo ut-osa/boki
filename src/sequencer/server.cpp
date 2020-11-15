@@ -18,6 +18,8 @@ Server::Server()
     uv_loop_.data = &event_loop_thread_;
     UV_DCHECK_OK(uv_async_init(&uv_loop_, &stop_event_, &Server::StopCallback));
     stop_event_.data = this;
+    core_.SetSendFsmRecordsMessageCallback(
+        absl::bind_front(&Server::SendFsmRecordsMessage, this));
 }
 
 Server::~Server() {
@@ -58,16 +60,32 @@ void Server::EventLoopThreadMain() {
 }
 
 void Server::OnNewNodeConnected(uint16_t node_id, std::string_view shared_log_addr) {
-
+    core_.OnNewNodeConnected(node_id, shared_log_addr);
 }
 
 void Server::OnNodeDisconnected(uint16_t node_id) {
-
+    core_.OnNodeDisconnected(node_id);
 }
 
 void Server::OnRecvNodeMessage(uint16_t node_id, const SequencerMessage& message,
                                std::span<const char> payload) {
-        
+    if (SequencerMessageHelper::IsLocalCut(message)) {
+        log::LocalCutMsgProto message_proto;
+        if (!message_proto.ParseFromArray(payload.data(), payload.size())) {
+            HLOG(ERROR) << "Failed to parse sequencer message!";
+            return;
+        }
+        core_.NewLocalCutMessage(message_proto);
+    } else {
+        HLOG(ERROR) << fmt::format("Unknown message type: {}!", message.message_type);
+    }
+}
+
+void Server::SendFsmRecordsMessage(uint16_t node_id, std::span<const char> data) {
+    SequencerMessage message = SequencerMessageHelper::NewFsmRecords(data);
+    if (!node_manager_.SendMessage(node_id, message, data)) {
+        HLOG(ERROR) << fmt::format("Failed to send FsmRecordsMessage to node {}", node_id);
+    }
 }
 
 UV_ASYNC_CB_FOR_CLASS(Server, Stop) {
