@@ -264,8 +264,8 @@ void SharedLogMessageHub::SetupConnections(uint16_t view_id, uint16_t node_id) {
     if (!utils::FillTcpSocketAddr(&addr, host, port)) {
         HLOG(FATAL) << fmt::format("Cannot resolve address for node {}", node_id);
     }
-    int conn_per_worker = absl::GetFlag(FLAGS_shared_log_conn_per_worker);
-    for (int i = 0; i < conn_per_worker; i++) {
+    size_t conn_per_worker = absl::GetFlag(FLAGS_shared_log_conn_per_worker);
+    for (size_t i = 0; i < conn_per_worker; i++) {
         std::unique_ptr<Connection> conn(new Connection(this, view_id, node_id, &addr));
         conn->Start(io_worker_);
         connections_.insert(std::move(conn));

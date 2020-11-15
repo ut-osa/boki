@@ -1,6 +1,6 @@
 #include "gateway/engine_connection.h"
 
-#include "common/flags.h"
+#include "gateway/flags.h"
 #include "gateway/server.h"
 
 #define HLOG(l) LOG(l) << log_header_

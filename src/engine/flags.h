@@ -5,12 +5,12 @@
 
 #include "common/flags.h"
 
-ABSL_DECLARE_FLAG(int, gateway_conn_per_worker);
-ABSL_DECLARE_FLAG(int, sequencer_conn_per_worker);
-ABSL_DECLARE_FLAG(int, shared_log_conn_per_worker);
+ABSL_DECLARE_FLAG(size_t, gateway_conn_per_worker);
+ABSL_DECLARE_FLAG(size_t, sequencer_conn_per_worker);
+ABSL_DECLARE_FLAG(size_t, shared_log_conn_per_worker);
 
-ABSL_DECLARE_FLAG(int, io_uring_entries);
-ABSL_DECLARE_FLAG(int, io_uring_fd_slots);
+ABSL_DECLARE_FLAG(size_t, io_uring_entries);
+ABSL_DECLARE_FLAG(size_t, io_uring_fd_slots);
 ABSL_DECLARE_FLAG(bool, io_uring_sqpoll);
 ABSL_DECLARE_FLAG(int, io_uring_sq_thread_idle_ms);
 ABSL_DECLARE_FLAG(int, io_uring_cq_nr_wait);

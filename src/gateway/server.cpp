@@ -3,11 +3,11 @@
 #include "ipc/base.h"
 #include "ipc/shm_region.h"
 #include "common/time.h"
-#include "common/flags.h"
 #include "utils/fs.h"
 #include "utils/io.h"
 #include "utils/docker.h"
 #include "worker/worker_lib.h"
+#include "gateway/flags.h"
 
 #define HLOG(l) LOG(l) << "Server: "
 #define HVLOG(l) VLOG(l) << "Server: "
