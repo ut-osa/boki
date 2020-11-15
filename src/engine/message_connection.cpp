@@ -3,6 +3,7 @@
 #include "common/time.h"
 #include "ipc/base.h"
 #include "ipc/fifo.h"
+#include "utils/io.h"
 #include "engine/flags.h"
 #include "engine/engine.h"
 
@@ -188,8 +189,8 @@ void MessageConnection::RecvHandshakeMessage() {
             return;
         }
         URING_DCHECK_OK(current_io_uring()->RegisterFd(in_fifo_fd_));
-        ipc::FifoUnsetNonblocking(in_fifo_fd_);
-        ipc::FifoUnsetNonblocking(out_fifo_fd_);
+        io_utils::FdUnsetNonblocking(in_fifo_fd_);
+        io_utils::FdUnsetNonblocking(out_fifo_fd_);
         pipe_for_write_fd_.store(out_fifo_fd_);
     }
     char* buf = reinterpret_cast<char*>(malloc(sizeof(Message) + payload.size()));

@@ -8,7 +8,7 @@
 
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <poll.h>
+#include <fcntl.h>
 
 namespace faas {
 namespace ipc {
@@ -66,30 +66,6 @@ int FifoOpenForReadWrite(std::string_view name, bool nonblocking) {
         PLOG(ERROR) << "open " << full_path << " failed";
     }
     return fd;
-}
-
-void FifoUnsetNonblocking(int fd) {
-    io_utils::FdUnsetNonblocking(fd);
-}
-
-bool FifoPollForRead(int fd, int timeout_ms) {
-    struct pollfd pfd;
-    pfd.fd = fd;
-    pfd.events = POLLIN;
-    int ret = poll(&pfd, 1, timeout_ms);
-    if (ret == -1) {
-        PLOG(ERROR) << "poll failed";
-        return false;
-    }
-    if (ret == 0) {
-        LOG(ERROR) << "poll on given fifo timeout";
-        return false;
-    }
-    if ((pfd.revents & POLLIN) == 0) {
-        LOG(ERROR) << "Error happens on given fifo: revents=" << pfd.revents;
-        return false;
-    }
-    return true;
 }
 
 }  // namespace ipc

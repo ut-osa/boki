@@ -12,8 +12,5 @@ int FifoOpenForRead(std::string_view name, bool nonblocking = true);
 int FifoOpenForWrite(std::string_view name, bool nonblocking = true);
 int FifoOpenForReadWrite(std::string_view name, bool nonblocking = true);
 
-void FifoUnsetNonblocking(int fd);
-bool FifoPollForRead(int fd, int timeout_ms = -1);
-
 }  // namespace ipc
 }  // namespace faas

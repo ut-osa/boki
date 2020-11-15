@@ -65,13 +65,13 @@ bool SPSCQueue<T>::Push(const T& message) {
         next = 0;
     }
     size_t head = __atomic_load_n(head_, __ATOMIC_ACQUIRE);
-    if ((head & kConsumerSleepMask) == kConsumerSleepMask) {
+    if (head & kConsumerSleepMask) {
         if (!wakeup_consumer_flag_) {
             VLOG(1) << "Consumer is sleeping, and will call wake function";
             wakeup_consumer_flag_ = true;
             wakeup_consumer_fn_();
         }
-        head ^= kConsumerSleepMask;
+        head &= ~kConsumerSleepMask;
     } else {
         wakeup_consumer_flag_ = false;
     }
@@ -96,9 +96,9 @@ template<class T>
 bool SPSCQueue<T>::Pop(T* message) {
     DCHECK(consumer_);
     size_t current = __atomic_load_n(head_, __ATOMIC_RELAXED);
-    if ((current & kConsumerSleepMask) == kConsumerSleepMask) {
-        current ^= kConsumerSleepMask;
-        __atomic_fetch_xor(head_, kConsumerSleepMask, __ATOMIC_RELEASE);
+    if (current & kConsumerSleepMask) {
+        current &= ~kConsumerSleepMask;
+        __atomic_fetch_and(head_, ~kConsumerSleepMask, __ATOMIC_RELEASE);
         asm_volatile_memory();
     }
     if (current == __atomic_load_n(tail_, __ATOMIC_ACQUIRE)) {

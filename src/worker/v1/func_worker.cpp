@@ -85,7 +85,7 @@ void FuncWorker::MainServingLoop() {
         << "Failed to create function worker";
 
     if (!use_engine_socket_) {
-        ipc::FifoUnsetNonblocking(input_pipe_fd_);
+        io_utils::FdUnsetNonblocking(input_pipe_fd_);
     }
 
     while (true) {
@@ -293,8 +293,8 @@ bool FuncWorker::FifoWaitInvokeFunc(Message* invoke_func_message,
     if (func_call_timeout_ != absl::InfiniteDuration()) {
         timeout_ms = gsl::narrow_cast<int>(absl::ToInt64Milliseconds(func_call_timeout_));
     }
-    if (!ipc::FifoPollForRead(output_fifo, timeout_ms)) {
-        LOG(ERROR) << "FifoPollForRead failed";
+    if (!io_utils::FdPollForRead(output_fifo, timeout_ms)) {
+        LOG(ERROR) << "FdPollForRead failed";
         return false;
     }
     char* pipe_buffer;
