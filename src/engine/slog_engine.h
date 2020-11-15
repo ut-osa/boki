@@ -10,12 +10,13 @@ namespace engine {
 
 class Engine;
 
-class SharedLogEngine {
+class SLogEngine {
 public:
-    explicit SharedLogEngine(Engine* engine);
-    ~SharedLogEngine();
+    explicit SLogEngine(Engine* engine);
+    ~SLogEngine();
 
-    void OnSequencerMessage(std::span<const char> data);
+    void OnSequencerMessage(const protocol::SequencerMessage& message,
+                            std::span<const char> payload);
     void OnMessageFromOtherEngine(const protocol::Message& message);
     void OnMessageFromFuncWorker(const protocol::Message& message);
 
@@ -34,7 +35,7 @@ private:
                          const log::LogEntry* log_entry);
     void SendSequencerMessage(std::span<const char> data);
 
-    DISALLOW_COPY_AND_ASSIGN(SharedLogEngine);
+    DISALLOW_COPY_AND_ASSIGN(SLogEngine);
 };
 
 }  // namespace engine

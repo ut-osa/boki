@@ -13,12 +13,6 @@ ABSL_FLAG(std::string, gateway_addr, "127.0.0.1", "Gateway address");
 ABSL_FLAG(int, gateway_port, 10007, "Gataway port");
 ABSL_FLAG(int, engine_tcp_port, -1,
           "If set, Launcher and FuncWorker will communicate with engine via localhost TCP socket");
-ABSL_FLAG(std::string, shared_log_tcp_host, "",
-          "Hostname for shared log connections from other nodes.");
-ABSL_FLAG(std::string, sequencer_addr, "127.0.0.1", "Sequencer address");
-ABSL_FLAG(int, sequencer_port, 10009, "Sequencer port");
-ABSL_FLAG(int, shared_log_tcp_port, -1,
-          "Port to listen for shared log connections from other nodes.");
 ABSL_FLAG(int, num_io_workers, 1, "Number of IO workers.");
 ABSL_FLAG(int, node_id, -1,
           "My node ID. If -1 is set, node ID will be automatically generated based on "
@@ -26,6 +20,16 @@ ABSL_FLAG(int, node_id, -1,
 ABSL_FLAG(std::string, root_path_for_ipc, "/dev/shm/faas_ipc",
           "Root directory for IPCs used by FaaS");
 ABSL_FLAG(std::string, func_config_file, "", "Path to function config file");
+
+// Shared log related
+ABSL_FLAG(bool, enable_shared_log, false, "If to enable shared log.");
+ABSL_FLAG(std::string, shared_log_tcp_host, "",
+          "Hostname for shared log connections from other nodes. "
+          "Will read /proc/sys/kernel/hostname when not set.");
+ABSL_FLAG(std::string, sequencer_addr, "127.0.0.1", "Sequencer address");
+ABSL_FLAG(int, sequencer_port, 10009, "Sequencer port");
+ABSL_FLAG(int, shared_log_tcp_port, 10010,
+          "Port to listen for shared log connections from other nodes.");
 
 static std::atomic<faas::engine::Engine*> engine_ptr(nullptr);
 static void SignalHandlerToStopEngine(int signal) {
@@ -75,12 +79,18 @@ int main(int argc, char* argv[]) {
         engine->set_node_id(gsl::narrow_cast<uint16_t>(node_id));
     }
     engine->set_func_config_file(absl::GetFlag(FLAGS_func_config_file));
-    engine->set_shared_log_tcp_port(absl::GetFlag(FLAGS_shared_log_tcp_port));
-    std::string shared_log_tcp_host = absl::GetFlag(FLAGS_shared_log_tcp_host);
-    if (shared_log_tcp_host.empty()) {
-        engine->set_shared_log_tcp_host(GetHostname());
-    } else {
-        engine->set_shared_log_tcp_host(shared_log_tcp_host);
+
+    if (absl::GetFlag(FLAGS_enable_shared_log)) {
+        engine->enable_shared_log();
+        engine->set_sequencer_addr_port(absl::GetFlag(FLAGS_sequencer_addr),
+                                        absl::GetFlag(FLAGS_sequencer_port));
+        engine->set_shared_log_tcp_port(absl::GetFlag(FLAGS_shared_log_tcp_port));
+        std::string shared_log_tcp_host = absl::GetFlag(FLAGS_shared_log_tcp_host);
+        if (shared_log_tcp_host.empty()) {
+            engine->set_shared_log_tcp_host(GetHostname());
+        } else {
+            engine->set_shared_log_tcp_host(shared_log_tcp_host);
+        }
     }
 
     engine->Start();

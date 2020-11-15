@@ -1,6 +1,7 @@
 #pragma once
 
 #include "log/common.h"
+#include "log/fsm.h"
 
 namespace faas {
 namespace log {
@@ -11,6 +12,8 @@ public:
     ~SequencerCore();
 
 private:
+    Fsm fsm_;
+
     DISALLOW_COPY_AND_ASSIGN(SequencerCore);
 };
 

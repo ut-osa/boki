@@ -9,6 +9,7 @@
 #include "utils/socket.h"
 #include "worker/worker_lib.h"
 #include "engine/flags.h"
+#include "engine/sequencer_connection.h"
 
 #define HLOG(l) LOG(l) << "Engine: "
 #define HVLOG(l) VLOG(l) << "Engine: "
@@ -27,6 +28,8 @@ Engine::Engine()
     : gateway_port_(-1),
       num_io_workers_(kDefaultNumIOWorkers),
       engine_tcp_port_(-1),
+      enable_shared_log_(false),
+      sequencer_port_(-1),
       shared_log_tcp_port_(-1),
       func_worker_use_engine_socket_(absl::GetFlag(FLAGS_func_worker_use_engine_socket)),
       use_fifo_for_nested_call_(absl::GetFlag(FLAGS_use_fifo_for_nested_call)),
@@ -54,8 +57,7 @@ Engine::Engine()
       discarded_func_call_stat_(stat::Counter::StandardReportCallback("discarded_func_call")) {
 }
 
-Engine::~Engine() {
-}
+Engine::~Engine() {}
 
 void Engine::StartInternal() {
     // Load function config file
@@ -70,7 +72,16 @@ void Engine::StartInternal() {
         auto io_worker = CreateIOWorker(fmt::format("IO-{}", i));
         io_workers_.push_back(io_worker);
     }
-    // Connect to gateway
+    SetupGatewayConnections();
+    SetupLocalIpc();
+    if (enable_shared_log_) {
+        SetupSharedLog();
+    }
+    // Initialize tracer
+    tracer_->Init();
+}
+
+void Engine::SetupGatewayConnections() {
     CHECK(!gateway_addr_.empty());
     CHECK_NE(gateway_port_, -1);
     int total_gateway_conn = num_io_workers_ * absl::GetFlag(FLAGS_gateway_conn_per_worker);
@@ -86,7 +97,9 @@ void Engine::StartInternal() {
         DCHECK(!gateway_connections_.contains(connection->id()));
         gateway_connections_[connection->id()] = std::move(connection);
     }
-    // Listen on ipc_path
+}
+
+void Engine::SetupLocalIpc() {
     int listen_backlog = absl::GetFlag(FLAGS_socket_listen_backlog);
     if (engine_tcp_port_ == -1) {
         std::string ipc_path(ipc::GetEngineUnixSocketPath());
@@ -106,28 +119,44 @@ void Engine::StartInternal() {
     }
     ListenForNewConnections(server_sockfd_,
                             absl::bind_front(&Engine::OnNewMessageConnection, this));
-    // Setup shared log
-    if (absl::GetFlag(FLAGS_enable_shared_log)) {
-        shared_log_engine_.reset(new SharedLogEngine(this));
-        // Setup SharedLogMessageHub for each IOWorker
-        for (size_t i = 0; i < io_workers_.size(); i++) {
-            auto hub = std::make_unique<SharedLogMessageHub>(this, shared_log_engine_.get());
-            RegisterConnection(io_workers_[i], hub.get());
-            shared_log_message_hubs_.insert(std::move(hub));
-        }
-        // Listen on shared_log_tcp_port
-        CHECK_NE(shared_log_tcp_port_, -1);
-        shared_log_sockfd_ = utils::TcpSocketBindAndListen(
-            "0.0.0.0", shared_log_tcp_port_, listen_backlog);
-        CHECK(shared_log_sockfd_ != -1)
-            << fmt::format("Failed to listen on 0.0.0.0:{}", shared_log_tcp_port_);
-        HLOG(INFO) << fmt::format("Listen on 0.0.0.0:{} for shared log related connections",
-                                  shared_log_tcp_port_);
-        ListenForNewConnections(shared_log_tcp_port_,
-                                absl::bind_front(&Engine::OnNewSharedLogConnection, this));
+}
+
+void Engine::SetupSharedLog() {
+    DCHECK(enable_shared_log_);
+    slog_engine_.reset(new SLogEngine(this));
+    // Connect to sequencer
+    CHECK(!sequencer_addr_.empty());
+    CHECK_NE(sequencer_port_, -1);
+    int total_sequencer_conn = num_io_workers_ * absl::GetFlag(FLAGS_sequencer_conn_per_worker);
+    for (int i = 0; i < total_sequencer_conn; i++) {
+        int sockfd = utils::TcpSocketConnect(sequencer_addr_, sequencer_port_);
+        CHECK(sockfd != -1)
+            << fmt::format("Failed to connect to sequencer {}:{}",
+                           sequencer_addr_, gateway_port_);
+        std::shared_ptr<ConnectionBase> connection(
+            new SequencerConnection(this, slog_engine_.get(), sockfd));
+        IOWorker* io_worker = io_workers_[i % num_io_workers_];
+        RegisterConnection(io_worker, connection.get());
+        DCHECK_GE(connection->id(), 0);
+        DCHECK(!sequencer_connections_.contains(connection->id()));
+        sequencer_connections_[connection->id()] = std::move(connection);
     }
-    // Initialize tracer
-    tracer_->Init();
+    // Setup SharedLogMessageHub for each IOWorker
+    for (size_t i = 0; i < io_workers_.size(); i++) {
+        auto hub = std::make_unique<SLogMessageHub>(slog_engine_.get());
+        RegisterConnection(io_workers_[i], hub.get());
+        slog_message_hubs_.insert(std::move(hub));
+    }
+    // Listen on shared_log_tcp_port
+    CHECK_NE(shared_log_tcp_port_, -1);
+    shared_log_sockfd_ = utils::TcpSocketBindAndListen(
+        "0.0.0.0", shared_log_tcp_port_, absl::GetFlag(FLAGS_socket_listen_backlog));
+    CHECK(shared_log_sockfd_ != -1)
+        << fmt::format("Failed to listen on 0.0.0.0:{}", shared_log_tcp_port_);
+    HLOG(INFO) << fmt::format("Listen on 0.0.0.0:{} for shared log related connections",
+                              shared_log_tcp_port_);
+    ListenForNewConnections(shared_log_tcp_port_,
+                            absl::bind_front(&Engine::OnNewSLogConnection, this));
 }
 
 void Engine::StopInternal() {
@@ -159,12 +188,16 @@ void Engine::OnConnectionClose(ConnectionBase* connection) {
         HLOG(WARNING) << fmt::format("Gateway connection (conn_id={}) disconencted",
                                      gateway_connection->conn_id());
         gateway_connections_.erase(connection->id());
-    } else if (connection->type() == IncomingSharedLogConnection::kTypeId) {
-        DCHECK(shared_log_connections_.contains(connection->id()));
-        shared_log_connections_.erase(connection->id());
-    } else if (connection->type() == SharedLogMessageHub::kTypeId) {
+    } else if (connection->type() == SequencerConnection::kTypeId) {
+        DCHECK(sequencer_connections_.contains(connection->id()));
+        HLOG(WARNING) << "Sequencer connection disconencted";
+        sequencer_connections_.erase(connection->id());
+    } else if (connection->type() == IncomingSLogConnection::kTypeId) {
+        DCHECK(slog_connections_.contains(connection->id()));
+        slog_connections_.erase(connection->id());
+    } else if (connection->type() == SLogMessageHub::kTypeId) {
         if (state_.load() != kStopping) {
-            HLOG(FATAL) << "SharedLogMessageHub should not be closed";
+            HLOG(FATAL) << "SLogMessageHub should not be closed";
         }
     } else {
         HLOG(FATAL) << "Unknown connection type!";
@@ -415,11 +448,11 @@ void Engine::OnExternalFuncCall(const FuncCall& func_call, std::span<const char>
 
 void Engine::HandleSharedLogOpMessage(const Message& message) {
     DCHECK(MessageHelper::IsSharedLogOp(message));
-    if (shared_log_engine_ == nullptr) {
+    if (slog_engine_ == nullptr) {
         HLOG(ERROR) << "Shared log disabled!";
         return;
     }
-    shared_log_engine_->OnMessageFromFuncWorker(message);
+    slog_engine_->OnMessageFromFuncWorker(message);
 }
 
 void Engine::OnRecvMessage(MessageConnection* connection, const Message& message) {
@@ -435,11 +468,6 @@ void Engine::OnRecvMessage(MessageConnection* connection, const Message& message
         LOG(ERROR) << "Unknown message type!";
     }
     ProcessDiscardedFuncCallIfNecessary();
-}
-
-void Engine::OnRecvSharedLogMessage(const protocol::Message& message) {
-    DCHECK(MessageHelper::IsSharedLogOp(message));
-    DCHECK_NOTNULL(shared_log_engine_)->OnMessageFromOtherEngine(message);
 }
 
 void Engine::SendGatewayMessage(const protocol::GatewayMessage& message,
@@ -551,16 +579,18 @@ void Engine::OnNewMessageConnection(int sockfd) {
     message_connections_[connection->id()] = std::move(connection);
 }
 
-void Engine::OnNewSharedLogConnection(int sockfd) {
+void Engine::OnNewSLogConnection(int sockfd) {
     HLOG(INFO) << "New shared log connection";
-    std::shared_ptr<ConnectionBase> connection(new IncomingSharedLogConnection(this, sockfd));
+    DCHECK(slog_engine_ != nullptr);
+    std::shared_ptr<ConnectionBase> connection(
+        new IncomingSLogConnection(slog_engine_.get(), sockfd));
     DCHECK_LT(next_shared_log_conn_worker_id_, io_workers_.size());
     IOWorker* io_worker = io_workers_[next_shared_log_conn_worker_id_];
     next_shared_log_conn_worker_id_ = (next_shared_log_conn_worker_id_ + 1) % io_workers_.size();
     RegisterConnection(io_worker, connection.get());
     DCHECK_GE(connection->id(), 0);
-    DCHECK(!shared_log_connections_.contains(connection->id()));
-    shared_log_connections_[connection->id()] = std::move(connection);
+    DCHECK(!slog_connections_.contains(connection->id()));
+    slog_connections_[connection->id()] = std::move(connection);
 }
 
 }  // namespace engine

@@ -20,7 +20,8 @@ NodeManager::NodeManager(Server* server)
       buffer_pool_("NodeManager[ReadWrite]", kBufferSize) {}
 
 NodeManager::~NodeManager() {
-    DCHECK(state_ == kCreated || state_ == kClosed);
+    DCHECK(state_ == kCreated || state_ == kStopped);
+    DCHECK(connections_.empty());
 }
 
 void NodeManager::Start(uv_loop_t* uv_loop, std::string_view listen_addr, uint16_t listen_port) {
@@ -82,6 +83,10 @@ NodeManager::Connection::Connection(NodeManager* node_manager)
     uv_handle_.data = this;
 }
 
+NodeManager::Connection::~Connection() {
+    DCHECK(state_ == kCreated || state_ == kClosed);
+}
+
 void NodeManager::Connection::Start() {
     if (absl::GetFlag(FLAGS_tcp_enable_nodelay)) {
         UV_DCHECK_OK(uv_tcp_nodelay(&uv_handle_, 1));
@@ -108,7 +113,24 @@ void NodeManager::Connection::ScheduleClose() {
 
 void NodeManager::Connection::SendMessage(const SequencerMessage& message,
                                           std::span<const char> payload) {
-    // TODO
+    if (state_ != kRunning) {
+        HLOG(WARNING) << "Connection is closing or has closed, will not send this message";
+        return;
+    }
+    DCHECK_EQ(message.payload_size, gsl::narrow_cast<uint32_t>(payload.size()));
+    uv_buf_t buf;
+    node_manager_->buffer_pool_.Get(&buf.base, &buf.len);
+    if (sizeof(SequencerMessage) + payload.size() > buf.len) {
+        HLOG(FATAL) << "Buffer not larger enough! "
+                    << "Consider enlarge NodeManager::kBufferSize";
+    }
+    memcpy(buf.base, &message, sizeof(SequencerMessage));
+    memcpy(buf.base + sizeof(SequencerMessage), payload.data(), payload.size());
+
+    uv_write_t* write_req = node_manager_->write_req_pool_.Get();
+    write_req->data = buf.base;
+    UV_DCHECK_OK(uv_write(write_req, UV_AS_STREAM(&uv_handle_),
+                          &buf, 1, &Connection::DataSentCallback));
 }
 
 void NodeManager::Connection::ProcessMessages() {
@@ -136,6 +158,7 @@ void NodeManager::Connection::OnMessage(const SequencerMessage& message,
         }
         node_id_ = message.node_id;
         shared_log_addr_ = std::string(message.shared_log_addr, strlen(message.shared_log_addr));
+        log_header_ = fmt::format("EngineConnection[{}]: ", node_id_);
         state_ = kRunning;
         node_manager_->OnConnectionHandshaked(this);
     } else {
@@ -188,31 +211,51 @@ UV_CLOSE_CB_FOR_CLASS(NodeManager::Connection, Close) {
     node_manager_->OnConnectionClosed(this);
 }
 
-void NodeManager::ScheduleClose() {
-    // TODO
+void NodeManager::ScheduleStop() {
+    if (state_ == kStopping) {
+        HLOG(WARNING) << "Already scheduled for closing";
+        return;
+    }
+    DCHECK(state_ == kRunning);
+    for (const auto& connection : connections_) {
+        connection->ScheduleClose();
+    }
+    state_ = kStopping;
 }
 
 bool NodeManager::SendMessage(uint16_t node_id, const SequencerMessage& message,
                               std::span<const char> payload) {
-    // TODO
-
+    if (state_ != kRunning) {
+        HLOG(WARNING) << "Not in running state, will not send this message";
+        return false;
+    }
+    if (!connected_nodes_.contains(node_id)) {
+        HLOG(WARNING) << fmt::format("Node {} not connected, cannot send this message", node_id);
+        return false;
+    }
+    NodeContext* ctx = connected_nodes_[node_id].get();
+    Connection* conn = *(ctx->next_connection);
+    if (++ctx->next_connection == ctx->active_connections.end()) {
+        ctx->next_connection = ctx->active_connections.begin();
+    }
+    conn->SendMessage(message, payload);
     return true;
 }
 
 void NodeManager::OnConnectionHandshaked(Connection* connection) {
     uint16_t node_id = connection->node_id();
     bool new_node = false;
-    NodeContext* node_ctx = nullptr;
+    NodeContext* ctx = nullptr;
     if (!connected_nodes_.contains(node_id)) {
-        node_ctx = new NodeContext;
-        node_ctx->node_id = node_id;
-        connected_nodes_[node_id] = std::unique_ptr<NodeContext>(node_ctx);
+        ctx = new NodeContext;
+        ctx->node_id = node_id;
+        connected_nodes_[node_id] = std::unique_ptr<NodeContext>(ctx);
         new_node = true;
     } else {
-        node_ctx = connected_nodes_[node_id].get();
+        ctx = connected_nodes_[node_id].get();
     }
-    node_ctx->active_connections.insert(connection);
-    node_ctx->next_connection = node_ctx->active_connections.begin();
+    ctx->active_connections.insert(connection);
+    ctx->next_connection = ctx->active_connections.begin();
     if (new_node) {
         server_->OnNewNodeConnected(node_id, connection->shared_log_addr());
     }
@@ -224,11 +267,11 @@ void NodeManager::OnConnectionClosing(Connection* connection) {
         HLOG(ERROR) << fmt::format("connected_nodes_ does not contain node_id {}", node_id);
         return;
     }
-    NodeContext* node_ctx = connected_nodes_[node_id].get();
-    DCHECK(node_ctx->active_connections.contains(connection));
-    node_ctx->active_connections.erase(connection);
-    node_ctx->next_connection = node_ctx->active_connections.begin();
-    if (node_ctx->active_connections.empty()) {
+    NodeContext* ctx = connected_nodes_[node_id].get();
+    DCHECK(ctx->active_connections.contains(connection));
+    ctx->active_connections.erase(connection);
+    ctx->next_connection = ctx->active_connections.begin();
+    if (ctx->active_connections.empty()) {
         connected_nodes_.erase(node_id);
         server_->OnNodeDisconnected(node_id);
     }
@@ -236,6 +279,9 @@ void NodeManager::OnConnectionClosing(Connection* connection) {
 
 void NodeManager::OnConnectionClosed(Connection* connection) {
     connections_.erase(connection);
+    if (connections_.empty() && state_ == kStopping) {
+        state_ = kStopped;
+    }
 }
 
 UV_CONNECTION_CB_FOR_CLASS(NodeManager, EngineConnection) {

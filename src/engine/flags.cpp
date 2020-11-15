@@ -26,8 +26,3 @@ ABSL_FLAG(bool, disable_concurrency_limiter, false, "");
 ABSL_FLAG(double, instant_rps_p_norm, 1.0, "");
 ABSL_FLAG(double, instant_rps_ema_alpha, 0.001, "");
 ABSL_FLAG(double, instant_rps_ema_tau_ms, 0, "");
-
-ABSL_FLAG(bool, enable_shared_log, false, "");
-ABSL_FLAG(int, shared_log_num_replicas, 2, "");
-ABSL_FLAG(int, shared_log_local_cut_interval_us, 1000, "");
-ABSL_FLAG(int, shared_log_global_cut_interval_us, 1000, "");

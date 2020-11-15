@@ -60,7 +60,7 @@ UV_ASYNC_CB_FOR_CLASS(Server, Stop) {
         return;
     }
     HLOG(INFO) << "Start stopping process";
-    // TODO
+    node_manager_.ScheduleStop();
     uv_close(UV_AS_HANDLE(&stop_event_), nullptr);
     state_.store(kStopping);
 }

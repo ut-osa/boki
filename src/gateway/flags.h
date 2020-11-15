@@ -1,8 +1,5 @@
 #pragma once
 
-#include <absl/flags/declare.h>
-#include <absl/flags/flag.h>
-
 #include "common/flags.h"
 
 ABSL_DECLARE_FLAG(size_t, max_running_requests);

@@ -21,13 +21,13 @@ public:
     ~NodeManager();
 
     void Start(uv_loop_t* uv_loop, std::string_view listen_addr, uint16_t listen_port);
-    void ScheduleClose();
+    void ScheduleStop();
 
     bool SendMessage(uint16_t node_id, const protocol::SequencerMessage& message,
                      std::span<const char> payload);
 
 private:
-    enum State { kCreated, kRunning, kClosing, kClosed };
+    enum State { kCreated, kRunning, kStopping, kStopped };
 
     Server* server_;
     State state_;

@@ -1,8 +1,5 @@
 #pragma once
 
-#include <absl/flags/declare.h>
-#include <absl/flags/flag.h>
-
 #include "common/flags.h"
 
 ABSL_DECLARE_FLAG(size_t, gateway_conn_per_worker);
@@ -31,8 +28,3 @@ ABSL_DECLARE_FLAG(bool, disable_concurrency_limiter);
 ABSL_DECLARE_FLAG(double, instant_rps_p_norm);
 ABSL_DECLARE_FLAG(double, instant_rps_ema_alpha);
 ABSL_DECLARE_FLAG(double, instant_rps_ema_tau_ms);
-
-ABSL_DECLARE_FLAG(bool, enable_shared_log);
-ABSL_DECLARE_FLAG(int, shared_log_num_replicas);
-ABSL_DECLARE_FLAG(int, shared_log_local_cut_interval_us);
-ABSL_DECLARE_FLAG(int, shared_log_global_cut_interval_us);

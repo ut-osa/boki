@@ -1,20 +1,21 @@
-#include "engine/shared_log_engine.h"
+#include "engine/slog_engine.h"
 
+#include "engine/sequencer_connection.h"
 #include "engine/engine.h"
 
-#define HLOG(l) LOG(l) << "SharedLogEngine: "
-#define HVLOG(l) VLOG(l) << "SharedLogEngine: "
+#define HLOG(l) LOG(l) << "SLogEngine: "
+#define HVLOG(l) VLOG(l) << "SLogEngine: "
 
 namespace faas {
 namespace engine {
 
 using protocol::Message;
 using protocol::MessageHelper;
-using protocol::GatewayMessage;
-using protocol::GatewayMessageHelper;
 using protocol::SharedLogOpType;
+using protocol::SequencerMessage;
+using protocol::SequencerMessageHelper;
 
-SharedLogEngine::SharedLogEngine(Engine* engine)
+SLogEngine::SLogEngine(Engine* engine)
     : engine_(engine),
       core_(engine->node_id()),
       storage_(new log::InMemoryStorage()) {
@@ -22,18 +23,19 @@ SharedLogEngine::SharedLogEngine(Engine* engine)
         storage_->Add(std::move(log_entry));
     });
     core_.SetLogDiscardedCallback(
-        absl::bind_front(&SharedLogEngine::LogDiscarded, this));
+        absl::bind_front(&SLogEngine::LogDiscarded, this));
     core_.SetAppendBackupLogCallback(
-        absl::bind_front(&SharedLogEngine::AppendBackupLog, this));
+        absl::bind_front(&SLogEngine::AppendBackupLog, this));
     core_.SetSendSequencerMessageCallback(
-        absl::bind_front(&SharedLogEngine::SendSequencerMessage, this));
+        absl::bind_front(&SLogEngine::SendSequencerMessage, this));
 }
 
-SharedLogEngine::~SharedLogEngine() {}
+SLogEngine::~SLogEngine() {}
 
-void SharedLogEngine::OnSequencerMessage(std::span<const char> data) {
+void SLogEngine::OnSequencerMessage(const SequencerMessage& message,
+                                    std::span<const char> payload) {
     log::SequencerMsgProto message_proto;
-    if (!message_proto.ParseFromArray(data.data(), data.size())) {
+    if (!message_proto.ParseFromArray(payload.data(), payload.size())) {
         HLOG(ERROR) << "Failed to parse sequencer message!";
         return;
     }
@@ -41,7 +43,7 @@ void SharedLogEngine::OnSequencerMessage(std::span<const char> data) {
     core_.NewSequencerMessage(message_proto);
 }
 
-void SharedLogEngine::OnMessageFromOtherEngine(const protocol::Message& message) {
+void SLogEngine::OnMessageFromOtherEngine(const protocol::Message& message) {
     DCHECK(MessageHelper::IsSharedLogOp(message));
     SharedLogOpType op_type = MessageHelper::GetSharedLogOpType(message);
     if (op_type == SharedLogOpType::APPEND) {
@@ -59,7 +61,7 @@ void SharedLogEngine::OnMessageFromOtherEngine(const protocol::Message& message)
     }
 }
 
-void SharedLogEngine::OnMessageFromFuncWorker(const protocol::Message& message) {
+void SLogEngine::OnMessageFromFuncWorker(const protocol::Message& message) {
     DCHECK(MessageHelper::IsSharedLogOp(message));
     SharedLogOpType op_type = MessageHelper::GetSharedLogOpType(message);
     if (op_type == SharedLogOpType::APPEND) {
@@ -80,29 +82,35 @@ void SharedLogEngine::OnMessageFromFuncWorker(const protocol::Message& message) 
     }
 }
 
-void SharedLogEngine::LogDiscarded(std::unique_ptr<log::LogEntry> log_entry) {
+void SLogEngine::LogDiscarded(std::unique_ptr<log::LogEntry> log_entry) {
     HLOG(INFO) << fmt::format("Log with localid {} discarded", log_entry->localid);
     // TODO
 }
 
-void SharedLogEngine::AppendBackupLog(uint16_t view_id, uint16_t backup_node_id,
-                                      const log::LogEntry* log_entry) {
+void SLogEngine::AppendBackupLog(uint16_t view_id, uint16_t backup_node_id,
+                                 const log::LogEntry* log_entry) {
     IOWorker* io_worker = IOWorker::current();
     DCHECK(io_worker != nullptr);
-    ConnectionBase* hub = io_worker->PickConnection(SharedLogMessageHub::kTypeId);
+    ConnectionBase* hub = io_worker->PickConnection(SLogMessageHub::kTypeId);
     DCHECK(hub != nullptr);
     Message message = MessageHelper::NewSharedLogAppend(log_entry->tag, log_entry->localid);
     MessageHelper::SetInlineData(&message, log_entry->data);
-    hub->as_ptr<SharedLogMessageHub>()->SendMessage(view_id, backup_node_id, message);
+    hub->as_ptr<SLogMessageHub>()->SendMessage(view_id, backup_node_id, message);
 }
 
-void SharedLogEngine::SendSequencerMessage(std::span<const char> data) {
-    // GatewayMessage message = GatewayMessageHelper::NewSharedLogOp();
-    // message.payload_size = data.size();
-    // engine_->SendGatewayMessage(message, data);
+void SLogEngine::SendSequencerMessage(std::span<const char> data) {
+    IOWorker* io_worker = IOWorker::current();
+    DCHECK(io_worker != nullptr);
+    ConnectionBase* conn = io_worker->PickConnection(SequencerConnection::kTypeId);
+    if (conn == nullptr) {
+        HLOG(ERROR) << "There is not SequencerConnection associated with current IOWorker";
+        return;
+    }
+    SequencerMessage message = SequencerMessageHelper::NewSharedLogOp(data);
+    conn->as_ptr<SequencerConnection>()->SendMessage(message, data);
 }
 
-std::string_view SharedLogEngine::GetNodeAddr(uint16_t view_id, uint16_t node_id) {
+std::string_view SLogEngine::GetNodeAddr(uint16_t view_id, uint16_t node_id) {
     absl::ReaderMutexLock lk(&mu_);
     return DCHECK_NOTNULL(core_.fsm()->view_with_id(view_id))->get_addr(node_id);
 }

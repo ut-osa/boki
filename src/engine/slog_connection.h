@@ -8,17 +8,16 @@
 namespace faas {
 namespace engine {
 
-class Engine;
-class SharedLogEngine;
+class SLogEngine;
 
-class IncomingSharedLogConnection final : public ConnectionBase {
+class IncomingSLogConnection final : public ConnectionBase {
 public:
     static constexpr int kTypeId = 2;
     static constexpr uint64_t kBufGroup = 3;
     static constexpr size_t kBufSize = __FAAS_MESSAGE_SIZE * 4;
 
-    IncomingSharedLogConnection(Engine* engine, int sockfd);
-    ~IncomingSharedLogConnection();
+    IncomingSLogConnection(SLogEngine* slog_engine, int sockfd);
+    ~IncomingSLogConnection();
 
     void Start(IOWorker* io_worker) override;
     void ScheduleClose() override;
@@ -26,7 +25,7 @@ public:
 private:
     enum State { kCreated, kRunning, kClosing, kClosed };
 
-    Engine* engine_;
+    SLogEngine* slog_engine_;
     IOWorker* io_worker_;
     State state_;
     int sockfd_;
@@ -37,15 +36,15 @@ private:
 
     bool OnRecvData(int status, std::span<const char> data);
 
-    DISALLOW_COPY_AND_ASSIGN(IncomingSharedLogConnection);
+    DISALLOW_COPY_AND_ASSIGN(IncomingSLogConnection);
 };
 
-class SharedLogMessageHub final : public ConnectionBase {
+class SLogMessageHub final : public ConnectionBase {
 public:
     static constexpr int kTypeId = 3;
 
-    SharedLogMessageHub(Engine* engine, SharedLogEngine* shared_log_engine);
-    ~SharedLogMessageHub();
+    explicit SLogMessageHub(SLogEngine* slog_engine);
+    ~SLogMessageHub();
 
     void Start(IOWorker* io_worker) override;
     void ScheduleClose() override;
@@ -56,8 +55,7 @@ public:
 private:
     enum State { kCreated, kRunning, kClosing, kClosed };
 
-    Engine* engine_;
-    SharedLogEngine* shared_log_engine_;
+    SLogEngine* slog_engine_;
     IOWorker* io_worker_;
     State state_;
 
@@ -74,7 +72,7 @@ private:
     void OnConnectionClosing(Connection* connection);
     void OnConnectionClosed(Connection* connection);
 
-    DISALLOW_COPY_AND_ASSIGN(SharedLogMessageHub);
+    DISALLOW_COPY_AND_ASSIGN(SLogMessageHub);
 };
 
 }  // namespace engine

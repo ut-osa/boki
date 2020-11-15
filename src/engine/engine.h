@@ -11,8 +11,8 @@
 #include "engine/worker_manager.h"
 #include "engine/monitor.h"
 #include "engine/tracer.h"
-#include "engine/shared_log_connection.h"
-#include "engine/shared_log_engine.h"
+#include "engine/slog_connection.h"
+#include "engine/slog_engine.h"
 
 namespace faas {
 namespace engine {
@@ -33,6 +33,11 @@ public:
     void set_func_config_file(std::string_view path) {
         func_config_file_ = std::string(path);
     }
+    void set_sequencer_addr_port(std::string_view addr, int port) {
+        sequencer_addr_ = std::string(addr);
+        sequencer_port_ = port;
+    }
+    void enable_shared_log() { enable_shared_log_ = true; }
     void set_engine_tcp_port(int port) { engine_tcp_port_ = port; }
     void set_shared_log_tcp_host(std::string_view host) {
         shared_log_tcp_host_ = std::string(host);
@@ -55,7 +60,6 @@ public:
                         protocol::Message* response,
                         std::span<const char>* response_payload);
     void OnRecvMessage(MessageConnection* connection, const protocol::Message& message);
-    void OnRecvSharedLogMessage(const protocol::Message& message);
     void OnRecvGatewayMessage(GatewayConnection* connection,
                               const protocol::GatewayMessage& message,
                               std::span<const char> payload);
@@ -64,12 +68,15 @@ public:
 
 private:
     class ExternalFuncCallContext;
-    friend class SharedLogEngine;
+    friend class SLogEngine;
 
     std::string gateway_addr_;
     int gateway_port_;
     int num_io_workers_;
     int engine_tcp_port_;
+    bool enable_shared_log_;
+    std::string sequencer_addr_;
+    int sequencer_port_;
     std::string shared_log_tcp_host_;
     int shared_log_tcp_port_;
     uint16_t node_id_;
@@ -88,13 +95,14 @@ private:
 
     absl::flat_hash_map</* id */ int, std::shared_ptr<ConnectionBase>> message_connections_;
     absl::flat_hash_map</* id */ int, std::shared_ptr<ConnectionBase>> gateway_connections_;
-    absl::flat_hash_map</* id */ int, std::shared_ptr<ConnectionBase>> shared_log_connections_;
-    absl::flat_hash_set<std::unique_ptr<SharedLogMessageHub>> shared_log_message_hubs_;
+    absl::flat_hash_map</* id */ int, std::shared_ptr<ConnectionBase>> sequencer_connections_;
+    absl::flat_hash_map</* id */ int, std::shared_ptr<ConnectionBase>> slog_connections_;
+    absl::flat_hash_set<std::unique_ptr<SLogMessageHub>> slog_message_hubs_;
 
     std::unique_ptr<WorkerManager> worker_manager_;
     std::unique_ptr<Monitor> monitor_;
     std::unique_ptr<Tracer> tracer_;
-    std::unique_ptr<SharedLogEngine> shared_log_engine_;
+    std::unique_ptr<SLogEngine> slog_engine_;
 
     std::atomic<int> inflight_external_requests_;
 
@@ -120,8 +128,12 @@ private:
     void StopInternal() override;
     void OnConnectionClose(ConnectionBase* connection) override;
 
+    void SetupGatewayConnections();
+    void SetupLocalIpc();
+    void SetupSharedLog();
+
     void OnNewMessageConnection(int sockfd);
-    void OnNewSharedLogConnection(int sockfd);
+    void OnNewSLogConnection(int sockfd);
 
     // Must be thread-safe
     void HandleInvokeFuncMessage(const protocol::Message& message);
