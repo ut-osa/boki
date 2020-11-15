@@ -26,21 +26,25 @@ SLogEngine::SLogEngine(Engine* engine)
         absl::bind_front(&SLogEngine::LogDiscarded, this));
     core_.SetAppendBackupLogCallback(
         absl::bind_front(&SLogEngine::AppendBackupLog, this));
-    core_.SetSendSequencerMessageCallback(
-        absl::bind_front(&SLogEngine::SendSequencerMessage, this));
+    core_.SetSendLocalCutMessageCallback(
+        absl::bind_front(&SLogEngine::SendLocalCutMessage, this));
 }
 
 SLogEngine::~SLogEngine() {}
 
 void SLogEngine::OnSequencerMessage(const SequencerMessage& message,
                                     std::span<const char> payload) {
-    log::SequencerMsgProto message_proto;
-    if (!message_proto.ParseFromArray(payload.data(), payload.size())) {
-        HLOG(ERROR) << "Failed to parse sequencer message!";
-        return;
+    if (SequencerMessageHelper::IsFsmRecords(message)) {
+        log::FsmRecordsMsgProto message_proto;
+        if (!message_proto.ParseFromArray(payload.data(), payload.size())) {
+            HLOG(ERROR) << "Failed to parse sequencer message!";
+            return;
+        }
+        absl::MutexLock lk(&mu_);
+        core_.NewFsmRecordsMessage(message_proto);
+    } else {
+        HLOG(ERROR) << "Unknown message type!";
     }
-    absl::MutexLock lk(&mu_);
-    core_.NewSequencerMessage(message_proto);
 }
 
 void SLogEngine::OnMessageFromOtherEngine(const protocol::Message& message) {
@@ -98,7 +102,8 @@ void SLogEngine::AppendBackupLog(uint16_t view_id, uint16_t backup_node_id,
     hub->as_ptr<SLogMessageHub>()->SendMessage(view_id, backup_node_id, message);
 }
 
-void SLogEngine::SendSequencerMessage(std::span<const char> data) {
+void SLogEngine::SendSequencerMessage(const protocol::SequencerMessage& message,
+                                      std::span<const char> payload) {
     IOWorker* io_worker = IOWorker::current();
     DCHECK(io_worker != nullptr);
     ConnectionBase* conn = io_worker->PickConnection(SequencerConnection::kTypeId);
@@ -106,8 +111,11 @@ void SLogEngine::SendSequencerMessage(std::span<const char> data) {
         HLOG(ERROR) << "There is not SequencerConnection associated with current IOWorker";
         return;
     }
-    SequencerMessage message = SequencerMessageHelper::NewSharedLogOp(data);
-    conn->as_ptr<SequencerConnection>()->SendMessage(message, data);
+    conn->as_ptr<SequencerConnection>()->SendMessage(message, payload);
+}
+
+void SLogEngine::SendLocalCutMessage(std::span<const char> data) {
+    SendSequencerMessage(SequencerMessageHelper::NewLocalCut(data), data);
 }
 
 std::string_view SLogEngine::GetNodeAddr(uint16_t view_id, uint16_t node_id) {

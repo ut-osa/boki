@@ -32,12 +32,12 @@ void EngineCore::SetAppendBackupLogCallback(AppendBackupLogCallback cb) {
     append_backup_log_cb_ = cb;
 }
 
-void EngineCore::SetSendSequencerMessageCallback(SendSequencerMessageCallback cb) {
-    send_sequencer_message_cb_ = cb;
+void EngineCore::SetSendLocalCutMessageCallback(SendLocalCutMessageCallback cb) {
+    send_local_cut_message_cb_ = cb;
 }
 
-void EngineCore::NewSequencerMessage(const SequencerMsgProto& message) {
-    for (const FsmRecordProto& record : message.fsm_records()) {
+void EngineCore::NewFsmRecordsMessage(const FsmRecordsMsgProto& message) {
+    for (const FsmRecordProto& record : message.records()) {
         fsm_.OnRecvRecord(record);
     }
 }

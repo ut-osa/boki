@@ -11,6 +11,7 @@ using protocol::SequencerMessageHelper;
 
 Server::Server()
     : state_(kCreated),
+      engine_conn_port_(-1),
       event_loop_thread_("Server/EL", absl::bind_front(&Server::EventLoopThreadMain, this)),
       node_manager_(this) {
     UV_DCHECK_OK(uv_loop_init(&uv_loop_));
@@ -26,19 +27,34 @@ Server::~Server() {
 }
 
 void Server::Start() {
-
+    DCHECK(state_.load() == kCreated);
+    DCHECK(engine_conn_port_ != -1);
+    node_manager_.Start(&uv_loop_, address_, gsl::narrow_cast<uint16_t>(engine_conn_port_));
+    // Start thread for running event loop
+    event_loop_thread_.Start();
+    state_.store(kRunning);
 }
 
 void Server::ScheduleStop() {
-
+    HLOG(INFO) << "Scheduled to stop";
+    UV_DCHECK_OK(uv_async_send(&stop_event_));
 }
 
 void Server::WaitForFinish() {
-
+    DCHECK(state_.load() != kCreated);
+    event_loop_thread_.Join();
+    DCHECK(state_.load() == kStopped);
+    HLOG(INFO) << "Stopped";
 }
 
 void Server::EventLoopThreadMain() {
-
+    HLOG(INFO) << "Event loop starts";
+    int ret = uv_run(&uv_loop_, UV_RUN_DEFAULT);
+    if (ret != 0) {
+        HLOG(WARNING) << "uv_run returns non-zero value: " << ret;
+    }
+    HLOG(INFO) << "Event loop finishes";
+    state_.store(kStopped);
 }
 
 void Server::OnNewNodeConnected(uint16_t node_id, std::string_view shared_log_addr) {

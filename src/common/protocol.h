@@ -79,7 +79,9 @@ enum class MessageType : uint16_t {
     DISPATCH_FUNC_CALL    = 7,
     FUNC_CALL_COMPLETE    = 8,
     FUNC_CALL_FAILED      = 9,
-    SHARED_LOG_OP         = 10
+    SHARED_LOG_OP         = 10,
+    FSM_RECORDS           = 11,
+    LOCAL_CUT             = 12
 };
 
 enum class SharedLogOpType : uint16_t {
@@ -423,8 +425,12 @@ public:
         return static_cast<MessageType>(message.message_type) == MessageType::ENGINE_HANDSHAKE;
     }
 
-    static bool IsSharedLogOp(const SequencerMessage& message) {
-        return static_cast<MessageType>(message.message_type) == MessageType::SHARED_LOG_OP;
+    static bool IsFsmRecords(const SequencerMessage& message) {
+        return static_cast<MessageType>(message.message_type) == MessageType::FSM_RECORDS;
+    }
+
+    static bool IsLocalCut(const SequencerMessage& message) {
+        return static_cast<MessageType>(message.message_type) == MessageType::LOCAL_CUT;
     }
 
 #define NEW_EMPTY_SEQUENCER_MESSAGE(MSG_VAR) \
@@ -442,9 +448,16 @@ public:
         return message;
     }
 
-    static SequencerMessage NewSharedLogOp(std::span<const char> payload) {
+    static SequencerMessage NewFsmRecords(std::span<const char> payload) {
         NEW_EMPTY_SEQUENCER_MESSAGE(message);
-        message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
+        message.message_type = static_cast<uint16_t>(MessageType::FSM_RECORDS);
+        message.payload_size = gsl::narrow_cast<uint32_t>(payload.size());
+        return message;
+    }
+
+    static SequencerMessage NewLocalCut(std::span<const char> payload) {
+        NEW_EMPTY_SEQUENCER_MESSAGE(message);
+        message.message_type = static_cast<uint16_t>(MessageType::LOCAL_CUT);
         message.payload_size = gsl::narrow_cast<uint32_t>(payload.size());
         return message;
     }

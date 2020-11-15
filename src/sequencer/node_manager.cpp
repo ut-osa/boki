@@ -126,7 +126,6 @@ void NodeManager::Connection::SendMessage(const SequencerMessage& message,
     }
     memcpy(buf.base, &message, sizeof(SequencerMessage));
     memcpy(buf.base + sizeof(SequencerMessage), payload.data(), payload.size());
-
     uv_write_t* write_req = node_manager_->write_req_pool_.Get();
     write_req->data = buf.base;
     UV_DCHECK_OK(uv_write(write_req, UV_AS_STREAM(&uv_handle_),

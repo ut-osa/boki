@@ -36,13 +36,13 @@ void Fsm::OnRecvRecord(const FsmRecordProto& record) {
     }
 }
 
-void Fsm::NewView(int replicas, const NodeVec& nodes, FsmRecordProto* record) {
+void Fsm::NewView(size_t replicas, const NodeVec& nodes, FsmRecordProto* record) {
     record->Clear();
     record->set_seqnum(next_record_seqnum_);
     record->set_type(FsmRecordType::NEW_VIEW);
     NewViewRecordProto* new_view_record = record->mutable_new_view_record();
     new_view_record->set_view_id(next_view_id());
-    new_view_record->set_replicas(replicas);
+    new_view_record->set_replicas(gsl::narrow_cast<uint32_t>(replicas));
     for (const auto& node : nodes) {
         NodeProto* node_proto = new_view_record->add_nodes();
         node_proto->set_id(node.first);

@@ -33,7 +33,9 @@ private:
     void LogDiscarded(std::unique_ptr<log::LogEntry> log_entry);
     void AppendBackupLog(uint16_t view_id, uint16_t backup_node_id,
                          const log::LogEntry* log_entry);
-    void SendSequencerMessage(std::span<const char> data);
+    void SendSequencerMessage(const protocol::SequencerMessage& message,
+                              std::span<const char> payload);
+    void SendLocalCutMessage(std::span<const char> data);
 
     DISALLOW_COPY_AND_ASSIGN(SLogEngine);
 };

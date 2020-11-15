@@ -35,6 +35,12 @@ message FsmRecordProto {
     GlobalCutRecordProto global_cut_record = 4;
 }
 
-message SequencerMsgProto {
-    repeated FsmRecordProto fsm_records = 2;
+message LocalCutMsgProto {
+    uint32 view_id = 1;
+    uint32 my_node_id = 2;
+    repeated uint32 localid_cuts = 3;
+}
+
+message FsmRecordsMsgProto {
+    repeated FsmRecordProto records = 1;
 }

@@ -39,7 +39,7 @@ public:
 
     // Called by the leader
     typedef std::vector<std::pair</* node_id */ uint16_t, /* addr */ std::string>> NodeVec;
-    void NewView(int replicas, const NodeVec& nodes, FsmRecordProto* record);
+    void NewView(size_t replicas, const NodeVec& nodes, FsmRecordProto* record);
 
     // Called by the leader
     typedef std::vector<uint32_t> CutVec;

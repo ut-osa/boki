@@ -28,10 +28,10 @@ public:
     void SetAppendBackupLogCallback(AppendBackupLogCallback cb);
 
     typedef std::function<void(std::span<const char> /* data */)>
-            SendSequencerMessageCallback;
-    void SetSendSequencerMessageCallback(SendSequencerMessageCallback cb);
+            SendLocalCutMessageCallback;
+    void SetSendLocalCutMessageCallback(SendLocalCutMessageCallback cb);
 
-    void NewSequencerMessage(const SequencerMsgProto& message);
+    void NewFsmRecordsMessage(const FsmRecordsMsgProto& message);
     bool NewLocalLog(uint32_t log_tag, std::span<const char> data, uint64_t* log_localid);
     void NewRemoteLog(uint64_t log_localid, uint32_t log_tag, std::span<const char> data);
 
@@ -42,7 +42,7 @@ private:
     LogPersistedCallback         log_persisted_cb_;
     LogDiscardedCallback         log_discarded_cb_;
     AppendBackupLogCallback      append_backup_log_cb_;
-    SendSequencerMessageCallback send_sequencer_message_cb_;
+    SendLocalCutMessageCallback  send_local_cut_message_cb_;
 
     uint32_t log_counter_;
     std::map</* localid */ uint64_t, std::unique_ptr<LogEntry>> pending_entries_;
