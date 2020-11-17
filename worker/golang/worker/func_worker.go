@@ -32,9 +32,11 @@ type FuncWorker struct {
 	inputPipe            *os.File
 	outputPipe           *os.File                 // protected by mux
 	outgoingFuncCalls    map[uint64](chan []byte) // protected by mux
+	outgoingLogOps       map[uint64](chan []byte) // protected by mux
 	handler              types.FuncHandler
 	grpcHandler          types.GrpcFuncHandler
 	nextCallId           uint32
+	nextLogOpId          uint64
 	currentCall          uint64
 	mux                  sync.Mutex
 }
@@ -49,6 +51,7 @@ func NewFuncWorker(funcId uint16, clientId uint16, factory types.FuncHandlerFact
 		newFuncCallChan:      make(chan []byte),
 		outgoingFuncCalls:    make(map[uint64](chan []byte)),
 		nextCallId:           0,
+		nextLogOpId:          0,
 		currentCall:          0,
 	}
 	return w, nil
@@ -74,10 +77,17 @@ func (w *FuncWorker) Run() {
 		} else if protocol.IsFuncCallCompleteMessage(message) || protocol.IsFuncCallFailedMessage(message) {
 			funcCall := protocol.GetFuncCallFromMessage(message)
 			w.mux.Lock()
-			ch, exists := w.outgoingFuncCalls[funcCall.FullCallId()]
-			if exists {
+			if ch, exists := w.outgoingFuncCalls[funcCall.FullCallId()]; exists {
 				ch <- message
 				delete(w.outgoingFuncCalls, funcCall.FullCallId())
+			}
+			w.mux.Unlock()
+		} else if protocol.IsSharedLogOpMessage(message) {
+			id := protocol.GetLogClientDataFromMessage(message)
+			w.mux.Lock()
+			if ch, exists := w.outgoingLogOps[id]; exists {
+				ch <- message
+				delete(w.outgoingLogOps, id)
 			}
 			w.mux.Unlock()
 		} else {
@@ -467,4 +477,31 @@ func (w *FuncWorker) GrpcCall(ctx context.Context, service string, method string
 		CallId:   atomic.AddUint32(&w.nextCallId, 1) - 1,
 	}
 	return w.newFuncCallCommon(funcCall, request)
+}
+
+// Implement types.Environment
+func (w *FuncWorker) SharedLogAppend(ctx context.Context, tag uint32, data []byte) (uint64, error) {
+	if len(data) > protocol.MessageInlineDataSize {
+		return 0, fmt.Errorf("Data cannot be more than %d bytes", protocol.MessageInlineDataSize)
+	}
+	id := atomic.AddUint64(&w.nextLogOpId, 1)
+	message := protocol.NewSharedLogAppendMessage(tag, id)
+	protocol.FillInlineDataInMessage(message, data)
+
+	w.mux.Lock()
+	outputChan := make(chan []byte)
+	w.outgoingLogOps[id] = outputChan
+	_, err := w.outputPipe.Write(message)
+	w.mux.Unlock()
+	if err != nil {
+		return 0, err
+	}
+
+	response := <-outputChan
+	messageType := protocol.GetSharedLogOpTypeFromMessage(response)
+	if messageType == protocol.SharedLogOpType_REPLICATED {
+		return protocol.GetLogSeqNumFromMessage(response), nil
+	} else {
+		return 0, fmt.Errorf("Failed to append log")
+	}
 }

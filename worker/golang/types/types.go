@@ -7,6 +7,7 @@ import (
 type Environment interface {
 	InvokeFunc(ctx context.Context, funcName string, input []byte) ( /* output */ []byte, error)
 	GrpcCall(ctx context.Context, service string, method string, request []byte) ( /* reply */ []byte, error)
+	SharedLogAppend(ctx context.Context, tag uint32, data []byte) ( /* seqnum */ uint64, error)
 }
 
 type FuncHandler interface {

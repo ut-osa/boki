@@ -126,7 +126,10 @@ struct Message {
     } __attribute__ ((packed));
 
     uint32_t log_tag;
-    uint64_t log_localid;
+    union {
+        uint64_t log_localid;
+        uint64_t log_client_data;
+    };
 
     char padding2[__FAAS_CACHE_LINE_SIZE - 48];
     char inline_data[__FAAS_MESSAGE_SIZE - __FAAS_CACHE_LINE_SIZE]

@@ -43,6 +43,17 @@ const (
 	MessageType_DISPATCH_FUNC_CALL    uint16 = 7
 	MessageType_FUNC_CALL_COMPLETE    uint16 = 8
 	MessageType_FUNC_CALL_FAILED      uint16 = 9
+	MessageType_SHARED_LOG_OP         uint16 = 10
+)
+
+// SharedLogOpType enum
+const (
+	SharedLogOpType_APPEND     uint16 = 0
+	SharedLogOpType_REPLICATED uint16 = 1
+	SharedLogOpType_DISCARDED  uint16 = 2
+	SharedLogOpType_READ_AT    uint16 = 3
+	SharedLogOpType_READ_NEXT  uint16 = 4
+	SharedLogOpType_TRIM       uint16 = 5
 )
 
 const MessageTypeBits = 4
@@ -68,6 +79,22 @@ func GetFuncCallFromMessage(buffer []byte) FuncCall {
 	return FuncCallFromFullCallId(tmp >> MessageTypeBits)
 }
 
+func GetSharedLogOpTypeFromMessage(buffer []byte) uint16 {
+	return binary.LittleEndian.Uint16(buffer[32:34])
+}
+
+func GetLogSeqNumFromMessage(buffer []byte) uint64 {
+	return binary.LittleEndian.Uint64(buffer[8:16])
+}
+
+func GetLogTagFromMessage(buffer []byte) uint32 {
+	return binary.LittleEndian.Uint32(buffer[36:40])
+}
+
+func GetLogClientDataFromMessage(buffer []byte) uint64 {
+	return binary.LittleEndian.Uint64(buffer[40:48])
+}
+
 func getMessageType(buffer []byte) uint16 {
 	firstByte := buffer[0]
 	return uint16(firstByte & ((1 << MessageTypeBits) - 1))
@@ -91,6 +118,10 @@ func IsFuncCallCompleteMessage(buffer []byte) bool {
 
 func IsFuncCallFailedMessage(buffer []byte) bool {
 	return getMessageType(buffer) == MessageType_FUNC_CALL_FAILED
+}
+
+func IsSharedLogOpMessage(buffer []byte) bool {
+	return getMessageType(buffer) == MessageType_SHARED_LOG_OP
 }
 
 func NewEmptyMessage() []byte {
@@ -126,6 +157,15 @@ func NewFuncCallFailedMessage(funcCall FuncCall) []byte {
 	buffer := NewEmptyMessage()
 	tmp := (funcCall.FullCallId() << MessageTypeBits) + uint64(MessageType_FUNC_CALL_FAILED)
 	binary.LittleEndian.PutUint64(buffer[0:8], tmp)
+	return buffer
+}
+
+func NewSharedLogAppendMessage(tag uint32, clientData uint64) []byte {
+	buffer := NewEmptyMessage()
+	binary.LittleEndian.PutUint64(buffer[0:8], uint64(MessageType_SHARED_LOG_OP))
+	binary.LittleEndian.PutUint16(buffer[32:34], SharedLogOpType_APPEND)
+	binary.LittleEndian.PutUint32(buffer[36:40], tag)
+	binary.LittleEndian.PutUint64(buffer[40:48], clientData)
 	return buffer
 }
 
