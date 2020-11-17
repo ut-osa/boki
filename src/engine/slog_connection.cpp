@@ -2,6 +2,7 @@
 
 #include "utils/socket.h"
 #include "engine/flags.h"
+#include "engine/constants.h"
 #include "engine/slog_engine.h"
 
 #define HLOG(l) LOG(l) << log_header_
@@ -12,7 +13,7 @@ namespace faas {
 namespace engine {
 
 IncomingSLogConnection::IncomingSLogConnection(SLogEngine* slog_engine, int sockfd)
-    : ConnectionBase(kTypeId),
+    : ConnectionBase(kIncomingSLogConnectionTypeId),
       slog_engine_(slog_engine), state_(kCreated), sockfd_(sockfd),
       log_header_("IncomingSLogConnection: ") {}
 
@@ -27,11 +28,11 @@ void IncomingSLogConnection::Start(IOWorker* io_worker) {
     if (absl::GetFlag(FLAGS_tcp_enable_keepalive)) {
         CHECK(utils::SetTcpSocketKeepAlive(sockfd_));
     }
-    current_io_uring()->PrepareBuffers(kBufGroup, kBufSize);
+    current_io_uring()->PrepareBuffers(kIncomingSLogConnectionBufGroup, kBufSize);
     URING_DCHECK_OK(current_io_uring()->RegisterFd(sockfd_));
     state_ = kRunning;
     URING_DCHECK_OK(current_io_uring()->StartRecv(
-        sockfd_, kBufGroup,
+        sockfd_, kIncomingSLogConnectionBufGroup,
         absl::bind_front(&IncomingSLogConnection::OnRecvData, this)));
 }
 
@@ -72,7 +73,7 @@ bool IncomingSLogConnection::OnRecvData(int status, std::span<const char> data) 
 }
 
 SLogMessageHub::SLogMessageHub(SLogEngine* slog_engine)
-    : ConnectionBase(kTypeId),
+    : ConnectionBase(kSLogMessageHubTypeId),
       slog_engine_(slog_engine), state_(kCreated),
       log_header_("SLogMessageHub: ") {
 }

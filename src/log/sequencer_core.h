@@ -17,6 +17,9 @@ public:
             SendFsmRecordsMessageCallback;
     void SetSendFsmRecordsMessageCallback(SendFsmRecordsMessageCallback cb);
 
+    int global_cut_interval_us() const;
+    void MarkAndBroadcastGlobalCut();
+
     void OnNewNodeConnected(uint16_t node_id, std::string_view addr);
     void OnNodeDisconnected(uint16_t node_id);
 

@@ -47,6 +47,8 @@ public:
     IOWorker(std::string_view worker_name, size_t write_buffer_size);
     ~IOWorker();
 
+    static constexpr uint16_t kOctaBufGroup = 255;  // 8-byte buffer group
+
     std::string_view worker_name() const { return worker_name_; }
     IOUring* io_uring() { return &io_uring_; }
 
@@ -85,8 +87,6 @@ private:
     IOUring io_uring_;
     static thread_local IOWorker* current_;
 
-    static constexpr uint16_t kEventFdBufGroup = 254;
-    static constexpr uint16_t kServerPipeBufGroup = 255;
     int eventfd_;
     int pipe_to_server_fd_;
 

@@ -284,11 +284,11 @@ void IOUring::EventLoopRunOnce(int* inflight_ops) {
         completed_ops_stat_.AddSample(gsl::narrow_cast<int>(count));
     }
 #if DCHECK_IS_ON()
-    VLOG(1) << "Inflight ops:";
+    VLOG(2) << "Inflight ops:";
     for (const auto& item : ops_) {
         Op* op = item.second;
         DCHECK_EQ(op->id, item.first);
-        VLOG(1) << fmt::format("id={}, type={}, fd={}", op->id, op_type(op), fds_[op->fd_idx]);
+        VLOG(2) << fmt::format("id={}, type={}, fd={}", op->id, op_type(op), fds_[op->fd_idx]);
     }
 #endif
     *inflight_ops = ops_.size();
@@ -362,7 +362,7 @@ IOUring::Op* IOUring::AllocCancelOp(uint64_t op_id) {
 #undef ALLOC_OP
 
 void IOUring::EnqueueOp(Op* op) {
-    VLOG(1) << fmt::format("EnqueueOp: id={}, type={}, fd={}",
+    VLOG(2) << fmt::format("EnqueueOp: id={}, type={}, fd={}",
                            op->id, op_type(op), fds_[op->fd_idx]);
     struct io_uring_sqe* sqe = io_uring_get_sqe(&ring_);
     switch (op_type(op)) {
@@ -398,7 +398,7 @@ void IOUring::EnqueueOp(Op* op) {
 
 void IOUring::OnOpComplete(Op* op, struct io_uring_cqe* cqe) {
     int res = cqe->res;
-    VLOG(1) << fmt::format("Op completed: id={}, type={}, fd={}, res={}",
+    VLOG(2) << fmt::format("Op completed: id={}, type={}, fd={}, res={}",
                            op->id, op_type(op), fds_[op->fd_idx], res);
     switch (op_type(op)) {
     case kConnect:

@@ -14,8 +14,6 @@ class Engine;
 
 class MessageConnection final : public ConnectionBase {
 public:
-    static constexpr int kTypeId = 1;
-    static constexpr uint64_t kBufGroup = 2;
     static constexpr size_t kBufSize = __FAAS_MESSAGE_SIZE * 4;
 
     explicit MessageConnection(Engine* engine, int sockfd);

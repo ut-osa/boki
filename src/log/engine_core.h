@@ -31,6 +31,9 @@ public:
             SendLocalCutMessageCallback;
     void SetSendLocalCutMessageCallback(SendLocalCutMessageCallback cb);
 
+    int local_cut_interval_us() const;
+    void MarkAndSendLocalCut();
+
     void NewFsmRecordsMessage(const FsmRecordsMsgProto& message);
     bool NewLocalLog(uint32_t log_tag, std::span<const char> data, uint64_t* log_localid);
     void NewRemoteLog(uint64_t log_localid, uint32_t log_tag, std::span<const char> data);

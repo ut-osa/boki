@@ -40,10 +40,10 @@ void IOWorker::Start(int pipe_to_server_fd) {
     // Setup eventfd for scheduling functions
     eventfd_ = eventfd(0, 0);
     PCHECK(eventfd_ >= 0) << "Failed to create eventfd";
-    io_uring_.PrepareBuffers(kEventFdBufGroup, 8);
+    io_uring_.PrepareBuffers(kOctaBufGroup, 8);
     URING_DCHECK_OK(io_uring_.RegisterFd(eventfd_));
     URING_DCHECK_OK(io_uring_.StartRead(
-        eventfd_, kEventFdBufGroup,
+        eventfd_, kOctaBufGroup,
         [this] (int status, std::span<const char> data) -> bool {
             if (state_.load(std::memory_order_consume) != kRunning) {
                 return false;
@@ -56,10 +56,9 @@ void IOWorker::Start(int pipe_to_server_fd) {
     ));
     // Setup pipe to server for receiving connections
     pipe_to_server_fd_ = pipe_to_server_fd;
-    io_uring_.PrepareBuffers(kServerPipeBufGroup, __FAAS_PTR_SIZE);
     URING_DCHECK_OK(io_uring_.RegisterFd(pipe_to_server_fd_));
     URING_DCHECK_OK(io_uring_.StartRecv(
-        pipe_to_server_fd_, kServerPipeBufGroup,
+        pipe_to_server_fd_, kOctaBufGroup,
         [this] (int status, std::span<const char> data) -> bool {
             PCHECK(status == 0);
             if (data.size() == 0) {

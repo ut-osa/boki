@@ -12,8 +12,6 @@ class Engine;
 
 class GatewayConnection final : public ConnectionBase {
 public:
-    static constexpr int kTypeId = 0;
-    static constexpr uint64_t kBufGroup = 1;
     static constexpr size_t kBufSize = 65536;
 
     GatewayConnection(Engine* engine, uint16_t conn_id, int sockfd);

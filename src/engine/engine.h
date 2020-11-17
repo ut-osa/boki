@@ -11,6 +11,7 @@
 #include "engine/worker_manager.h"
 #include "engine/monitor.h"
 #include "engine/tracer.h"
+#include "engine/timer.h"
 #include "engine/slog_connection.h"
 #include "engine/slog_engine.h"
 
@@ -98,6 +99,7 @@ private:
     absl::flat_hash_map</* id */ int, std::shared_ptr<ConnectionBase>> sequencer_connections_;
     absl::flat_hash_map</* id */ int, std::shared_ptr<ConnectionBase>> slog_connections_;
     absl::flat_hash_set<std::unique_ptr<SLogMessageHub>> slog_message_hubs_;
+    absl::flat_hash_set<std::unique_ptr<Timer>> timers_;
 
     std::unique_ptr<WorkerManager> worker_manager_;
     std::unique_ptr<Monitor> monitor_;
@@ -131,6 +133,8 @@ private:
     void SetupGatewayConnections();
     void SetupLocalIpc();
     void SetupSharedLog();
+
+    Timer* CreateTimer(int timer_type, IOWorker* io_worker, Timer::Callback cb);
 
     void OnNewMessageConnection(int sockfd);
     void OnNewSLogConnection(int sockfd);

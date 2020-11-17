@@ -42,38 +42,29 @@ bool FdPollForRead(int fd, int timeout_ms) {
     return true;
 }
 
-int CreateSingleShotTimerfd(int timeout_us) {
+int CreateTimerFd() {
     int fd = timerfd_create(CLOCK_MONOTONIC, 0);
     if (fd == -1) {
         PLOG(ERROR) << "Failed to create timerfd";
-        return -1;
-    }
-    struct itimerspec spec;
-    memset(&spec, 0, sizeof(spec));
-    spec.it_value.tv_sec = timeout_us / 1000000;
-    spec.it_value.tv_nsec = timeout_us % 1000000 * 1000;
-    if (timerfd_settime(fd, 0, &spec, nullptr) != 0) {
-        PLOG(ERROR) << "timerfd_settime failed";
         return -1;
     }
     return fd;
 }
 
-int CreatePeriodicTimerfd(int interval_us) {
-    int fd = timerfd_create(CLOCK_MONOTONIC, 0);
-    if (fd == -1) {
-        PLOG(ERROR) << "Failed to create timerfd";
-        return -1;
-    }
+bool SetupTimerFd(int fd, int initial_us, int interval_us) {
+    VLOG(1) << fmt::format("SetupTimerFd: initial_us={}, interval_us={}",
+                           initial_us, interval_us);
     struct itimerspec spec;
     memset(&spec, 0, sizeof(spec));
+    spec.it_value.tv_sec = initial_us / 1000000;
+    spec.it_value.tv_nsec = initial_us % 1000000 * 1000;
     spec.it_interval.tv_sec = interval_us / 1000000;
     spec.it_interval.tv_nsec = interval_us % 1000000 * 1000;
     if (timerfd_settime(fd, 0, &spec, nullptr) != 0) {
         PLOG(ERROR) << "timerfd_settime failed";
-        return -1;
+        return false;
     }
-    return fd;
+    return true;
 }
 
 }  // namespace io_utils

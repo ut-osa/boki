@@ -9,6 +9,7 @@ namespace faas {
 namespace engine {
 
 class Engine;
+class Timer;
 
 class SLogEngine {
 public:
@@ -29,6 +30,9 @@ private:
 
     log::EngineCore core_ ABSL_GUARDED_BY(mu_);
     std::unique_ptr<log::StorageInterface> storage_;
+
+    void SetupTimers();
+    void LocalCutTimerTriggered();
 
     void LogDiscarded(std::unique_ptr<log::LogEntry> log_entry);
     void AppendBackupLog(uint16_t view_id, uint16_t backup_node_id,

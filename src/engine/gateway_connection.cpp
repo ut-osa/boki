@@ -2,6 +2,7 @@
 
 #include "utils/socket.h"
 #include "engine/flags.h"
+#include "engine/constants.h"
 #include "engine/engine.h"
 
 #define HLOG(l) LOG(l) << log_header_
@@ -15,7 +16,7 @@ using protocol::GatewayMessage;
 using protocol::GatewayMessageHelper;
 
 GatewayConnection::GatewayConnection(Engine* engine, uint16_t conn_id, int sockfd)
-    : ConnectionBase(kTypeId),
+    : ConnectionBase(kGatewayConnectionTypeId),
       engine_(engine), conn_id_(conn_id), state_(kCreated), sockfd_(sockfd),
       log_header_(fmt::format("GatewayConnection[{}]: ", conn_id)) {}
 
@@ -33,7 +34,7 @@ void GatewayConnection::Start(IOWorker* io_worker) {
     if (absl::GetFlag(FLAGS_tcp_enable_keepalive)) {
         CHECK(utils::SetTcpSocketKeepAlive(sockfd_));
     }
-    current_io_uring()->PrepareBuffers(kBufGroup, kBufSize);
+    current_io_uring()->PrepareBuffers(kGatewayConnectionBufGroup, kBufSize);
     URING_DCHECK_OK(current_io_uring()->RegisterFd(sockfd_));
     handshake_message_ = GatewayMessageHelper::NewEngineHandshake(engine_->node_id(), conn_id_);
     URING_DCHECK_OK(current_io_uring()->SendAll(
@@ -46,7 +47,7 @@ void GatewayConnection::Start(IOWorker* io_worker) {
                 HLOG(INFO) << "Handshake done";
                 state_ = kRunning;
                 URING_DCHECK_OK(current_io_uring()->StartRecv(
-                    sockfd_, kBufGroup,
+                    sockfd_, kGatewayConnectionBufGroup,
                     absl::bind_front(&GatewayConnection::OnRecvData, this)));
             }
         }

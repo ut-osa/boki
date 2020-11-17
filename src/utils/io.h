@@ -11,8 +11,8 @@ void FdSetNonblocking(int fd);
 void FdUnsetNonblocking(int fd);
 bool FdPollForRead(int fd, int timeout_ms);
 
-int CreateSingleShotTimerfd(int timeout_us);
-int CreatePeriodicTimerfd(int interval_us);
+int CreateTimerFd();
+bool SetupTimerFd(int fd, int initial_us, int interval_us = 0);
 
 template<class T>
 bool SendMessage(int fd, const T& message) {

@@ -5,6 +5,7 @@
 #include "ipc/fifo.h"
 #include "utils/io.h"
 #include "engine/flags.h"
+#include "engine/constants.h"
 #include "engine/engine.h"
 
 #define HLOG(l) LOG(l) << log_header_
@@ -18,7 +19,7 @@ using protocol::Message;
 using protocol::MessageHelper;
 
 MessageConnection::MessageConnection(Engine* engine, int sockfd)
-    : ConnectionBase(kTypeId),
+    : ConnectionBase(kMessageConnectionTypeId),
       engine_(engine), io_worker_(nullptr), state_(kCreated),
       func_id_(0), client_id_(0), handshake_done_(false),
       sockfd_(sockfd), in_fifo_fd_(-1), out_fifo_fd_(-1), pipe_for_write_fd_(-1),
@@ -33,10 +34,10 @@ void MessageConnection::Start(IOWorker* io_worker) {
     DCHECK(state_ == kCreated);
     DCHECK(io_worker->WithinMyEventLoopThread());
     io_worker_ = io_worker;
-    current_io_uring()->PrepareBuffers(kBufGroup, kBufSize);
+    current_io_uring()->PrepareBuffers(kMessageConnectionBufGroup, kBufSize);
     URING_DCHECK_OK(current_io_uring()->RegisterFd(sockfd_));
     URING_DCHECK_OK(current_io_uring()->StartRecv(
-        sockfd_, kBufGroup,
+        sockfd_, kMessageConnectionBufGroup,
         [this] (int status, std::span<const char> data) -> bool {
             if (status != 0) {
                 HPLOG(ERROR) << "Read error on handshake, will close this connection";
@@ -212,14 +213,14 @@ void MessageConnection::RecvHandshakeMessage() {
             message_buffer_.Reset();
             if (in_fifo_fd_ != -1) {
                 URING_DCHECK_OK(current_io_uring()->StartRead(
-                    in_fifo_fd_, kBufGroup,
+                    in_fifo_fd_, kMessageConnectionBufGroup,
                     absl::bind_front(&MessageConnection::OnRecvData, this)));
                 URING_DCHECK_OK(current_io_uring()->StartRecv(
-                    sockfd_, kBufGroup,
+                    sockfd_, kMessageConnectionBufGroup,
                     absl::bind_front(&MessageConnection::OnRecvSockData, this)));
             } else {
                 URING_DCHECK_OK(current_io_uring()->StartRecv(
-                    sockfd_, kBufGroup,
+                    sockfd_, kMessageConnectionBufGroup,
                     absl::bind_front(&MessageConnection::OnRecvData, this)));
             }
             SendPendingMessages();

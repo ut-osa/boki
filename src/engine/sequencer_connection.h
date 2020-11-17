@@ -13,8 +13,6 @@ class SLogEngine;
 
 class SequencerConnection final : public ConnectionBase {
 public:
-    static constexpr int kTypeId = 4;
-    static constexpr uint64_t kBufGroup = 4;
     static constexpr size_t kBufSize = 65536;
 
     SequencerConnection(Engine* engine, SLogEngine* slog_engine, int sockfd);

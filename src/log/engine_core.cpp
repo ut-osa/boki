@@ -1,9 +1,6 @@
 #include "log/engine_core.h"
 
-#include "common/flags.h"
-
-#include <nlohmann/json.hpp>
-using json = nlohmann::json;
+#include "log/flags.h"
 
 #define HLOG(l) LOG(l) << "LogEngineCore: "
 #define HVLOG(l) VLOG(l) << "LogEngineCore: "
@@ -34,6 +31,13 @@ void EngineCore::SetAppendBackupLogCallback(AppendBackupLogCallback cb) {
 
 void EngineCore::SetSendLocalCutMessageCallback(SendLocalCutMessageCallback cb) {
     send_local_cut_message_cb_ = cb;
+}
+
+int EngineCore::local_cut_interval_us() const {
+    return absl::GetFlag(FLAGS_slog_local_cut_interval_us);
+}
+
+void EngineCore::MarkAndSendLocalCut() {
 }
 
 void EngineCore::NewFsmRecordsMessage(const FsmRecordsMsgProto& message) {

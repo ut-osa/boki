@@ -1,5 +1,7 @@
 #include "engine/slog_engine.h"
 
+#include "common/time.h"
+#include "engine/constants.h"
 #include "engine/sequencer_connection.h"
 #include "engine/engine.h"
 
@@ -28,9 +30,23 @@ SLogEngine::SLogEngine(Engine* engine)
         absl::bind_front(&SLogEngine::AppendBackupLog, this));
     core_.SetSendLocalCutMessageCallback(
         absl::bind_front(&SLogEngine::SendLocalCutMessage, this));
+    SetupTimers();
 }
 
 SLogEngine::~SLogEngine() {}
+
+void SLogEngine::SetupTimers() {
+    for (IOWorker* io_worker : engine_->io_workers_) {
+        engine_->CreateTimer(
+            kSLogEngineTimerTypeId, io_worker,
+            absl::bind_front(&SLogEngine::LocalCutTimerTriggered, this));
+    }
+}
+
+void SLogEngine::LocalCutTimerTriggered() {
+    absl::MutexLock lk(&mu_);
+    core_.MarkAndSendLocalCut();
+}
 
 void SLogEngine::OnSequencerMessage(const SequencerMessage& message,
                                     std::span<const char> payload) {
@@ -95,7 +111,7 @@ void SLogEngine::AppendBackupLog(uint16_t view_id, uint16_t backup_node_id,
                                  const log::LogEntry* log_entry) {
     IOWorker* io_worker = IOWorker::current();
     DCHECK(io_worker != nullptr);
-    ConnectionBase* hub = io_worker->PickConnection(SLogMessageHub::kTypeId);
+    ConnectionBase* hub = io_worker->PickConnection(kSLogMessageHubTypeId);
     DCHECK(hub != nullptr);
     Message message = MessageHelper::NewSharedLogAppend(log_entry->tag, log_entry->localid);
     MessageHelper::SetInlineData(&message, log_entry->data);
@@ -106,7 +122,7 @@ void SLogEngine::SendSequencerMessage(const protocol::SequencerMessage& message,
                                       std::span<const char> payload) {
     IOWorker* io_worker = IOWorker::current();
     DCHECK(io_worker != nullptr);
-    ConnectionBase* conn = io_worker->PickConnection(SequencerConnection::kTypeId);
+    ConnectionBase* conn = io_worker->PickConnection(kSequencerConnectionTypeId);
     if (conn == nullptr) {
         HLOG(ERROR) << "There is not SequencerConnection associated with current IOWorker";
         return;

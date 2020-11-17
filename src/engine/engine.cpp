@@ -9,6 +9,7 @@
 #include "utils/socket.h"
 #include "worker/worker_lib.h"
 #include "engine/flags.h"
+#include "engine/constants.h"
 #include "engine/sequencer_connection.h"
 
 #define HLOG(l) LOG(l) << "Engine: "
@@ -168,9 +169,16 @@ void Engine::StopInternal() {
     }
 }
 
+Timer* Engine::CreateTimer(int timer_type, IOWorker* io_worker, Timer::Callback cb) {
+    Timer* timer = new Timer(timer_type, cb);
+    RegisterConnection(io_worker, timer);
+    timers_.insert(std::unique_ptr<Timer>(timer));
+    return timer;
+}
+
 void Engine::OnConnectionClose(ConnectionBase* connection) {
     DCHECK(WithinMyEventLoopThread());
-    if (connection->type() == MessageConnection::kTypeId) {
+    if (connection->type() == kMessageConnectionTypeId) {
         DCHECK(message_connections_.contains(connection->id()));
         MessageConnection* message_connection = connection->as_ptr<MessageConnection>();
         if (message_connection->handshake_done()) {
@@ -182,23 +190,25 @@ void Engine::OnConnectionClose(ConnectionBase* connection) {
         }
         message_connections_.erase(connection->id());
         HLOG(INFO) << "A MessageConnection is returned";
-    } else if (connection->type() == GatewayConnection::kTypeId) {
+    } else if (connection->type() == kGatewayConnectionTypeId) {
         DCHECK(gateway_connections_.contains(connection->id()));
         GatewayConnection* gateway_connection = connection->as_ptr<GatewayConnection>();
         HLOG(WARNING) << fmt::format("Gateway connection (conn_id={}) disconencted",
                                      gateway_connection->conn_id());
         gateway_connections_.erase(connection->id());
-    } else if (connection->type() == SequencerConnection::kTypeId) {
+    } else if (connection->type() == kSequencerConnectionTypeId) {
         DCHECK(sequencer_connections_.contains(connection->id()));
         HLOG(WARNING) << "Sequencer connection disconencted";
         sequencer_connections_.erase(connection->id());
-    } else if (connection->type() == IncomingSLogConnection::kTypeId) {
+    } else if (connection->type() == kIncomingSLogConnectionTypeId) {
         DCHECK(slog_connections_.contains(connection->id()));
         slog_connections_.erase(connection->id());
-    } else if (connection->type() == SLogMessageHub::kTypeId) {
+    } else if (connection->type() == kSLogMessageHubTypeId) {
         if (state_.load() != kStopping) {
             HLOG(FATAL) << "SLogMessageHub should not be closed";
         }
+    } else if (timers_.contains(connection->as_ptr<Timer>())) {
+        timers_.erase(connection->as_ptr<Timer>());
     } else {
         HLOG(FATAL) << "Unknown connection type!";
     }
@@ -474,7 +484,7 @@ void Engine::SendGatewayMessage(const protocol::GatewayMessage& message,
                                 std::span<const char> payload) {
     IOWorker* io_worker = IOWorker::current();
     DCHECK(io_worker != nullptr);
-    ConnectionBase* conn = io_worker->PickConnection(GatewayConnection::kTypeId);
+    ConnectionBase* conn = io_worker->PickConnection(kGatewayConnectionTypeId);
     if (conn == nullptr) {
         HLOG(ERROR) << "There is not GatewayConnection associated with current IOWorker";
         return;

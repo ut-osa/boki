@@ -12,8 +12,6 @@ class SLogEngine;
 
 class IncomingSLogConnection final : public ConnectionBase {
 public:
-    static constexpr int kTypeId = 2;
-    static constexpr uint64_t kBufGroup = 3;
     static constexpr size_t kBufSize = __FAAS_MESSAGE_SIZE * 4;
 
     IncomingSLogConnection(SLogEngine* slog_engine, int sockfd);
@@ -41,8 +39,6 @@ private:
 
 class SLogMessageHub final : public ConnectionBase {
 public:
-    static constexpr int kTypeId = 3;
-
     explicit SLogMessageHub(SLogEngine* slog_engine);
     ~SLogMessageHub();
 

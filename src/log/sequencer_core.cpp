@@ -18,6 +18,13 @@ void SequencerCore::SetSendFsmRecordsMessageCallback(SendFsmRecordsMessageCallba
     send_fsm_records_message_cb_ = cb;
 }
 
+int SequencerCore::global_cut_interval_us() const {
+    return absl::GetFlag(FLAGS_slog_global_cut_interval_us);
+}
+
+void SequencerCore::MarkAndBroadcastGlobalCut() {
+}
+
 void SequencerCore::OnNewNodeConnected(uint16_t node_id, std::string_view addr) {
     if (conencted_nodes_.contains(node_id)) {
         HLOG(WARNING) << fmt::format("Node {} already in connected node set", node_id);

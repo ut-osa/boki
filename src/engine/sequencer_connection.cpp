@@ -2,6 +2,7 @@
 
 #include "utils/socket.h"
 #include "engine/flags.h"
+#include "engine/constants.h"
 #include "engine/engine.h"
 #include "engine/slog_engine.h"
 
@@ -16,7 +17,7 @@ using protocol::SequencerMessage;
 using protocol::SequencerMessageHelper;
 
 SequencerConnection::SequencerConnection(Engine* engine, SLogEngine* slog_engine, int sockfd)
-    : ConnectionBase(kTypeId),
+    : ConnectionBase(kSequencerConnectionTypeId),
       engine_(engine), slog_engine_(slog_engine), state_(kCreated), sockfd_(sockfd) {}
 
 SequencerConnection::~SequencerConnection() {
@@ -33,7 +34,7 @@ void SequencerConnection::Start(IOWorker* io_worker) {
     if (absl::GetFlag(FLAGS_tcp_enable_keepalive)) {
         CHECK(utils::SetTcpSocketKeepAlive(sockfd_));
     }
-    current_io_uring()->PrepareBuffers(kBufGroup, kBufSize);
+    current_io_uring()->PrepareBuffers(kSequencerConnectionBufGroup, kBufSize);
     URING_DCHECK_OK(current_io_uring()->RegisterFd(sockfd_));
     std::string shared_log_addr = fmt::format("{}:{}", engine_->shared_log_tcp_host(),
                                               engine_->shared_log_tcp_port());
@@ -49,7 +50,7 @@ void SequencerConnection::Start(IOWorker* io_worker) {
                 HLOG(INFO) << "Handshake done";
                 state_ = kRunning;
                 URING_DCHECK_OK(current_io_uring()->StartRecv(
-                    sockfd_, kBufGroup,
+                    sockfd_, kSequencerConnectionBufGroup,
                     absl::bind_front(&SequencerConnection::OnRecvData, this)));
             }
         }
