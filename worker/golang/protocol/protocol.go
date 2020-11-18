@@ -48,12 +48,12 @@ const (
 
 // SharedLogOpType enum
 const (
-	SharedLogOpType_APPEND     uint16 = 0
-	SharedLogOpType_REPLICATED uint16 = 1
-	SharedLogOpType_DISCARDED  uint16 = 2
-	SharedLogOpType_READ_AT    uint16 = 3
-	SharedLogOpType_READ_NEXT  uint16 = 4
-	SharedLogOpType_TRIM       uint16 = 5
+	SharedLogOpType_APPEND    uint16 = 0
+	SharedLogOpType_PERSISTED uint16 = 1
+	SharedLogOpType_DISCARDED uint16 = 2
+	SharedLogOpType_READ_AT   uint16 = 3
+	SharedLogOpType_READ_NEXT uint16 = 4
+	SharedLogOpType_TRIM      uint16 = 5
 )
 
 const MessageTypeBits = 4
@@ -160,10 +160,11 @@ func NewFuncCallFailedMessage(funcCall FuncCall) []byte {
 	return buffer
 }
 
-func NewSharedLogAppendMessage(tag uint32, clientData uint64) []byte {
+func NewSharedLogAppendMessage(myClientId uint16, tag uint32, clientData uint64) []byte {
 	buffer := NewEmptyMessage()
 	binary.LittleEndian.PutUint64(buffer[0:8], uint64(MessageType_SHARED_LOG_OP))
 	binary.LittleEndian.PutUint16(buffer[32:34], SharedLogOpType_APPEND)
+	binary.LittleEndian.PutUint16(buffer[34:36], myClientId)
 	binary.LittleEndian.PutUint32(buffer[36:40], tag)
 	binary.LittleEndian.PutUint64(buffer[40:48], clientData)
 	return buffer

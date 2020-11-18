@@ -94,6 +94,8 @@ public:
 
     void ForEachBackupNode(uint16_t primary_node_id,
                            std::function<void(uint16_t /* node_id */)> cb) const;
+    void ForEachPrimaryNode(uint16_t backup_node_id,
+                            std::function<void(uint16_t /* node_id */)> cb) const;
 
 private:
     uint16_t id_;

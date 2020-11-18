@@ -312,7 +312,7 @@ void Engine::HandleInvokeFuncMessage(const Message& message) {
     }
 }
 
-void Engine::HandleFuncCallCompleteMessage(const protocol::Message& message) {
+void Engine::HandleFuncCallCompleteMessage(const Message& message) {
     DCHECK(MessageHelper::IsFuncCallComplete(message));
     int32_t message_delay = MessageHelper::ComputeMessageDelay(message);
     FuncCall func_call = MessageHelper::GetFuncCall(message);
@@ -358,11 +358,11 @@ void Engine::HandleFuncCallCompleteMessage(const protocol::Message& message) {
         }
     } else if (!use_fifo_for_nested_call_) {
         Message message_copy = message;
-        worker_manager_->GetFuncWorker(func_call.client_id)->SendMessage(&message_copy);
+        SendFuncWorkerMessage(func_call.client_id, &message_copy);
     }
 }
 
-void Engine::HandleFuncCallFailedMessage(const protocol::Message& message) {
+void Engine::HandleFuncCallFailedMessage(const Message& message) {
     DCHECK(MessageHelper::IsFuncCallFailed(message));
     int32_t message_delay = MessageHelper::ComputeMessageDelay(message);
     FuncCall func_call = MessageHelper::GetFuncCall(message);
@@ -389,7 +389,7 @@ void Engine::HandleFuncCallFailedMessage(const protocol::Message& message) {
         ExternalFuncCallFailed(func_call);
     } else if (!use_fifo_for_nested_call_) {
         Message message_copy = message;
-        worker_manager_->GetFuncWorker(func_call.client_id)->SendMessage(&message_copy);
+        SendFuncWorkerMessage(func_call.client_id, &message_copy);
     }
 }
 
@@ -480,8 +480,7 @@ void Engine::OnRecvMessage(MessageConnection* connection, const Message& message
     ProcessDiscardedFuncCallIfNecessary();
 }
 
-void Engine::SendGatewayMessage(const protocol::GatewayMessage& message,
-                                std::span<const char> payload) {
+void Engine::SendGatewayMessage(const GatewayMessage& message, std::span<const char> payload) {
     IOWorker* io_worker = IOWorker::current();
     DCHECK(io_worker != nullptr);
     ConnectionBase* conn = io_worker->PickConnection(kGatewayConnectionTypeId);
@@ -492,7 +491,16 @@ void Engine::SendGatewayMessage(const protocol::GatewayMessage& message,
     conn->as_ptr<GatewayConnection>()->SendMessage(message, payload);
 }
 
-void Engine::ExternalFuncCallCompleted(const protocol::FuncCall& func_call,
+bool Engine::SendFuncWorkerMessage(uint16_t client_id, Message* message) {
+    auto func_worker = worker_manager_->GetFuncWorker(client_id);
+    if (func_worker == nullptr) {
+        return false;
+    }
+    func_worker->SendMessage(message);
+    return true;
+}
+
+void Engine::ExternalFuncCallCompleted(const FuncCall& func_call,
                                        std::span<const char> output, int32_t processing_time) {
     inflight_external_requests_.fetch_add(-1);
     GatewayMessage message = GatewayMessageHelper::NewFuncCallComplete(func_call, processing_time);
@@ -500,7 +508,7 @@ void Engine::ExternalFuncCallCompleted(const protocol::FuncCall& func_call,
     SendGatewayMessage(message, output);
 }
 
-void Engine::ExternalFuncCallFailed(const protocol::FuncCall& func_call, int status_code) {
+void Engine::ExternalFuncCallFailed(const FuncCall& func_call, int status_code) {
     inflight_external_requests_.fetch_add(-1);
     GatewayMessage message = GatewayMessageHelper::NewFuncCallFailed(func_call, status_code);
     SendGatewayMessage(message);

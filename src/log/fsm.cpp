@@ -154,5 +154,14 @@ void Fsm::View::ForEachBackupNode(uint16_t primary_node_id,
     }
 }
 
+void Fsm::View::ForEachPrimaryNode(uint16_t backup_node_id,
+                                   std::function<void(uint16_t /* node_id */)> cb) const {
+    size_t base = node_indices_.at(backup_node_id);
+    for (size_t i = 1; i < replicas_; i++) {
+        size_t node_id = node_ids_[(base - i + node_ids_.size()) % node_ids_.size()];
+        cb(node_id);
+    }
+}
+
 }  // namespace log
 }  // namespace faas

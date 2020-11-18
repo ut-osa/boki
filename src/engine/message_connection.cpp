@@ -103,7 +103,8 @@ void MessageConnection::SendPendingMessages() {
         return;
     }
     if (state_ != kRunning) {
-        HLOG(WARNING) << "MessageConnection is closing or has closed, will not send pending messages";
+        HLOG(WARNING) << "MessageConnection is closing or has closed, "
+                         "will not send pending messages";
         return;
     }
     size_t write_size = 0;

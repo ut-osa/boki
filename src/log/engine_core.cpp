@@ -1,5 +1,6 @@
 #include "log/engine_core.h"
 
+#include "common/time.h"
 #include "log/flags.h"
 
 #define HLOG(l) LOG(l) << "LogEngineCore: "
@@ -10,7 +11,10 @@ namespace log {
 
 EngineCore::EngineCore(uint16_t my_node_id)
     : my_node_id_(my_node_id),
-      log_counter_(0) {
+      local_cut_interval_us_(absl::GetFlag(FLAGS_slog_local_cut_interval_us)),
+      next_localid_(0),
+      local_cut_scheduled_(false),
+      last_local_cut_timestamp_(0) {
     fsm_.SetNewViewCallback(absl::bind_front(&EngineCore::OnFsmNewView, this));
     fsm_.SetLogReplicatedCallback(absl::bind_front(&EngineCore::OnFsmLogReplicated, this));
 }
@@ -25,19 +29,21 @@ void EngineCore::SetLogDiscardedCallback(LogDiscardedCallback cb) {
     log_discarded_cb_ = cb;
 }
 
-void EngineCore::SetAppendBackupLogCallback(AppendBackupLogCallback cb) {
-    append_backup_log_cb_ = cb;
+void EngineCore::SetScheduleLocalCutCallback(ScheduleLocalCutCallback cb) {
+    schedule_local_cut_cb_ = cb;
 }
 
-void EngineCore::SetSendLocalCutMessageCallback(SendLocalCutMessageCallback cb) {
-    send_local_cut_message_cb_ = cb;
-}
-
-int EngineCore::local_cut_interval_us() const {
-    return absl::GetFlag(FLAGS_slog_local_cut_interval_us);
-}
-
-void EngineCore::MarkAndSendLocalCut() {
+void EngineCore::BuildLocalCutMessage(LocalCutMsgProto* message) {
+    local_cut_scheduled_ = false;
+    last_local_cut_timestamp_ = GetMonotonicMicroTimestamp();
+    const Fsm::View* view = fsm_.current_view();
+    message->Clear();
+    message->set_view_id(view->id());
+    message->set_my_node_id(my_node_id_);
+    message->add_localid_cuts(next_localid_ - 1);
+    view->ForEachPrimaryNode(my_node_id_, [this, message] (uint16_t node_id) {
+        message->add_localid_cuts(log_progress_[node_id]);
+    });
 }
 
 void EngineCore::NewFsmRecordsMessage(const FsmRecordsMsgProto& message) {
@@ -46,38 +52,39 @@ void EngineCore::NewFsmRecordsMessage(const FsmRecordsMsgProto& message) {
     }
 }
 
-bool EngineCore::NewLocalLog(uint32_t log_tag, std::span<const char> data, uint64_t* log_localid) {
-    const Fsm::View* view = fsm_.current_view();
-    if (view == nullptr) {
+bool EngineCore::NewLocalLog(uint32_t tag, std::span<const char> data,
+                             const Fsm::View** view, uint64_t* localid) {
+    const Fsm::View* current_view = fsm_.current_view();
+    if (current_view == nullptr) {
         HLOG(ERROR) << "No view message from sequencer!";
         return false;
     }
-    if (!view->has_node(my_node_id_)) {
+    if (!current_view->has_node(my_node_id_)) {
         HLOG(ERROR) << "Current view does not contain myself!";
         return false;
     }
+    HVLOG(1) << fmt::format("NewLocalLog: tag={}, data_size={}", tag, data.size());
     LogEntry* log_entry = new LogEntry;
     log_entry->seqnum = 0;
-    log_entry->tag = log_tag;
+    log_entry->tag = tag;
     log_entry->data = std::string(data.data(), data.size());
-    log_entry->localid = BuildLocalId(view->id(), my_node_id_, log_counter_++);
+    log_entry->localid = BuildLocalId(current_view->id(), my_node_id_, next_localid_++);
     pending_entries_[log_entry->localid] = std::unique_ptr<LogEntry>(log_entry);
+    ScheduleLocalCutIfNecessary();
 
-    view->ForEachBackupNode(my_node_id_, [this, view, log_entry] (uint16_t node_id) {
-        append_backup_log_cb_(view->id(), node_id, log_entry);
-    });
-    *log_localid = log_entry->localid;
+    *view = current_view;
+    *localid = log_entry->localid;
     return true;
 }
 
-void EngineCore::NewRemoteLog(uint64_t log_localid, uint32_t log_tag, std::span<const char> data) {
+void EngineCore::NewRemoteLog(uint64_t localid, uint32_t tag, std::span<const char> data) {
     std::unique_ptr<LogEntry> log_entry(new LogEntry);
-    log_entry->localid = log_localid;
+    log_entry->localid = localid;
     log_entry->seqnum = 0;
-    log_entry->tag = log_tag;
+    log_entry->tag = tag;
     log_entry->data = std::string(data.data(), data.size());
-    uint16_t view_id = LocalIdToViewId(log_localid);
-    uint16_t node_id = LocalIdToNodeId(log_localid);
+    uint16_t view_id = LocalIdToViewId(localid);
+    uint16_t node_id = LocalIdToNodeId(localid);
     if (node_id == my_node_id_) {
         HLOG(FATAL) << "Same node_id from remote logs";
     }
@@ -86,7 +93,7 @@ void EngineCore::NewRemoteLog(uint64_t log_localid, uint32_t log_tag, std::span<
         // Can safely discard this log
         return;
     }
-    pending_entries_[log_localid] = std::move(log_entry);
+    pending_entries_[localid] = std::move(log_entry);
     if (current_view != nullptr && current_view->id() == view_id) {
         AdvanceLogProgress(current_view, node_id);
     }
@@ -103,13 +110,10 @@ void EngineCore::OnFsmNewView(const Fsm::View* view) {
         log_discarded_cb_(std::move(log_entry));
     }
     log_progress_.clear();
-    for (size_t i = 0; i < view->num_nodes(); i++) {
-        uint16_t node_id = view->node(i);
-        if (node_id != my_node_id_) {
-            log_progress_[node_id] = 0;
-            AdvanceLogProgress(view, node_id);
-        }
-    }
+    view->ForEachPrimaryNode(my_node_id_, [this, view] (uint16_t node_id) {
+        log_progress_[node_id] = 0;
+        AdvanceLogProgress(view, node_id);
+    });
 }
 
 void EngineCore::OnFsmLogReplicated(uint64_t start_localid, uint64_t start_seqnum,
@@ -130,10 +134,31 @@ void EngineCore::OnFsmLogReplicated(uint64_t start_localid, uint64_t start_seqnu
 void EngineCore::AdvanceLogProgress(const Fsm::View* view, uint16_t node_id) {
     DCHECK(view->has_node(node_id));
     uint32_t counter = log_progress_[node_id];
+    uint32_t initial_counter = counter;
     while (pending_entries_.count(BuildLocalId(view->id(), node_id, counter)) > 0) {
         counter++;
     }
-    log_progress_[node_id] = counter;
+    if (counter > initial_counter) {
+        log_progress_[node_id] = counter;
+        ScheduleLocalCutIfNecessary();
+    }
+}
+
+void EngineCore::ScheduleLocalCutIfNecessary() {
+    if (local_cut_scheduled_) {
+        return;
+    }
+    if (last_local_cut_timestamp_ == 0) {
+        last_local_cut_timestamp_ = GetMonotonicMicroTimestamp();
+    }
+    int64_t next_local_cut_timestamp = last_local_cut_timestamp_ + local_cut_interval_us_;
+    int64_t duration = next_local_cut_timestamp - GetMonotonicMicroTimestamp();
+    if (duration < 0) {
+        schedule_local_cut_cb_(0);
+    } else {
+        schedule_local_cut_cb_(gsl::narrow_cast<int>(duration));
+    }
+    local_cut_scheduled_ = true;
 }
 
 }  // namespace log

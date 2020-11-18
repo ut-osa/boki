@@ -485,7 +485,7 @@ func (w *FuncWorker) SharedLogAppend(ctx context.Context, tag uint32, data []byt
 		return 0, fmt.Errorf("Data cannot be more than %d bytes", protocol.MessageInlineDataSize)
 	}
 	id := atomic.AddUint64(&w.nextLogOpId, 1)
-	message := protocol.NewSharedLogAppendMessage(tag, id)
+	message := protocol.NewSharedLogAppendMessage(clientId, tag, id)
 	protocol.FillInlineDataInMessage(message, data)
 
 	w.mux.Lock()

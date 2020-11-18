@@ -35,15 +35,18 @@ private:
 
     uv_loop_t uv_loop_;
     uv_async_t stop_event_;
+    uv_poll_t global_cut_timer_;
     base::Thread event_loop_thread_;
 
     NodeManager node_manager_;
     log::SequencerCore core_;
+    int global_cut_timerfd_;
 
     void EventLoopThreadMain();
 
     void SendFsmRecordsMessage(uint16_t node_id, std::span<const char> data);
 
+    DECLARE_UV_POLL_CB_FOR_CLASS(GlobalCutTimer);
     DECLARE_UV_ASYNC_CB_FOR_CLASS(Stop);
 
     DISALLOW_COPY_AND_ASSIGN(Server);

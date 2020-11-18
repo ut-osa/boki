@@ -86,14 +86,14 @@ enum class MessageType : uint16_t {
 
 enum class SharedLogOpType : uint16_t {
     APPEND     = 0,
-    REPLICATED = 1,
+    PERSISTED  = 1,
     DISCARDED  = 2,
     READ_AT    = 3,
     READ_NEXT  = 4,
     TRIM       = 5
 };
 
-constexpr uint32_t kDefaultLogTag     = std::numeric_limits<uint32_t>::max();
+constexpr uint32_t kDefaultLogTag     = 0;
 constexpr uint64_t kInvalidLogLocalId = std::numeric_limits<uint64_t>::max();
 constexpr uint64_t kInvalidLogSeqNum  = std::numeric_limits<uint64_t>::max();
 
@@ -122,7 +122,7 @@ struct Message {
 
     struct {
         uint16_t log_op;
-        uint16_t padding1;
+        uint16_t log_client_id;
     } __attribute__ ((packed));
 
     uint32_t log_tag;
@@ -131,7 +131,7 @@ struct Message {
         uint64_t log_client_data;
     };
 
-    char padding2[__FAAS_CACHE_LINE_SIZE - 48];
+    char padding[__FAAS_CACHE_LINE_SIZE - 48];
     char inline_data[__FAAS_MESSAGE_SIZE - __FAAS_CACHE_LINE_SIZE]
         __attribute__ ((aligned (__FAAS_CACHE_LINE_SIZE)));
 };
@@ -328,6 +328,23 @@ public:
         message.log_op = static_cast<uint16_t>(SharedLogOpType::APPEND);
         message.log_tag = log_tag;
         message.log_localid = log_localid;
+        return message;
+    }
+
+    static Message NewSharedLogPersisted(uint64_t log_client_data, uint64_t log_seqnum) {
+        NEW_EMPTY_MESSAGE(message);
+        message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
+        message.log_op = static_cast<uint16_t>(SharedLogOpType::PERSISTED);
+        message.log_client_data = log_client_data;
+        message.log_seqnum = log_seqnum;
+        return message;
+    }
+
+    static Message NewSharedLogDiscarded(uint64_t log_client_data) {
+        NEW_EMPTY_MESSAGE(message);
+        message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
+        message.log_op = static_cast<uint16_t>(SharedLogOpType::DISCARDED);
+        message.log_client_data = log_client_data;
         return message;
     }
 

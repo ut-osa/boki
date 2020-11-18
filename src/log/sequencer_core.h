@@ -20,6 +20,8 @@ public:
     int global_cut_interval_us() const;
     void MarkAndBroadcastGlobalCut();
 
+    void BuildGlobalCutMessage(LocalCutMsgProto* message);
+
     void OnNewNodeConnected(uint16_t node_id, std::string_view addr);
     void OnNodeDisconnected(uint16_t node_id);
 
@@ -36,9 +38,10 @@ private:
         conencted_nodes_;
 
     std::vector<uint32_t> local_cuts_;
+    bool local_cuts_changed_; // Since last global cut
+    std::vector<uint32_t> global_cuts_;
 
     void NewView();
-    void NewGlobalCut();
     void SendAllFsmRecords(uint16_t node_id);
     void BroadcastFsmRecord(const Fsm::View* view, const FsmRecordProto& record);
 

@@ -1,5 +1,7 @@
 #include "sequencer/server.h"
 
+#include "utils/io.h"
+
 #define HLOG(l) LOG(l) << "Server: "
 #define HVLOG(l) VLOG(l) << "Server: "
 
@@ -13,11 +15,15 @@ Server::Server()
     : state_(kCreated),
       engine_conn_port_(-1),
       event_loop_thread_("Server/EL", absl::bind_front(&Server::EventLoopThreadMain, this)),
-      node_manager_(this) {
-    UV_DCHECK_OK(uv_loop_init(&uv_loop_));
+      node_manager_(this),
+      global_cut_timerfd_(io_utils::CreateTimerFd()) {
+    UV_CHECK_OK(uv_loop_init(&uv_loop_));
     uv_loop_.data = &event_loop_thread_;
-    UV_DCHECK_OK(uv_async_init(&uv_loop_, &stop_event_, &Server::StopCallback));
+    UV_CHECK_OK(uv_async_init(&uv_loop_, &stop_event_, &Server::StopCallback));
     stop_event_.data = this;
+    CHECK(global_cut_timerfd_ != -1);
+    UV_CHECK_OK(uv_poll_init(&uv_loop_, &global_cut_timer_, global_cut_timerfd_));
+    global_cut_timer_.data = this;
     core_.SetSendFsmRecordsMessageCallback(
         absl::bind_front(&Server::SendFsmRecordsMessage, this));
 }
@@ -25,13 +31,15 @@ Server::Server()
 Server::~Server() {
     State state = state_.load();
     DCHECK(state == kCreated || state == kStopped);
-    UV_DCHECK_OK(uv_loop_close(&uv_loop_));
+    UV_CHECK_OK(uv_loop_close(&uv_loop_));
+    PCHECK(close(global_cut_timerfd_));
 }
 
 void Server::Start() {
     DCHECK(state_.load() == kCreated);
     DCHECK(engine_conn_port_ != -1);
     node_manager_.Start(&uv_loop_, address_, gsl::narrow_cast<uint16_t>(engine_conn_port_));
+    UV_CHECK_OK(uv_poll_start(&global_cut_timer_, UV_READABLE, &Server::GlobalCutTimerCallback));
     // Start thread for running event loop
     event_loop_thread_.Start();
     state_.store(kRunning);
@@ -39,7 +47,7 @@ void Server::Start() {
 
 void Server::ScheduleStop() {
     HLOG(INFO) << "Scheduled to stop";
-    UV_DCHECK_OK(uv_async_send(&stop_event_));
+    UV_CHECK_OK(uv_async_send(&stop_event_));
 }
 
 void Server::WaitForFinish() {
@@ -88,6 +96,10 @@ void Server::SendFsmRecordsMessage(uint16_t node_id, std::span<const char> data)
     }
 }
 
+UV_POLL_CB_FOR_CLASS(Server, GlobalCutTimer) {
+    core_.MarkAndBroadcastGlobalCut();
+}
+
 UV_ASYNC_CB_FOR_CLASS(Server, Stop) {
     if (state_.load(std::memory_order_consume) == kStopping) {
         HLOG(WARNING) << "Already in stopping state";
@@ -96,6 +108,7 @@ UV_ASYNC_CB_FOR_CLASS(Server, Stop) {
     HLOG(INFO) << "Start stopping process";
     node_manager_.ScheduleStop();
     uv_close(UV_AS_HANDLE(&stop_event_), nullptr);
+    uv_close(UV_AS_HANDLE(&global_cut_timer_), nullptr);
     state_.store(kStopping);
 }
 

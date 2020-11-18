@@ -10,7 +10,8 @@ namespace log {
 
 using google::protobuf::Arena;
 
-SequencerCore::SequencerCore() {}
+SequencerCore::SequencerCore()
+    : local_cuts_changed_(false) {}
 
 SequencerCore::~SequencerCore() {}
 
@@ -20,9 +21,6 @@ void SequencerCore::SetSendFsmRecordsMessageCallback(SendFsmRecordsMessageCallba
 
 int SequencerCore::global_cut_interval_us() const {
     return absl::GetFlag(FLAGS_slog_global_cut_interval_us);
-}
-
-void SequencerCore::MarkAndBroadcastGlobalCut() {
 }
 
 void SequencerCore::OnNewNodeConnected(uint16_t node_id, std::string_view addr) {
@@ -86,6 +84,7 @@ void SequencerCore::NewLocalCutMessage(const LocalCutMsgProto& message) {
         for (size_t i = 0; i < view->replicas(); i++) {
             local_cuts_[node_idx * view->replicas() + i] = message.localid_cuts(i);
         }
+        local_cuts_changed_ = true;
     }
 }
 
@@ -96,11 +95,42 @@ void SequencerCore::NewView() {
     fsm_records_.push_back(record);
     const Fsm::View* view = fsm_.current_view();
     local_cuts_.assign(view->num_nodes() * view->replicas(), 0);
+    local_cuts_changed_ = false;
+    global_cuts_.assign(view->num_nodes(), 0);
     BroadcastFsmRecord(view, *record);
 }
 
-void SequencerCore::NewGlobalCut() {
-    // TODO
+void SequencerCore::MarkAndBroadcastGlobalCut() {
+    if (!local_cuts_changed_) {
+        return;
+    }
+    const Fsm::View* view = fsm_.current_view();
+    DCHECK(view != nullptr);
+    std::vector<uint32_t> cuts(view->num_nodes(), std::numeric_limits<uint32_t>::max());
+    for (size_t i = 0; i < view->num_nodes(); i++) {
+        for (size_t j = 0; j < view->replicas(); j++) {
+            size_t node_idx = (i - j + view->num_nodes()) % view->num_nodes();
+            uint32_t value = local_cuts_[i * view->replicas() + j];
+            cuts[node_idx] = std::min(cuts[node_idx], value);
+        }
+    }
+    DCHECK_EQ(view->num_nodes(), global_cuts_.size());
+    bool changed = false;
+    for (size_t i = 0; i < view->num_nodes(); i++) {
+        DCHECK_GE(cuts[i], global_cuts_[i]);
+        if (cuts[i] > global_cuts_[i]) {
+            changed = true;
+            break;
+        }
+    }
+    if (!changed) {
+        return;
+    }
+    FsmRecordProto* record = Arena::CreateMessage<FsmRecordProto>(&protobuf_arena_);
+    fsm_.NewGlobalCut(cuts, record);
+    local_cuts_changed_ = false;
+    global_cuts_ = std::move(cuts);
+    BroadcastFsmRecord(view, *record);
 }
 
 void SequencerCore::SendAllFsmRecords(uint16_t node_id) {

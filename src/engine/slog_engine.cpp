@@ -21,19 +21,26 @@ SLogEngine::SLogEngine(Engine* engine)
     : engine_(engine),
       core_(engine->node_id()),
       storage_(new log::InMemoryStorage()) {
-    core_.SetLogPersistedCallback([this] (std::unique_ptr<log::LogEntry> log_entry) {
-        storage_->Add(std::move(log_entry));
-    });
+    core_.SetLogPersistedCallback(
+        absl::bind_front(&SLogEngine::LogPersisted, this));
     core_.SetLogDiscardedCallback(
         absl::bind_front(&SLogEngine::LogDiscarded, this));
-    core_.SetAppendBackupLogCallback(
-        absl::bind_front(&SLogEngine::AppendBackupLog, this));
-    core_.SetSendLocalCutMessageCallback(
-        absl::bind_front(&SLogEngine::SendLocalCutMessage, this));
+    core_.SetScheduleLocalCutCallback(
+        absl::bind_front(&SLogEngine::ScheduleLocalCut, this));
     SetupTimers();
 }
 
 SLogEngine::~SLogEngine() {}
+
+std::unique_ptr<SLogEngine::OngoingLogContext> SLogEngine::GrabOngoingLogContext(uint64_t localid) {
+    if (!ongoing_logs_.contains(localid)) {
+        HLOG(WARNING) << fmt::format("Cannot find ongoing log (localid {})", localid);
+        return nullptr;
+    }
+    std::unique_ptr<OngoingLogContext> ctx = std::move(ongoing_logs_[localid]);
+    ongoing_logs_.erase(localid);
+    return ctx;
+}
 
 void SLogEngine::SetupTimers() {
     for (IOWorker* io_worker : engine_->io_workers_) {
@@ -44,8 +51,16 @@ void SLogEngine::SetupTimers() {
 }
 
 void SLogEngine::LocalCutTimerTriggered() {
-    absl::MutexLock lk(&mu_);
-    core_.MarkAndSendLocalCut();
+    mu_.AssertNotHeld();
+    log::LocalCutMsgProto message;
+    {
+        absl::MutexLock lk(&mu_);
+        core_.BuildLocalCutMessage(&message);
+    }
+    std::string serialized_message;
+    message.SerializeToString(&serialized_message);
+    std::span<const char> data(serialized_message.data(), serialized_message.length());
+    SendSequencerMessage(SequencerMessageHelper::NewLocalCut(data), data);
 }
 
 void SLogEngine::OnSequencerMessage(const SequencerMessage& message,
@@ -63,13 +78,11 @@ void SLogEngine::OnSequencerMessage(const SequencerMessage& message,
     }
 }
 
-void SLogEngine::OnMessageFromOtherEngine(const protocol::Message& message) {
+void SLogEngine::OnMessageFromOtherEngine(const Message& message) {
     DCHECK(MessageHelper::IsSharedLogOp(message));
     SharedLogOpType op_type = MessageHelper::GetSharedLogOpType(message);
     if (op_type == SharedLogOpType::APPEND) {
-        absl::MutexLock lk(&mu_);
-        core_.NewRemoteLog(message.log_localid, message.log_tag,
-                           MessageHelper::GetInlineData(message));
+        HandleRemoteAppend(message);
     } else if (op_type == SharedLogOpType::READ_AT) {
         // TODO
     } else if (op_type == SharedLogOpType::READ_NEXT) {
@@ -81,16 +94,11 @@ void SLogEngine::OnMessageFromOtherEngine(const protocol::Message& message) {
     }
 }
 
-void SLogEngine::OnMessageFromFuncWorker(const protocol::Message& message) {
+void SLogEngine::OnMessageFromFuncWorker(const Message& message) {
     DCHECK(MessageHelper::IsSharedLogOp(message));
     SharedLogOpType op_type = MessageHelper::GetSharedLogOpType(message);
     if (op_type == SharedLogOpType::APPEND) {
-        std::span<const char> data = MessageHelper::GetInlineData(message);
-        uint64_t localid;
-        absl::MutexLock lk(&mu_);
-        if (!core_.NewLocalLog(message.log_tag, data, &localid)) {
-            LOG(ERROR) << "NewLocalLog failed";
-        }
+        HandleLocalAppend(message);
     } else if (op_type == SharedLogOpType::READ_AT) {
         // TODO
     } else if (op_type == SharedLogOpType::READ_NEXT) {
@@ -100,22 +108,72 @@ void SLogEngine::OnMessageFromFuncWorker(const protocol::Message& message) {
     } else {
         HLOG(ERROR) << "Unknown SharedLogOpType";
     }
+}
+
+void SLogEngine::HandleRemoteAppend(const Message& message) {
+    absl::MutexLock lk(&mu_);
+    core_.NewRemoteLog(message.log_localid, message.log_tag,
+                       MessageHelper::GetInlineData(message));
+}
+
+void SLogEngine::HandleLocalAppend(const Message& message) {
+    std::unique_ptr<OngoingLogContext> ctx(new OngoingLogContext);
+    ctx->client_id = message.log_client_id;
+    ctx->client_data = message.log_client_data;
+    ctx->log_tag = message.log_tag;
+    std::span<const char> data = MessageHelper::GetInlineData(message);
+    const log::Fsm::View* view;
+    uint64_t localid;
+    bool success = false;
+    {
+        absl::MutexLock lk(&mu_);
+        success = core_.NewLocalLog(message.log_tag, data, &view, &localid);
+        if (success) {
+            ctx->log_localid = localid;
+            ongoing_logs_[localid] = std::move(ctx);
+        }
+    }
+    if (!success) {
+        HLOG(ERROR) << "NewLocalLog failed";
+        Message response = MessageHelper::NewSharedLogDiscarded(message.log_client_data);
+        engine_->SendFuncWorkerMessage(message.log_client_id, &response);
+        return;
+    }
+
+    // Replicate new log to backup nodes
+    Message message_copy = message;
+    message_copy.log_localid = localid;
+    IOWorker* io_worker = IOWorker::current();
+    DCHECK(io_worker != nullptr);
+    SLogMessageHub* hub = DCHECK_NOTNULL(
+        io_worker->PickConnection(kSLogMessageHubTypeId))->as_ptr<SLogMessageHub>();
+    view->ForEachBackupNode(engine_->node_id(), [view, hub, &message_copy] (uint16_t node_id) {
+        hub->SendMessage(view->id(), node_id, message_copy);
+    });
+}
+
+void SLogEngine::LogPersisted(std::unique_ptr<log::LogEntry> log_entry) {
+    mu_.AssertHeld();
+    std::unique_ptr<OngoingLogContext> ctx = GrabOngoingLogContext(log_entry->localid);
+    if (ctx == nullptr) {
+        return;
+    }
+    HVLOG(1) << fmt::format("Log (localid {}) replicated with seqnum {}",
+                            log_entry->localid, log_entry->seqnum);
+    Message response = MessageHelper::NewSharedLogPersisted(ctx->client_data, log_entry->seqnum);
+    engine_->SendFuncWorkerMessage(ctx->client_id, &response);
+    storage_->Add(std::move(log_entry));
 }
 
 void SLogEngine::LogDiscarded(std::unique_ptr<log::LogEntry> log_entry) {
-    HLOG(INFO) << fmt::format("Log with localid {} discarded", log_entry->localid);
-    // TODO
-}
-
-void SLogEngine::AppendBackupLog(uint16_t view_id, uint16_t backup_node_id,
-                                 const log::LogEntry* log_entry) {
-    IOWorker* io_worker = IOWorker::current();
-    DCHECK(io_worker != nullptr);
-    ConnectionBase* hub = io_worker->PickConnection(kSLogMessageHubTypeId);
-    DCHECK(hub != nullptr);
-    Message message = MessageHelper::NewSharedLogAppend(log_entry->tag, log_entry->localid);
-    MessageHelper::SetInlineData(&message, log_entry->data);
-    hub->as_ptr<SLogMessageHub>()->SendMessage(view_id, backup_node_id, message);
+    mu_.AssertHeld();
+    std::unique_ptr<OngoingLogContext> ctx = GrabOngoingLogContext(log_entry->localid);
+    if (ctx == nullptr) {
+        return;
+    }
+    HLOG(WARNING) << fmt::format("Log with localid {} discarded", log_entry->localid);
+    Message response = MessageHelper::NewSharedLogDiscarded(ctx->client_data);
+    engine_->SendFuncWorkerMessage(ctx->client_id, &response);
 }
 
 void SLogEngine::SendSequencerMessage(const protocol::SequencerMessage& message,
@@ -130,8 +188,13 @@ void SLogEngine::SendSequencerMessage(const protocol::SequencerMessage& message,
     conn->as_ptr<SequencerConnection>()->SendMessage(message, payload);
 }
 
-void SLogEngine::SendLocalCutMessage(std::span<const char> data) {
-    SendSequencerMessage(SequencerMessageHelper::NewLocalCut(data), data);
+void SLogEngine::ScheduleLocalCut(int duration_us) {
+    mu_.AssertHeld();
+    IOWorker* io_worker = IOWorker::current();
+    DCHECK(io_worker != nullptr);
+    ConnectionBase* timer = io_worker->PickConnection(kSLogEngineTimerTypeId);
+    DCHECK(timer != nullptr);
+    timer->as_ptr<Timer>()->TriggerIn(duration_us);
 }
 
 std::string_view SLogEngine::GetNodeAddr(uint16_t view_id, uint16_t node_id) {
