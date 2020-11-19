@@ -1,6 +1,7 @@
 #include "engine/slog_engine.h"
 
 #include "common/time.h"
+#include "log/common.h"
 #include "engine/constants.h"
 #include "engine/sequencer_connection.h"
 #include "engine/engine.h"
@@ -52,6 +53,7 @@ void SLogEngine::SetupTimers() {
 
 void SLogEngine::LocalCutTimerTriggered() {
     mu_.AssertNotHeld();
+    HVLOG(1) << "LocalCutTimerTriggered";
     log::LocalCutMsgProto message;
     {
         absl::MutexLock lk(&mu_);
@@ -154,14 +156,17 @@ void SLogEngine::HandleLocalAppend(const Message& message) {
 
 void SLogEngine::LogPersisted(std::unique_ptr<log::LogEntry> log_entry) {
     mu_.AssertHeld();
-    std::unique_ptr<OngoingLogContext> ctx = GrabOngoingLogContext(log_entry->localid);
-    if (ctx == nullptr) {
-        return;
+    if (log::LocalIdToNodeId(log_entry->localid) == engine_->node_id()) {
+        std::unique_ptr<OngoingLogContext> ctx = GrabOngoingLogContext(log_entry->localid);
+        if (ctx == nullptr) {
+            return;
+        }
+        HVLOG(1) << fmt::format("Log (localid {}) replicated with seqnum {}",
+                                log_entry->localid, log_entry->seqnum);
+        Message response = MessageHelper::NewSharedLogPersisted(ctx->client_data,
+                                                                log_entry->seqnum);
+        engine_->SendFuncWorkerMessage(ctx->client_id, &response);
     }
-    HVLOG(1) << fmt::format("Log (localid {}) replicated with seqnum {}",
-                            log_entry->localid, log_entry->seqnum);
-    Message response = MessageHelper::NewSharedLogPersisted(ctx->client_data, log_entry->seqnum);
-    engine_->SendFuncWorkerMessage(ctx->client_id, &response);
     storage_->Add(std::move(log_entry));
 }
 

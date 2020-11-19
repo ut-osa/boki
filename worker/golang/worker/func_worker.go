@@ -50,6 +50,7 @@ func NewFuncWorker(funcId uint16, clientId uint16, factory types.FuncHandlerFact
 		useFifoForNestedCall: false,
 		newFuncCallChan:      make(chan []byte),
 		outgoingFuncCalls:    make(map[uint64](chan []byte)),
+		outgoingLogOps:       make(map[uint64](chan []byte)),
 		nextCallId:           0,
 		nextLogOpId:          0,
 		currentCall:          0,
@@ -485,7 +486,7 @@ func (w *FuncWorker) SharedLogAppend(ctx context.Context, tag uint32, data []byt
 		return 0, fmt.Errorf("Data cannot be more than %d bytes", protocol.MessageInlineDataSize)
 	}
 	id := atomic.AddUint64(&w.nextLogOpId, 1)
-	message := protocol.NewSharedLogAppendMessage(clientId, tag, id)
+	message := protocol.NewSharedLogAppendMessage(w.clientId, tag, id)
 	protocol.FillInlineDataInMessage(message, data)
 
 	w.mux.Lock()
@@ -499,7 +500,7 @@ func (w *FuncWorker) SharedLogAppend(ctx context.Context, tag uint32, data []byt
 
 	response := <-outputChan
 	messageType := protocol.GetSharedLogOpTypeFromMessage(response)
-	if messageType == protocol.SharedLogOpType_REPLICATED {
+	if messageType == protocol.SharedLogOpType_PERSISTED {
 		return protocol.GetLogSeqNumFromMessage(response), nil
 	} else {
 		return 0, fmt.Errorf("Failed to append log")

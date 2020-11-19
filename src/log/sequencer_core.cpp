@@ -85,13 +85,19 @@ void SequencerCore::NewLocalCutMessage(const LocalCutMsgProto& message) {
             local_cuts_[node_idx * view->replicas() + i] = message.localid_cuts(i);
         }
         local_cuts_changed_ = true;
+        HVLOG(1) << "Local cut changed";
     }
 }
 
 void SequencerCore::NewView() {
+    size_t replicas = absl::GetFlag(FLAGS_slog_num_replicas);
+    if (conencted_nodes_.size() < replicas) {
+        HLOG(WARNING) << fmt::format("Connected nodes less than replicas {}", replicas);
+        return;
+    }
     FsmRecordProto* record = Arena::CreateMessage<FsmRecordProto>(&protobuf_arena_);
     Fsm::NodeVec node_vec(conencted_nodes_.begin(), conencted_nodes_.end());
-    fsm_.NewView(absl::GetFlag(FLAGS_slog_num_replicas), node_vec, record);
+    fsm_.NewView(replicas, node_vec, record);
     fsm_records_.push_back(record);
     const Fsm::View* view = fsm_.current_view();
     local_cuts_.assign(view->num_nodes() * view->replicas(), 0);
@@ -126,6 +132,7 @@ void SequencerCore::MarkAndBroadcastGlobalCut() {
     if (!changed) {
         return;
     }
+    HVLOG(1) << "Apply and broadcast new global cut";
     FsmRecordProto* record = Arena::CreateMessage<FsmRecordProto>(&protobuf_arena_);
     fsm_.NewGlobalCut(cuts, record);
     local_cuts_changed_ = false;

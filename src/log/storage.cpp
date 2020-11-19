@@ -8,6 +8,8 @@ InMemoryStorage::InMemoryStorage() {}
 InMemoryStorage::~InMemoryStorage() {}
 
 void InMemoryStorage::Add(std::unique_ptr<LogEntry> log_entry) {
+    VLOG(1) << fmt::format("Storing log (localid={}, seqnum={})",
+                           log_entry->localid, log_entry->seqnum);
     uint64_t seqnum = log_entry->seqnum;
     entries_[seqnum] = std::move(log_entry);
 }

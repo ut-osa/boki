@@ -39,6 +39,7 @@ void Server::Start() {
     DCHECK(state_.load() == kCreated);
     DCHECK(engine_conn_port_ != -1);
     node_manager_.Start(&uv_loop_, address_, gsl::narrow_cast<uint16_t>(engine_conn_port_));
+    CHECK(io_utils::SetupTimerFd(global_cut_timerfd_, 0, core_.global_cut_interval_us()));
     UV_CHECK_OK(uv_poll_start(&global_cut_timer_, UV_READABLE, &Server::GlobalCutTimerCallback));
     // Start thread for running event loop
     event_loop_thread_.Start();
@@ -78,6 +79,7 @@ void Server::OnNodeDisconnected(uint16_t node_id) {
 void Server::OnRecvNodeMessage(uint16_t node_id, const SequencerMessage& message,
                                std::span<const char> payload) {
     if (SequencerMessageHelper::IsLocalCut(message)) {
+        HVLOG(1) << fmt::format("Receive local cut message from node {}", node_id);
         log::LocalCutMsgProto message_proto;
         if (!message_proto.ParseFromArray(payload.data(), payload.size())) {
             HLOG(ERROR) << "Failed to parse sequencer message!";

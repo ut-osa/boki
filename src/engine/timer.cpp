@@ -17,10 +17,11 @@ Timer::~Timer() {
 void Timer::Start(IOWorker* io_worker) {
     DCHECK(io_worker->WithinMyEventLoopThread());
     io_worker_ = io_worker;
-    int timerfd_ = io_utils::CreateTimerFd();
+    timerfd_ = io_utils::CreateTimerFd();
     CHECK(timerfd_ != -1);
     io_utils::FdUnsetNonblocking(timerfd_);
     URING_DCHECK_OK(current_io_uring()->RegisterFd(timerfd_));
+    state_ = kIdle;
     URING_DCHECK_OK(current_io_uring()->StartRead(
         timerfd_, IOWorker::kOctaBufGroup,
         [this] (int status, std::span<const char> data) -> bool {

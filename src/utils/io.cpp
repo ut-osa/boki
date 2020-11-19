@@ -52,12 +52,16 @@ int CreateTimerFd() {
 }
 
 bool SetupTimerFd(int fd, int initial_us, int interval_us) {
-    VLOG(1) << fmt::format("SetupTimerFd: initial_us={}, interval_us={}",
+    VLOG(2) << fmt::format("SetupTimerFd: initial_us={}, interval_us={}",
                            initial_us, interval_us);
     struct itimerspec spec;
     memset(&spec, 0, sizeof(spec));
-    spec.it_value.tv_sec = initial_us / 1000000;
-    spec.it_value.tv_nsec = initial_us % 1000000 * 1000;
+    if (initial_us == 0) {
+        spec.it_value.tv_nsec = 1;
+    } else {
+        spec.it_value.tv_sec = initial_us / 1000000;
+        spec.it_value.tv_nsec = initial_us % 1000000 * 1000;
+    }
     spec.it_interval.tv_sec = interval_us / 1000000;
     spec.it_interval.tv_nsec = interval_us % 1000000 * 1000;
     if (timerfd_settime(fd, 0, &spec, nullptr) != 0) {

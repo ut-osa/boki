@@ -40,7 +40,7 @@ void EngineCore::BuildLocalCutMessage(LocalCutMsgProto* message) {
     message->Clear();
     message->set_view_id(view->id());
     message->set_my_node_id(my_node_id_);
-    message->add_localid_cuts(next_localid_ - 1);
+    message->add_localid_cuts(next_localid_);
     view->ForEachPrimaryNode(my_node_id_, [this, message] (uint16_t node_id) {
         message->add_localid_cuts(log_progress_[node_id]);
     });
