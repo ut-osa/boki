@@ -3,6 +3,7 @@
 SCRIPT_PATH=$(readlink -f $0)
 BASE_DIR=$(dirname $SCRIPT_PATH)
 CMAKE_BUILD_TYPE="Release"
+ENABLE_DEBUG="no"
 DEPS_INSTALL_PATH=$BASE_DIR/deps/out
 
 while [ ! $# -eq 0 ]
@@ -10,6 +11,7 @@ do
   case "$1" in
     --debug)
       CMAKE_BUILD_TYPE="Debug"
+      ENABLE_DEBUG="yes"
       ;;
   esac
   shift
@@ -57,3 +59,9 @@ cd $BASE_DIR/deps/nghttp2 && rm -rf build && mkdir -p build && cd build && \
         -DCMAKE_INSTALL_PREFIX=${DEPS_INSTALL_PATH} -DCMAKE_INSTALL_LIBDIR=lib .. && \
   make -j$(nproc) install && \
   rm -rf $BASE_DIR/deps/nghttp2/build
+
+# Build raft
+cd $BASE_DIR/deps/raft && autoreconf -i && \
+  PKG_CONFIG_PATH=${DEPS_INSTALL_PATH}/lib/pkgconfig \
+      ./configure --prefix=${DEPS_INSTALL_PATH} --enable-debug=${ENABLE_DEBUG} && \
+  make clean && make -j$(nproc) install
