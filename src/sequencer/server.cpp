@@ -11,12 +11,17 @@ namespace sequencer {
 using protocol::SequencerMessage;
 using protocol::SequencerMessageHelper;
 
-Server::Server()
+Server::Server(const SequencerMap& sequencer_map, uint16_t my_id)
     : state_(kCreated),
+      my_id_(my_id),
+      sequencer_map_(sequencer_map),
       engine_conn_port_(-1),
+      raft_port_(-1),
       event_loop_thread_("Server/EL", absl::bind_front(&Server::EventLoopThreadMain, this)),
       node_manager_(this),
+      raft_(my_id),
       global_cut_timerfd_(io_utils::CreateTimerFd()) {
+    CHECK(sequencer_map_.contains(my_id_));
     UV_CHECK_OK(uv_loop_init(&uv_loop_));
     uv_loop_.data = &event_loop_thread_;
     UV_CHECK_OK(uv_async_init(&uv_loop_, &stop_event_, &Server::StopCallback));

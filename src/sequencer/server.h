@@ -4,18 +4,22 @@
 #include "base/thread.h"
 #include "common/uv.h"
 #include "log/sequencer_core.h"
+#include "sequencer/config.h"
 #include "sequencer/node_manager.h"
+#include "sequencer/raft.h"
 
 namespace faas {
 namespace sequencer {
 
 class Server final : public uv::Base {
 public:
-    Server();
+    Server(const SequencerMap& sequencer_map, uint16_t my_id);
     ~Server();
 
     void set_address(std::string_view address) { address_ = std::string(address); }
     void set_engine_conn_port(int port) { engine_conn_port_ = port; }
+    void set_raft_port(int port) { raft_port_ = port; }
+    void set_raft_data_dir(std::string_view dir) { raft_data_dir_ = std::string(dir); }
 
     void Start();
     void ScheduleStop();
@@ -30,8 +34,13 @@ private:
     enum State { kCreated, kRunning, kStopping, kStopped };
     std::atomic<State> state_;
 
+    uint16_t my_id_;
+    SequencerMap sequencer_map_;
+
     std::string address_;
     int engine_conn_port_;
+    int raft_port_;
+    std::string raft_data_dir_;
 
     uv_loop_t uv_loop_;
     uv_async_t stop_event_;
@@ -39,6 +48,7 @@ private:
     base::Thread event_loop_thread_;
 
     NodeManager node_manager_;
+    Raft raft_;
     log::SequencerCore core_;
     int global_cut_timerfd_;
 
