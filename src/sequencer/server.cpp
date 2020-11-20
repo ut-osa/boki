@@ -11,17 +11,13 @@ namespace sequencer {
 using protocol::SequencerMessage;
 using protocol::SequencerMessageHelper;
 
-Server::Server(const SequencerMap& sequencer_map, uint16_t my_id)
+Server::Server(uint16_t sequencer_id)
     : state_(kCreated),
-      my_id_(my_id),
-      sequencer_map_(sequencer_map),
-      engine_conn_port_(-1),
-      raft_port_(-1),
+      my_sequencer_id_(sequencer_id),
       event_loop_thread_("Server/EL", absl::bind_front(&Server::EventLoopThreadMain, this)),
       node_manager_(this),
-      raft_(my_id),
+      raft_(sequencer_id),
       global_cut_timerfd_(io_utils::CreateTimerFd()) {
-    CHECK(sequencer_map_.contains(my_id_));
     UV_CHECK_OK(uv_loop_init(&uv_loop_));
     uv_loop_.data = &event_loop_thread_;
     UV_CHECK_OK(uv_async_init(&uv_loop_, &stop_event_, &Server::StopCallback));
@@ -42,8 +38,12 @@ Server::~Server() {
 
 void Server::Start() {
     DCHECK(state_.load() == kCreated);
-    DCHECK(engine_conn_port_ != -1);
-    node_manager_.Start(&uv_loop_, address_, gsl::narrow_cast<uint16_t>(engine_conn_port_));
+    CHECK(config_.LoadFromFile(config_path_)) << "Failed to load sequencer config";
+    const SequencerConfig::Peer* myself = config_.GetPeer(my_sequencer_id_);
+    if (myself == nullptr) {
+        HLOG(FATAL) << "Cannot find myself in the sequencer config";
+    }
+    node_manager_.Start(&uv_loop_, address_, myself->engine_conn_port);
     CHECK(io_utils::SetupTimerFd(global_cut_timerfd_, 0, core_.global_cut_interval_us()));
     UV_CHECK_OK(uv_poll_start(&global_cut_timer_, UV_READABLE, &Server::GlobalCutTimerCallback));
     // Start thread for running event loop
