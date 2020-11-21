@@ -20,6 +20,7 @@ using protocol::SequencerMessageHelper;
 
 SLogEngine::SLogEngine(Engine* engine)
     : engine_(engine),
+      sequencer_config_(&engine->sequencer_config_),
       core_(engine->node_id()),
       storage_(new log::InMemoryStorage()) {
     core_.SetLogPersistedCallback(
@@ -185,12 +186,16 @@ void SLogEngine::SendSequencerMessage(const protocol::SequencerMessage& message,
                                       std::span<const char> payload) {
     IOWorker* io_worker = IOWorker::current();
     DCHECK(io_worker != nullptr);
-    ConnectionBase* conn = io_worker->PickConnection(kSequencerConnectionTypeId);
-    if (conn == nullptr) {
-        HLOG(ERROR) << "There is not SequencerConnection associated with current IOWorker";
-        return;
-    }
-    conn->as_ptr<SequencerConnection>()->SendMessage(message, payload);
+    sequencer_config_->ForEachPeer([io_worker, &message, payload]
+                                   (const SequencerConfig::Peer* peer) {
+        ConnectionBase* conn = io_worker->PickConnection(SequencerConnection::type_id(peer->id));
+        if (conn != nullptr) {
+            conn->as_ptr<SequencerConnection>()->SendMessage(message, payload);
+        } else {
+            HLOG(ERROR) << fmt::format("No connection for sequencer {} associated with "
+                                       "current IOWorker", peer->id);
+        }
+    });
 }
 
 void SLogEngine::ScheduleLocalCut(int duration_us) {

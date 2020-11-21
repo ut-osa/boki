@@ -30,7 +30,6 @@ Engine::Engine()
       num_io_workers_(kDefaultNumIOWorkers),
       engine_tcp_port_(-1),
       enable_shared_log_(false),
-      sequencer_port_(-1),
       shared_log_tcp_port_(-1),
       func_worker_use_engine_socket_(absl::GetFlag(FLAGS_func_worker_use_engine_socket)),
       use_fifo_for_nested_call_(absl::GetFlag(FLAGS_use_fifo_for_nested_call)),
@@ -124,24 +123,27 @@ void Engine::SetupLocalIpc() {
 
 void Engine::SetupSharedLog() {
     DCHECK(enable_shared_log_);
+    if (!sequencer_config_.LoadFromFile(sequencer_config_file_)) {
+        HLOG(FATAL) << "Failed to load sequencer config";
+    }
     slog_engine_.reset(new SLogEngine(this));
     // Connect to sequencer
-    CHECK(!sequencer_addr_.empty());
-    CHECK_NE(sequencer_port_, -1);
     int total_sequencer_conn = num_io_workers_ * absl::GetFlag(FLAGS_sequencer_conn_per_worker);
-    for (int i = 0; i < total_sequencer_conn; i++) {
-        int sockfd = utils::TcpSocketConnect(sequencer_addr_, sequencer_port_);
-        CHECK(sockfd != -1)
-            << fmt::format("Failed to connect to sequencer {}:{}",
-                           sequencer_addr_, gateway_port_);
-        std::shared_ptr<ConnectionBase> connection(
-            new SequencerConnection(this, slog_engine_.get(), sockfd));
-        IOWorker* io_worker = io_workers_[i % num_io_workers_];
-        RegisterConnection(io_worker, connection.get());
-        DCHECK_GE(connection->id(), 0);
-        DCHECK(!sequencer_connections_.contains(connection->id()));
-        sequencer_connections_[connection->id()] = std::move(connection);
-    }
+    sequencer_config_.ForEachPeer([this, total_sequencer_conn] (const SequencerConfig::Peer* peer) {
+        for (int i = 0; i < total_sequencer_conn; i++) {
+            int sockfd = utils::TcpSocketConnect(peer->host_addr, peer->engine_conn_port);
+            CHECK(sockfd != -1)
+                << fmt::format("Failed to connect to sequencer {}:{}",
+                               peer->host_addr, peer->engine_conn_port);
+            std::shared_ptr<ConnectionBase> connection(
+                new SequencerConnection(this, slog_engine_.get(), peer->id, sockfd));
+            IOWorker* io_worker = io_workers_[i % num_io_workers_];
+            RegisterConnection(io_worker, connection.get());
+            DCHECK_GE(connection->id(), 0);
+            DCHECK(!sequencer_connections_.contains(connection->id()));
+            sequencer_connections_[connection->id()] = std::move(connection);
+        }
+    });
     // Setup SharedLogMessageHub for each IOWorker
     for (size_t i = 0; i < io_workers_.size(); i++) {
         auto hub = std::make_unique<SLogMessageHub>(slog_engine_.get());

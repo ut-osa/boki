@@ -21,7 +21,7 @@ public:
     };
 
     const Peer* GetPeer(uint16_t id) const;
-    void ForAllPeer(std::function<void(const Peer*)> cb) const;
+    void ForEachPeer(std::function<void(const Peer*)> cb) const;
 
 private:
     absl::flat_hash_map</* id */ uint16_t, Peer> peers_;

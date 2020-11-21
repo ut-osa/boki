@@ -3,8 +3,10 @@
 #include "base/common.h"
 #include "utils/object_pool.h"
 
+extern "C" {
 #include <raft.h>
 #include <raft/uv.h>
+}
 
 namespace faas {
 namespace sequencer {

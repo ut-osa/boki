@@ -3,6 +3,7 @@
 #include "base/common.h"
 #include "common/protocol.h"
 #include "utils/appendable_buffer.h"
+#include "engine/constants.h"
 #include "engine/io_worker.h"
 
 namespace faas {
@@ -15,8 +16,15 @@ class SequencerConnection final : public ConnectionBase {
 public:
     static constexpr size_t kBufSize = 65536;
 
-    SequencerConnection(Engine* engine, SLogEngine* slog_engine, int sockfd);
+    static int type_id(uint16_t sequencer_id) {
+        return kSequencerConnectionTypeId + sequencer_id;
+    }
+
+    SequencerConnection(Engine* engine, SLogEngine* slog_engine,
+                        uint16_t sequencer_id, int sockfd);
     ~SequencerConnection();
+
+    uint16_t sequencer_id() const { return sequencer_id_; }
 
     void Start(IOWorker* io_worker) override;
     void ScheduleClose() override;
@@ -31,6 +39,7 @@ private:
     SLogEngine* slog_engine_;
     IOWorker* io_worker_;
     State state_;
+    uint16_t sequencer_id_;
     int sockfd_;
 
     std::string log_header_;

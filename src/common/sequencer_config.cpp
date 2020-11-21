@@ -72,7 +72,7 @@ const SequencerConfig::Peer* SequencerConfig::GetPeer(uint16_t id) const {
     }
 }
 
-void SequencerConfig::ForAllPeer(std::function<void(const Peer*)> cb) const {
+void SequencerConfig::ForEachPeer(std::function<void(const Peer*)> cb) const {
     for (const auto& entry : peers_) {
         cb(&entry.second);
     }

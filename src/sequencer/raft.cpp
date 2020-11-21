@@ -180,14 +180,14 @@ int Raft::FsmSnapshotCallbackWrapper(struct raft_fsm* fsm,
         return RAFT_INVALID;
     }
     *n_bufs = 1;
-    *bufs = (struct raft_buffer*) malloc(sizeof(struct raft_buffer*));
+    *bufs = (struct raft_buffer*) raft_malloc(sizeof(struct raft_buffer*));
     if (*bufs == NULL) {
         return RAFT_NOMEM;
     }
     (*bufs)[0].len = data.size();
-    (*bufs)[0].base = malloc(data.size());
+    (*bufs)[0].base = raft_malloc(data.size());
     if ((*bufs)[0].base == NULL) {
-        free(*bufs);
+        raft_free(*bufs);
         return RAFT_NOMEM;
     }
     memcpy((*bufs)[0].base, data.data(), data.size());
@@ -195,7 +195,7 @@ int Raft::FsmSnapshotCallbackWrapper(struct raft_fsm* fsm,
 }
 
 int Raft::FsmRestoreCallbackWrapper(struct raft_fsm* fsm, struct raft_buffer* buf) {
-    auto cleanup = gsl::finally([buf] { free(buf->base); });
+    auto cleanup = gsl::finally([buf] { raft_free(buf->base); });
     Raft* self = reinterpret_cast<Raft*>(fsm->data);
     std::span<const char> payload(reinterpret_cast<char*>(buf->base), buf->len);
     if (!self->fsm_restore_cb_(payload)) {

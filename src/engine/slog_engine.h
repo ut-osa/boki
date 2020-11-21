@@ -2,6 +2,7 @@
 
 #include "base/common.h"
 #include "common/protocol.h"
+#include "common/sequencer_config.h"
 #include "log/engine_core.h"
 #include "log/storage.h"
 
@@ -25,6 +26,7 @@ public:
 
 private:
     Engine* engine_;
+    const SequencerConfig* sequencer_config_;
 
     absl::Mutex mu_;
 

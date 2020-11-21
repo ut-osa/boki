@@ -26,8 +26,7 @@ ABSL_FLAG(bool, enable_shared_log, false, "If to enable shared log.");
 ABSL_FLAG(std::string, shared_log_tcp_host, "",
           "Hostname for shared log connections from other nodes. "
           "Will read /proc/sys/kernel/hostname when not set.");
-ABSL_FLAG(std::string, sequencer_addr, "127.0.0.1", "Sequencer address");
-ABSL_FLAG(int, sequencer_port, 10009, "Sequencer port");
+ABSL_FLAG(std::string, sequencer_config_file, "", "Path to config file of sequencers");
 ABSL_FLAG(int, shared_log_tcp_port, 10010,
           "Port to listen for shared log connections from other nodes.");
 
@@ -82,8 +81,7 @@ int main(int argc, char* argv[]) {
 
     if (absl::GetFlag(FLAGS_enable_shared_log)) {
         engine->enable_shared_log();
-        engine->set_sequencer_addr_port(absl::GetFlag(FLAGS_sequencer_addr),
-                                        absl::GetFlag(FLAGS_sequencer_port));
+        engine->set_sequencer_config_file(absl::GetFlag(FLAGS_sequencer_config_file));
         engine->set_shared_log_tcp_port(absl::GetFlag(FLAGS_shared_log_tcp_port));
         std::string shared_log_tcp_host = absl::GetFlag(FLAGS_shared_log_tcp_host);
         if (shared_log_tcp_host.empty()) {

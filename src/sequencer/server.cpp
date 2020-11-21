@@ -44,6 +44,12 @@ void Server::Start() {
         HLOG(FATAL) << "Cannot find myself in the sequencer config";
     }
     node_manager_.Start(&uv_loop_, address_, myself->engine_conn_port);
+    std::string raft_addr(fmt::format("{}:{}", address_, myself->raft_port));
+    std::vector<std::pair<uint64_t, std::string_view>> peers;
+    config_.ForEachPeer([&peers] (const SequencerConfig::Peer* peer) {
+        peers.push_back(std::make_pair(uint64_t{peer->id}, std::string_view(peer->host_addr)));
+    });
+    raft_.Start(&uv_loop_, raft_addr, raft_data_dir_, peers);
     CHECK(io_utils::SetupTimerFd(global_cut_timerfd_, 0, core_.global_cut_interval_us()));
     UV_CHECK_OK(uv_poll_start(&global_cut_timer_, UV_READABLE, &Server::GlobalCutTimerCallback));
     // Start thread for running event loop

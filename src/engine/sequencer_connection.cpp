@@ -2,13 +2,12 @@
 
 #include "utils/socket.h"
 #include "engine/flags.h"
-#include "engine/constants.h"
 #include "engine/engine.h"
 #include "engine/slog_engine.h"
 
-#define HLOG(l) LOG(l) << "SequencerConnection: "
-#define HPLOG(l) PLOG(l) << "SequencerConnection: "
-#define HVLOG(l) VLOG(l) << "SequencerConnection: "
+#define HLOG(l) LOG(l) << log_header_
+#define HPLOG(l) PLOG(l) << log_header_
+#define HVLOG(l) VLOG(l) << log_header_
 
 namespace faas {
 namespace engine {
@@ -16,9 +15,12 @@ namespace engine {
 using protocol::SequencerMessage;
 using protocol::SequencerMessageHelper;
 
-SequencerConnection::SequencerConnection(Engine* engine, SLogEngine* slog_engine, int sockfd)
-    : ConnectionBase(kSequencerConnectionTypeId),
-      engine_(engine), slog_engine_(slog_engine), state_(kCreated), sockfd_(sockfd) {}
+SequencerConnection::SequencerConnection(Engine* engine, SLogEngine* slog_engine,
+                                         uint16_t sequencer_id, int sockfd)
+    : ConnectionBase(type_id(sequencer_id)),
+      engine_(engine), slog_engine_(slog_engine), state_(kCreated),
+      sequencer_id_(sequencer_id), sockfd_(sockfd),
+      log_header_(fmt::format("SequencerConnection[{}]: ", sequencer_id)) {}
 
 SequencerConnection::~SequencerConnection() {
     DCHECK(state_ == kCreated || state_ == kClosed);
