@@ -17,6 +17,7 @@ Server::Server(uint16_t sequencer_id)
       event_loop_thread_("Server/EL", absl::bind_front(&Server::EventLoopThreadMain, this)),
       node_manager_(this),
       raft_(sequencer_id),
+      core_(sequencer_id),
       global_cut_timerfd_(io_utils::CreateTimerFd()) {
     UV_CHECK_OK(uv_loop_init(&uv_loop_));
     uv_loop_.data = &event_loop_thread_;
@@ -25,8 +26,29 @@ Server::Server(uint16_t sequencer_id)
     CHECK(global_cut_timerfd_ != -1);
     UV_CHECK_OK(uv_poll_init(&uv_loop_, &global_cut_timer_, global_cut_timerfd_));
     global_cut_timer_.data = this;
+    // Setup callbacks for SequencerCore
+    core_.SetRaftLeaderCallback([this] (uint16_t* leader_id) -> bool {
+        uint64_t id = raft_.GetLeader();
+        if (id == 0) {
+            return false;
+        }
+        *leader_id = gsl::narrow_cast<uint16_t>(id);
+        return true;
+    });
+    core_.SetRaftApplyCallback([this] (uint32_t seqnum, std::span<const char> payload) {
+        raft_.Apply(payload, [this, seqnum] (bool success) {
+            core_.OnRaftApplyFinished(seqnum, success);
+        });
+    });
     core_.SetSendFsmRecordsMessageCallback(
         absl::bind_front(&Server::SendFsmRecordsMessage, this));
+    // Setup callbacks for Raft
+    raft_.SetFsmApplyCallback(
+        absl::bind_front(&log::SequencerCore::RaftFsmApply, &core_));
+    raft_.SetFsmRestoreCallback(
+        absl::bind_front(&log::SequencerCore::RaftFsmRestore, &core_));
+    raft_.SetFsmSnapshotCallback(
+        absl::bind_front(&log::SequencerCore::RaftFsmSnapshot, &core_));
 }
 
 Server::~Server() {
@@ -96,7 +118,7 @@ void Server::OnRecvNodeMessage(uint16_t node_id, const SequencerMessage& message
             HLOG(ERROR) << "Failed to parse sequencer message!";
             return;
         }
-        core_.NewLocalCutMessage(message_proto);
+        core_.OnRecvLocalCutMessage(message_proto);
     } else {
         HLOG(ERROR) << fmt::format("Unknown message type: {}!", message.message_type);
     }
@@ -110,7 +132,7 @@ void Server::SendFsmRecordsMessage(uint16_t node_id, std::span<const char> data)
 }
 
 UV_POLL_CB_FOR_CLASS(Server, GlobalCutTimer) {
-    core_.MarkAndBroadcastGlobalCut();
+    core_.MarkGlobalCutIfNeeded();
 }
 
 UV_ASYNC_CB_FOR_CLASS(Server, Stop) {

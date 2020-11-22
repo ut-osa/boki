@@ -8,8 +8,9 @@
 namespace faas {
 namespace log {
 
-Fsm::Fsm()
-    : new_view_cb_([] (const View*) {}),
+Fsm::Fsm(uint16_t sequencer_id)
+    : sequencer_id_(sequencer_id),
+      new_view_cb_([] (const View*) {}),
       log_replicated_cb_([] (uint64_t, uint64_t, uint32_t) {}),
       next_record_seqnum_(0),
       next_log_seqnum_(0) {}
@@ -36,9 +37,10 @@ void Fsm::OnRecvRecord(const FsmRecordProto& record) {
     }
 }
 
-void Fsm::NewView(size_t replicas, const NodeVec& nodes, FsmRecordProto* record) {
+void Fsm::BuildNewViewRecord(size_t replicas, const NodeVec& nodes, FsmRecordProto* record) {
     record->Clear();
     record->set_seqnum(next_record_seqnum_);
+    record->set_sequencer_id(sequencer_id_);
     record->set_type(FsmRecordType::NEW_VIEW);
     NewViewRecordProto* new_view_record = record->mutable_new_view_record();
     new_view_record->set_view_id(next_view_id());
@@ -48,21 +50,22 @@ void Fsm::NewView(size_t replicas, const NodeVec& nodes, FsmRecordProto* record)
         node_proto->set_id(node.first);
         node_proto->set_addr(node.second);
     }
-    ApplyRecord(*record);
 }
 
-void Fsm::NewGlobalCut(const CutVec& cuts, FsmRecordProto* record) {
+void Fsm::BuildGlobalCutRecord(const CutVec& cuts, FsmRecordProto* record) {
     record->Clear();
     record->set_seqnum(next_record_seqnum_);
+    record->set_sequencer_id(sequencer_id_);
     record->set_type(FsmRecordType::GLOBAL_CUT);
     GlobalCutRecordProto* global_cut_record = record->mutable_global_cut_record();
     global_cut_record->set_start_seqnum(next_log_seqnum_);
-    global_cut_record->set_end_seqnum(protocol::kInvalidLogSeqNum);
     for (size_t i = 0; i < cuts.size(); i++) {
         global_cut_record->add_localid_cuts(cuts[i]);
     }
-    ApplyRecord(*record);
-    global_cut_record->set_end_seqnum(next_log_seqnum_);
+}
+
+bool Fsm::LogSeqNumToLocalId(uint64_t seqnum, uint64_t* localid) {
+    HLOG(FATAL) << "Not implemented";
 }
 
 void Fsm::ApplyRecord(const FsmRecordProto& record) {
@@ -124,10 +127,6 @@ void Fsm::ApplyGlobalCutRecord(const GlobalCutRecordProto& record) {
         } else if (start_localid > end_localid) {
             HLOG(FATAL) << "localid_cuts from GlobalCutRecordProto not increasing";
         }
-    }
-    if (record.end_seqnum() != protocol::kInvalidLogSeqNum
-            && next_log_seqnum_ != record.end_seqnum()) {
-        HLOG(FATAL) << "Inconsistent end_seqnum from GlobalCutRecordProto";
     }
 }
 

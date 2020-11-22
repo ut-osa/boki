@@ -84,13 +84,24 @@ void Raft::Start(uv_loop_t* uv_loop, std::string_view listen_address,
     state_ = kRunning;
 }
 
-bool Raft::IsLeader() const {
+uint64_t Raft::GetLeader() {
+    if (state_ != kRunning) {
+        HLOG(WARNING) << "Not in running state";
+        return 0;
+    } else {
+        raft_id leader_id;
+        const char* addr;
+        raft_leader(&raft_, &leader_id, &addr);
+        return uint64_t{leader_id};
+    }
+}
+
+bool Raft::IsLeader() {
     if (state_ != kRunning) {
         HLOG(WARNING) << "Not in running state";
         return false;
-    } else {
-        return raft_.state == RAFT_LEADER;
     }
+    return raft_state(&raft_) == RAFT_LEADER;
 }
 
 void Raft::Apply(std::span<const char> payload, ApplyCallback cb) {
@@ -166,6 +177,7 @@ int Raft::FsmApplyCallbackWrapper(struct raft_fsm* fsm,
     Raft* self = reinterpret_cast<Raft*>(fsm->data);
     std::span<const char> payload(reinterpret_cast<char*>(buf->base), buf->len);
     if (!self->fsm_apply_cb_(payload)) {
+        HLOG(ERROR) << "FsmApply failed";
         return RAFT_INVALID;
     }
     *result = nullptr;
@@ -177,18 +189,18 @@ int Raft::FsmSnapshotCallbackWrapper(struct raft_fsm* fsm,
     Raft* self = reinterpret_cast<Raft*>(fsm->data);
     std::string data;
     if (!self->fsm_snapshot_cb_(&data)) {
+        LOG(ERROR) << "FsmSnapshot failed";
         return RAFT_INVALID;
     }
     *n_bufs = 1;
     *bufs = (struct raft_buffer*) raft_malloc(sizeof(struct raft_buffer*));
     if (*bufs == NULL) {
-        return RAFT_NOMEM;
+        HLOG(FATAL) << "raft_malloc failed!";
     }
     (*bufs)[0].len = data.size();
     (*bufs)[0].base = raft_malloc(data.size());
     if ((*bufs)[0].base == NULL) {
-        raft_free(*bufs);
-        return RAFT_NOMEM;
+        HLOG(FATAL) << "raft_malloc failed!";
     }
     memcpy((*bufs)[0].base, data.data(), data.size());
     return 0;
@@ -199,6 +211,7 @@ int Raft::FsmRestoreCallbackWrapper(struct raft_fsm* fsm, struct raft_buffer* bu
     Raft* self = reinterpret_cast<Raft*>(fsm->data);
     std::span<const char> payload(reinterpret_cast<char*>(buf->base), buf->len);
     if (!self->fsm_restore_cb_(payload)) {
+        HLOG(ERROR) << "FsmRestore failed";
         return RAFT_INVALID;
     }
     return 0;

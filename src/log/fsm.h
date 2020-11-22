@@ -7,7 +7,7 @@ namespace log {
 
 class Fsm {
 public:
-    explicit Fsm();
+    explicit Fsm(uint16_t sequencer_id = 0);
     ~Fsm();
 
     class View;
@@ -32,20 +32,29 @@ public:
         }
     }
 
+    uint16_t next_view_id() const {
+        return gsl::narrow_cast<uint16_t>(views_.size());
+    }
+
     bool LogSeqNumToLocalId(uint64_t seqnum, uint64_t* localid);
 
-    // Called by followers
+    // ApplyRecord only works if records are applied in strict order
+    // Used in sequencers, where Raft guarantees the order 
+    void ApplyRecord(const FsmRecordProto& record);
+
+    // OnRecvRecord can handle out-of-order receiving of records
+    // Used in engines, where records are received from sequencers
     void OnRecvRecord(const FsmRecordProto& record);
 
-    // Called by the leader
     typedef std::vector<std::pair</* node_id */ uint16_t, /* addr */ std::string>> NodeVec;
-    void NewView(size_t replicas, const NodeVec& nodes, FsmRecordProto* record);
+    void BuildNewViewRecord(size_t replicas, const NodeVec& nodes, FsmRecordProto* record);
 
-    // Called by the leader
     typedef std::vector<uint32_t> CutVec;
-    void NewGlobalCut(const CutVec& cuts, FsmRecordProto* record);
+    void BuildGlobalCutRecord(const CutVec& cuts, FsmRecordProto* record);
 
 private:
+    uint16_t sequencer_id_;
+
     NewViewCallback       new_view_cb_;
     LogReplicatedCallback log_replicated_cb_;
 
@@ -62,11 +71,6 @@ private:
     };
     std::vector<std::unique_ptr<GlobalCut>> global_cuts_;
 
-    uint16_t next_view_id() const {
-        return gsl::narrow_cast<uint16_t>(views_.size());
-    }
-
-    void ApplyRecord(const FsmRecordProto& record);
     void ApplyNewViewRecord(const NewViewRecordProto& record);
     void ApplyGlobalCutRecord(const GlobalCutRecordProto& record);
 

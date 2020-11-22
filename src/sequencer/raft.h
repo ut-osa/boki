@@ -28,9 +28,9 @@ public:
     typedef std::vector<std::pair<uint64_t, std::string_view>> NodeVec;
     void Start(uv_loop_t* uv_loop, std::string_view listen_address,
                std::string_view data_dir, const NodeVec& all_nodes);
-    
 
-    bool IsLeader() const;
+    uint64_t GetLeader();
+    bool IsLeader();
 
     typedef std::function<void(bool /* success */)> ApplyCallback;
     void Apply(std::span<const char> payload, ApplyCallback cb);

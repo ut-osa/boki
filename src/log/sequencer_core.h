@@ -1,47 +1,69 @@
 #pragma once
 
+#include "utils/object_pool.h"
 #include "log/common.h"
 #include "log/fsm.h"
-
-#include <google/protobuf/arena.h>
 
 namespace faas {
 namespace log {
 
 class SequencerCore {
 public:
-    SequencerCore();
+    explicit SequencerCore(uint16_t sequencer_id);
     ~SequencerCore();
+
+    typedef std::function<bool(uint16_t* /* leader_id */)> RaftLeaderCallback;
+    void SetRaftLeaderCallback(RaftLeaderCallback cb);
+
+    typedef std::function<void(uint32_t /* seqnum */,
+                               std::span<const char> /* payload */)> RaftApplyCallback;
+    void SetRaftApplyCallback(RaftApplyCallback cb);
 
     typedef std::function<void(uint16_t /* node_id */, std::span<const char> /* data */)>
             SendFsmRecordsMessageCallback;
     void SetSendFsmRecordsMessageCallback(SendFsmRecordsMessageCallback cb);
 
     int global_cut_interval_us() const;
-    void MarkAndBroadcastGlobalCut();
-
-    void BuildGlobalCutMessage(LocalCutMsgProto* message);
+    void MarkGlobalCutIfNeeded();
 
     void OnNewNodeConnected(uint16_t node_id, std::string_view addr);
     void OnNodeDisconnected(uint16_t node_id);
+    void OnRecvLocalCutMessage(const LocalCutMsgProto& message);
+    void OnRaftApplyFinished(uint32_t seqnum, bool success);
 
-    void NewLocalCutMessage(const LocalCutMsgProto& message);
+    bool RaftFsmApply(std::span<const char> payload);
+    bool RaftFsmRestore(std::span<const char> payload);
+    bool RaftFsmSnapshot(std::string* data);
 
 private:
+    uint16_t sequencer_id_;
     Fsm fsm_;
     std::vector<FsmRecordProto*> fsm_records_;
-    google::protobuf::Arena protobuf_arena_;  // Used for FsmRecordProto
+    size_t fsm_apply_progress_;
+    utils::ProtobufMessagePool<FsmRecordProto> fsm_record_pool_;
 
+    RaftLeaderCallback            raft_leader_cb_;
+    RaftApplyCallback             raft_apply_cb_;
     SendFsmRecordsMessageCallback send_fsm_records_message_cb_;
 
     absl::flat_hash_map</* node_id */ uint16_t, /* addr */ std::string>
         conencted_nodes_;
 
     std::vector<uint32_t> local_cuts_;
-    bool local_cuts_changed_; // Since last global cut
     std::vector<uint32_t> global_cuts_;
 
+    bool new_view_pending_;
+
+    bool has_ongoing_fsm_record() { return fsm_apply_progress_ < fsm_records_.size(); }
+    bool is_raft_leader();
+
+    void BuildNewViewIfNeeded();
     void NewView();
+    
+    void RaftApplyRecord(FsmRecordProto* record);
+    void ApplyNewViewRecord(FsmRecordProto* record);
+    void ApplyGlobalCutRecord(FsmRecordProto* record);
+
     void SendAllFsmRecords(uint16_t node_id);
     void BroadcastFsmRecord(const Fsm::View* view, const FsmRecordProto& record);
 

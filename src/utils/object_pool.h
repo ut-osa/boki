@@ -6,6 +6,10 @@
 #include <absl/container/inlined_vector.h>
 #endif
 
+#ifdef __FAAS_SRC
+#include <google/protobuf/arena.h>
+#endif
+
 namespace faas {
 namespace utils {
 
@@ -51,6 +55,36 @@ private:
 
     DISALLOW_COPY_AND_ASSIGN(SimpleObjectPool);
 };
+
+#ifdef __FAAS_SRC
+
+template<class T>
+class ProtobufMessagePool {
+public:
+    ProtobufMessagePool() {}
+    ~ProtobufMessagePool() {}
+
+    T* Get() {
+        if (free_objs_.empty()) {
+            free_objs_.push_back(google::protobuf::Arena::CreateMessage<T>(&arena_));
+        }
+        T* obj = free_objs_.back();
+        free_objs_.pop_back();
+        return obj; 
+    }
+
+    void Return(T* obj) {
+        free_objs_.push_back(obj);
+    }
+
+private:
+    google::protobuf::Arena arena_;
+    absl::InlinedVector<T*, 16> free_objs_;
+
+    DISALLOW_COPY_AND_ASSIGN(ProtobufMessagePool);
+};
+
+#endif  // __FAAS_SRC
 
 }  // namespace utils
 }  // namespace faas

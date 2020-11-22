@@ -24,15 +24,15 @@ message NewViewRecordProto {
 
 message GlobalCutRecordProto {
     uint64 start_seqnum = 1;
-    uint64 end_seqnum = 2;
-    repeated uint32 localid_cuts = 3;
+    repeated uint32 localid_cuts = 2;
 }
 
 message FsmRecordProto {
-    uint32 seqnum = 1;
-    FsmRecordType type = 2;
-    NewViewRecordProto new_view_record = 3;
-    GlobalCutRecordProto global_cut_record = 4;
+    uint32 seqnum = 1; 
+    uint32 sequencer_id = 2;
+    FsmRecordType type = 3;
+    NewViewRecordProto new_view_record = 4;
+    GlobalCutRecordProto global_cut_record = 5;
 }
 
 message LocalCutMsgProto {

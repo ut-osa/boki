@@ -10,10 +10,21 @@ namespace log {
 
 using google::protobuf::Arena;
 
-SequencerCore::SequencerCore()
-    : local_cuts_changed_(false) {}
+SequencerCore::SequencerCore(uint16_t sequencer_id)
+    : sequencer_id_(sequencer_id),
+      fsm_(sequencer_id),
+      fsm_apply_progress_(0),
+      new_view_pending_(false) {}
 
 SequencerCore::~SequencerCore() {}
+
+void SequencerCore::SetRaftLeaderCallback(RaftLeaderCallback cb) {
+    raft_leader_cb_ = cb;
+}
+
+void SequencerCore::SetRaftApplyCallback(RaftApplyCallback cb) {
+    raft_apply_cb_ = cb;
+}
 
 void SequencerCore::SetSendFsmRecordsMessageCallback(SendFsmRecordsMessageCallback cb) {
     send_fsm_records_message_cb_ = cb;
@@ -31,7 +42,7 @@ void SequencerCore::OnNewNodeConnected(uint16_t node_id, std::string_view addr) 
     HLOG(INFO) << fmt::format("Node {} connected with address {}", node_id, addr);
     conencted_nodes_[node_id] = std::string(addr);
     SendAllFsmRecords(node_id);
-    NewView();
+    BuildNewViewIfNeeded();
 }
 
 void SequencerCore::OnNodeDisconnected(uint16_t node_id) {
@@ -41,10 +52,10 @@ void SequencerCore::OnNodeDisconnected(uint16_t node_id) {
     }
     HLOG(INFO) << fmt::format("Node {} disconnected", node_id);
     conencted_nodes_.erase(node_id);
-    NewView();
+    BuildNewViewIfNeeded();
 }
 
-void SequencerCore::NewLocalCutMessage(const LocalCutMsgProto& message) {
+void SequencerCore::OnRecvLocalCutMessage(const LocalCutMsgProto& message) {
     const Fsm::View* view = fsm_.current_view();
     if (message.view_id() < view->id()) {
         // Outdated message, can safely discard
@@ -84,30 +95,38 @@ void SequencerCore::NewLocalCutMessage(const LocalCutMsgProto& message) {
         for (size_t i = 0; i < view->replicas(); i++) {
             local_cuts_[node_idx * view->replicas() + i] = message.localid_cuts(i);
         }
-        local_cuts_changed_ = true;
         HVLOG(1) << "Local cut changed";
     }
 }
 
+void SequencerCore::BuildNewViewIfNeeded() {
+    if (!is_raft_leader() || new_view_pending_) {
+        return;
+    }
+    if (has_ongoing_fsm_record()) {
+        new_view_pending_ = true;
+    } else {
+        NewView();
+    }
+}
+
 void SequencerCore::NewView() {
+    DCHECK(is_raft_leader());
+    DCHECK(!has_ongoing_fsm_record());
+    new_view_pending_ = false;
     size_t replicas = absl::GetFlag(FLAGS_slog_num_replicas);
     if (conencted_nodes_.size() < replicas) {
         HLOG(WARNING) << fmt::format("Connected nodes less than replicas {}", replicas);
         return;
     }
-    FsmRecordProto* record = Arena::CreateMessage<FsmRecordProto>(&protobuf_arena_);
+    FsmRecordProto* record = fsm_record_pool_.Get();
     Fsm::NodeVec node_vec(conencted_nodes_.begin(), conencted_nodes_.end());
-    fsm_.NewView(replicas, node_vec, record);
-    fsm_records_.push_back(record);
-    const Fsm::View* view = fsm_.current_view();
-    local_cuts_.assign(view->num_nodes() * view->replicas(), 0);
-    local_cuts_changed_ = false;
-    global_cuts_.assign(view->num_nodes(), 0);
-    BroadcastFsmRecord(view, *record);
+    fsm_.BuildNewViewRecord(replicas, node_vec, record);
+    RaftApplyRecord(record);
 }
 
-void SequencerCore::MarkAndBroadcastGlobalCut() {
-    if (!local_cuts_changed_) {
+void SequencerCore::MarkGlobalCutIfNeeded() {
+    if (!is_raft_leader() || has_ongoing_fsm_record() || new_view_pending_) {
         return;
     }
     const Fsm::View* view = fsm_.current_view();
@@ -133,14 +152,24 @@ void SequencerCore::MarkAndBroadcastGlobalCut() {
         return;
     }
     HVLOG(1) << "Apply and broadcast new global cut";
-    FsmRecordProto* record = Arena::CreateMessage<FsmRecordProto>(&protobuf_arena_);
-    fsm_.NewGlobalCut(cuts, record);
-    local_cuts_changed_ = false;
-    global_cuts_ = std::move(cuts);
-    BroadcastFsmRecord(view, *record);
+    FsmRecordProto* record = fsm_record_pool_.Get();
+    fsm_.BuildGlobalCutRecord(cuts, record);
+    RaftApplyRecord(record);
+}
+
+bool SequencerCore::is_raft_leader() {
+    uint16_t leader_id;
+    if (!raft_leader_cb_(&leader_id)) {
+        return false;
+    }
+    return leader_id == sequencer_id_;
 }
 
 void SequencerCore::SendAllFsmRecords(uint16_t node_id) {
+    if (!is_raft_leader()) {
+        // Well, now only the leader is responsible for broadcasting records
+        return;
+    }
     FsmRecordsMsgProto message;
     for (const FsmRecordProto* record : fsm_records_) {
         message.add_records()->CopyFrom(*record);
@@ -151,6 +180,10 @@ void SequencerCore::SendAllFsmRecords(uint16_t node_id) {
 }
 
 void SequencerCore::BroadcastFsmRecord(const Fsm::View* view, const FsmRecordProto& record) {
+    if (!is_raft_leader()) {
+        // Well, now only the leader is responsible for broadcasting records
+        return;
+    }
     FsmRecordsMsgProto message;
     message.add_records()->CopyFrom(record);
     std::string serialized_message;
@@ -158,6 +191,92 @@ void SequencerCore::BroadcastFsmRecord(const Fsm::View* view, const FsmRecordPro
     for (size_t i = 0; i < view->num_nodes(); i++) {
         send_fsm_records_message_cb_(view->node(i), serialized_message);
     }
+}
+
+void SequencerCore::RaftApplyRecord(FsmRecordProto* record) {
+    DCHECK_EQ(fsm_records_.size(), size_t{record->seqnum()});
+    fsm_records_.push_back(record);
+    std::string serialized_record;
+    record->SerializeToString(&serialized_record);
+    std::span<const char> payload(serialized_record.data(), serialized_record.size());
+    raft_apply_cb_(record->seqnum(), payload);
+}
+
+void SequencerCore::OnRaftApplyFinished(uint32_t seqnum, bool success) {
+    if (success) {
+        DCHECK_EQ(fsm_apply_progress_, size_t{seqnum + 1});
+    } else {
+        HLOG(WARNING) << "Failed to apply log to Raft, will remove uncommited records";
+        while (fsm_records_.size() > fsm_apply_progress_) {
+            fsm_record_pool_.Return(fsm_records_.back());
+            fsm_records_.pop_back();
+        }
+    }
+    if (is_raft_leader() && !has_ongoing_fsm_record() && new_view_pending_) {
+        NewView();  // will clear new_view_pending_
+    }
+}
+
+void SequencerCore::ApplyNewViewRecord(FsmRecordProto* record) {
+    fsm_.ApplyRecord(*record);
+    const NewViewRecordProto& new_view_record = record->new_view_record();
+    const Fsm::View* view = fsm_.current_view();
+    DCHECK_EQ(view->id(), gsl::narrow_cast<uint16_t>(new_view_record.view_id()));
+    local_cuts_.assign(view->num_nodes() * view->replicas(), 0);
+    global_cuts_.assign(view->num_nodes(), 0);
+    BroadcastFsmRecord(view, *record);
+}
+
+void SequencerCore::ApplyGlobalCutRecord(FsmRecordProto* record) {
+    fsm_.ApplyRecord(*record);
+    const GlobalCutRecordProto& global_cut_record = record->global_cut_record();
+    const Fsm::View* view = fsm_.current_view();
+    DCHECK_EQ(view->id(), SeqNumToViewId(global_cut_record.start_seqnum()));
+    DCHECK_EQ(view->num_nodes(), gsl::narrow_cast<size_t>(global_cut_record.localid_cuts_size()));
+    DCHECK_EQ(view->num_nodes(), global_cuts_.size());
+    for (size_t i = 0; i < view->num_nodes(); i++) {
+        global_cuts_[i] = global_cut_record.localid_cuts(i);
+    }
+    BroadcastFsmRecord(view, *record);
+}
+
+bool SequencerCore::RaftFsmApply(std::span<const char> payload) {
+    FsmRecordProto* record = fsm_record_pool_.Get();
+    if (!record->ParseFromArray(payload.data(), payload.size())) {
+        fsm_record_pool_.Return(record);
+        return false;
+    }
+    if (record->seqnum() != fsm_apply_progress_) {
+        HLOG(ERROR) << "Inconsistent seqnum from the new record";
+        fsm_record_pool_.Return(record);
+        return false;
+    }
+    switch (record->type()) {
+    case FsmRecordType::NEW_VIEW:
+        ApplyNewViewRecord(record);
+        break;
+    case FsmRecordType::GLOBAL_CUT:
+        ApplyGlobalCutRecord(record);
+        break;
+    default:
+        HLOG(FATAL) << "Unknown record type";
+    }
+    fsm_apply_progress_++;
+    if (record->sequencer_id() == sequencer_id_) {
+        fsm_record_pool_.Return(record);
+    } else {
+        fsm_records_.push_back(record);
+        DCHECK_EQ(fsm_records_.size(), fsm_apply_progress_);
+    }
+    return true;
+}
+
+bool SequencerCore::RaftFsmRestore(std::span<const char> payload) {
+    HLOG(FATAL) << "Not implemented";
+}
+
+bool SequencerCore::RaftFsmSnapshot(std::string* data) {
+    HLOG(FATAL) << "Not implemented";
 }
 
 }  // namespace log
