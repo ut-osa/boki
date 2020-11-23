@@ -31,9 +31,9 @@ public:
     void OnRecvLocalCutMessage(const LocalCutMsgProto& message);
     void OnRaftApplyFinished(uint32_t seqnum, bool success);
 
-    bool RaftFsmApply(std::span<const char> payload);
-    bool RaftFsmRestore(std::span<const char> payload);
-    bool RaftFsmSnapshot(std::string* data);
+    bool RaftFsmApplyCallback(std::span<const char> payload);
+    bool RaftFsmRestoreCallback(std::span<const char> payload);
+    bool RaftFsmSnapshotCallback(std::string* data);
 
 private:
     uint16_t sequencer_id_;

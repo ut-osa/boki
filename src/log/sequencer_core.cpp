@@ -100,6 +100,7 @@ void SequencerCore::OnRecvLocalCutMessage(const LocalCutMsgProto& message) {
 }
 
 void SequencerCore::BuildNewViewIfNeeded() {
+    HVLOG(1) << "is_raft_leader=" << is_raft_leader();
     if (!is_raft_leader() || new_view_pending_) {
         return;
     }
@@ -130,7 +131,9 @@ void SequencerCore::MarkGlobalCutIfNeeded() {
         return;
     }
     const Fsm::View* view = fsm_.current_view();
-    DCHECK(view != nullptr);
+    if (view == nullptr) {
+        return;
+    }
     std::vector<uint32_t> cuts(view->num_nodes(), std::numeric_limits<uint32_t>::max());
     for (size_t i = 0; i < view->num_nodes(); i++) {
         for (size_t j = 0; j < view->replicas(); j++) {
@@ -240,9 +243,11 @@ void SequencerCore::ApplyGlobalCutRecord(FsmRecordProto* record) {
     BroadcastFsmRecord(view, *record);
 }
 
-bool SequencerCore::RaftFsmApply(std::span<const char> payload) {
+bool SequencerCore::RaftFsmApplyCallback(std::span<const char> payload) {
+    HVLOG(1) << "RaftFsmApplyCallback";
     FsmRecordProto* record = fsm_record_pool_.Get();
     if (!record->ParseFromArray(payload.data(), payload.size())) {
+        HLOG(ERROR) << "Failed to parse new Fsm record";
         fsm_record_pool_.Return(record);
         return false;
     }
@@ -271,11 +276,11 @@ bool SequencerCore::RaftFsmApply(std::span<const char> payload) {
     return true;
 }
 
-bool SequencerCore::RaftFsmRestore(std::span<const char> payload) {
+bool SequencerCore::RaftFsmRestoreCallback(std::span<const char> payload) {
     HLOG(FATAL) << "Not implemented";
 }
 
-bool SequencerCore::RaftFsmSnapshot(std::string* data) {
+bool SequencerCore::RaftFsmSnapshotCallback(std::string* data) {
     HLOG(FATAL) << "Not implemented";
 }
 

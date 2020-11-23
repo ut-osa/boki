@@ -55,18 +55,14 @@ void Raft::Start(uv_loop_t* uv_loop, std::string_view listen_address,
     DCHECK(state_ == kCreated);
     listen_address_ = std::string(listen_address);
     data_dir_ = std::string(data_dir);
-    all_nodes_.clear();
-    for (const auto& entry : all_nodes) {
-        all_nodes_[entry.first] = std::string(entry.second);
-    }
-    DCHECK(all_nodes_.contains(id_));
 
     RAFT_DCHECK_OK(raft_uv_tcp_init(&transport_, uv_loop));
     RAFT_DCHECK_OK(raft_uv_init(&raft_io_, uv_loop, data_dir_.c_str(), &transport_));
     RAFT_DCHECK_OK(raft_init(&raft_, &raft_io_, &raft_fsm_, id_, listen_address_.c_str()));
 
     struct raft_configuration configuration;
-    for (const auto& entry : all_nodes_) {
+    raft_configuration_init(&configuration);
+    for (const auto& entry : all_nodes) {
         RAFT_DCHECK_OK(raft_configuration_add(
             &configuration, /* id= */ entry.first,
             /* address= */ entry.second.c_str(), RAFT_VOTER));
@@ -117,9 +113,9 @@ void Raft::Apply(std::span<const char> payload, ApplyCallback cb) {
     struct raft_apply* req = apply_req_pool_.Get();
     req->data = this;
     struct raft_buffer buf;
-    buf.len = payload.size();
-    buf.base = raft_malloc(buf.len);
-    memcpy(buf.base, payload.data(), buf.len);
+    if (!EncodeToRaftBuffer(payload, &buf)) {
+        HLOG(FATAL) << "EncodeToRaftBuffer failed";
+    }
     int ret = raft_apply(&raft_, req, &buf, 1, Raft::ApplyCallbackWrapper);
     if (ret != 0) {
         HLOG(ERROR) << "raft_apply failed with error: " << raft_strerror(ret);
@@ -175,8 +171,7 @@ void Raft::OnRaftClosed() {
 int Raft::FsmApplyCallbackWrapper(struct raft_fsm* fsm,
                                   const struct raft_buffer* buf, void** result) {
     Raft* self = reinterpret_cast<Raft*>(fsm->data);
-    std::span<const char> payload(reinterpret_cast<char*>(buf->base), buf->len);
-    if (!self->fsm_apply_cb_(payload)) {
+    if (!self->fsm_apply_cb_(DecodeFromRaftBuffer(buf))) {
         HLOG(ERROR) << "FsmApply failed";
         return RAFT_INVALID;
     }
@@ -231,6 +226,34 @@ void Raft::TransferCallbackWrapper(struct raft_transfer* req) {
 void Raft::CloseCallbackWrapper(struct raft* raft) {
     Raft* self = reinterpret_cast<Raft*>(raft->data);
     self->OnRaftClosed();
+}
+
+bool Raft::EncodeToRaftBuffer(std::span<const char> data, struct raft_buffer* buf) {
+    size_t data_size = data.size();
+    size_t buf_len = sizeof(size_t) + data_size;
+    // Align to 8 bytes
+    if (buf_len % 8 != 0) {
+        buf_len = (buf_len / 8 + 1) * 8;
+    }
+    char* ptr = reinterpret_cast<char*>(raft_malloc(buf_len));
+    if (ptr == nullptr) {
+        HLOG(ERROR) << "raft_malloc failed";
+        return false;
+    }
+    memcpy(ptr, &data_size, sizeof(size_t));
+    memcpy(ptr + sizeof(size_t), data.data(), data_size);
+    buf->base = ptr;
+    buf->len = buf_len;
+    return true;
+}
+
+std::span<const char> Raft::DecodeFromRaftBuffer(const struct raft_buffer* buf) {
+    DCHECK(buf->len >= sizeof(size_t));
+    size_t data_size;
+    memcpy(&data_size, buf->base, sizeof(size_t));
+    DCHECK(buf->len >= sizeof(size_t) + data_size);
+    const char* data_base = reinterpret_cast<const char*>(buf->base) + sizeof(size_t);
+    return std::span<const char>(data_base, data_size);
 }
 
 }  // namespace sequencer

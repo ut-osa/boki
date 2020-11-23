@@ -1,6 +1,7 @@
 #include "sequencer/server.h"
 
 #include "utils/io.h"
+#include "utils/fs.h"
 
 #define HLOG(l) LOG(l) << "Server: "
 #define HVLOG(l) VLOG(l) << "Server: "
@@ -44,18 +45,17 @@ Server::Server(uint16_t sequencer_id)
         absl::bind_front(&Server::SendFsmRecordsMessage, this));
     // Setup callbacks for Raft
     raft_.SetFsmApplyCallback(
-        absl::bind_front(&log::SequencerCore::RaftFsmApply, &core_));
+        absl::bind_front(&log::SequencerCore::RaftFsmApplyCallback, &core_));
     raft_.SetFsmRestoreCallback(
-        absl::bind_front(&log::SequencerCore::RaftFsmRestore, &core_));
+        absl::bind_front(&log::SequencerCore::RaftFsmRestoreCallback, &core_));
     raft_.SetFsmSnapshotCallback(
-        absl::bind_front(&log::SequencerCore::RaftFsmSnapshot, &core_));
+        absl::bind_front(&log::SequencerCore::RaftFsmSnapshotCallback, &core_));
 }
 
 Server::~Server() {
     State state = state_.load();
     DCHECK(state == kCreated || state == kStopped);
     UV_CHECK_OK(uv_loop_close(&uv_loop_));
-    PCHECK(close(global_cut_timerfd_));
 }
 
 void Server::Start() {
@@ -67,10 +67,15 @@ void Server::Start() {
     }
     node_manager_.Start(&uv_loop_, address_, myself->engine_conn_port);
     std::string raft_addr(fmt::format("{}:{}", address_, myself->raft_port));
-    std::vector<std::pair<uint64_t, std::string_view>> peers;
+    std::vector<std::pair<uint64_t, std::string>> peers;
     config_.ForEachPeer([&peers] (const SequencerConfig::Peer* peer) {
-        peers.push_back(std::make_pair(uint64_t{peer->id}, std::string_view(peer->host_addr)));
+        peers.push_back(std::make_pair(uint64_t{peer->id},
+                                       fmt::format("{}:{}", peer->host_addr, peer->raft_port)));
     });
+    if (fs_utils::IsDirectory(raft_data_dir_)) {
+        PCHECK(fs_utils::RemoveDirectoryRecursively(raft_data_dir_));
+    }
+    PCHECK(fs_utils::MakeDirectory(raft_data_dir_));
     raft_.Start(&uv_loop_, raft_addr, raft_data_dir_, peers);
     CHECK(io_utils::SetupTimerFd(global_cut_timerfd_, 0, core_.global_cut_interval_us()));
     UV_CHECK_OK(uv_poll_start(&global_cut_timer_, UV_READABLE, &Server::GlobalCutTimerCallback));
@@ -142,6 +147,7 @@ UV_ASYNC_CB_FOR_CLASS(Server, Stop) {
     }
     HLOG(INFO) << "Start stopping process";
     node_manager_.ScheduleStop();
+    raft_.ScheduleClose();
     uv_close(UV_AS_HANDLE(&stop_event_), nullptr);
     uv_close(UV_AS_HANDLE(&global_cut_timer_), nullptr);
     state_.store(kStopping);

@@ -25,7 +25,7 @@ public:
     typedef std::function<bool(std::string* /* data */)> FsmSnapshotCallback;
     void SetFsmSnapshotCallback(FsmSnapshotCallback cb);
 
-    typedef std::vector<std::pair<uint64_t, std::string_view>> NodeVec;
+    typedef std::vector<std::pair<uint64_t, std::string>> NodeVec;
     void Start(uv_loop_t* uv_loop, std::string_view listen_address,
                std::string_view data_dir, const NodeVec& all_nodes);
 
@@ -55,7 +55,6 @@ private:
 
     std::string listen_address_;
     std::string data_dir_;
-    absl::flat_hash_map<uint64_t, std::string> all_nodes_;
 
     utils::SimpleObjectPool<struct raft_apply> apply_req_pool_;
     absl::flat_hash_map<struct raft_apply*, ApplyCallback> apply_cbs_;
@@ -72,6 +71,9 @@ private:
     static void ApplyCallbackWrapper(struct raft_apply* req, int status, void* result);
     static void TransferCallbackWrapper(struct raft_transfer* req);
     static void CloseCallbackWrapper(struct raft* raft);
+
+    static bool EncodeToRaftBuffer(std::span<const char> data, struct raft_buffer* buf);
+    static std::span<const char> DecodeFromRaftBuffer(const struct raft_buffer* buf);
 
     DISALLOW_COPY_AND_ASSIGN(Raft);
 };
