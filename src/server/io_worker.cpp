@@ -1,8 +1,5 @@
 #include "server/io_worker.h"
 
-#define HLOG(l) LOG(l) << log_header_
-#define HVLOG(l) VLOG(l) << log_header_
-
 namespace faas {
 namespace server {
 

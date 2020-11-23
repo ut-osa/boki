@@ -3,8 +3,7 @@
 #include "common/time.h"
 #include "log/flags.h"
 
-#define HLOG(l) LOG(l) << "LogEngineCore: "
-#define HVLOG(l) VLOG(l) << "LogEngineCore: "
+#define log_header_ "LogEngineCore: "
 
 namespace faas {
 namespace log {

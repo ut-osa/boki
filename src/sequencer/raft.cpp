@@ -2,8 +2,7 @@
 
 #include "sequencer/flags.h"
 
-#define HLOG(l) LOG(l) << "Raft: "
-#define HVLOG(l) VLOG(l) << "Raft: "
+#define log_header_ "Raft: "
 
 #define RAFT_CHECK_OK(RAFT_CALL)                            \
     do {                                                    \

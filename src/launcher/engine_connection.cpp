@@ -5,8 +5,7 @@
 #include "utils/socket.h"
 #include "utils/env_variables.h"
 
-#define HLOG(l) LOG(l) << "EngineConnection: "
-#define HVLOG(l) VLOG(l) << "EngineConnection: "
+#define log_header_ "EngineConnection: "
 
 namespace faas {
 namespace launcher {

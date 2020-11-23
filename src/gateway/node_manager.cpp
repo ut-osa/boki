@@ -3,8 +3,7 @@
 #include "gateway/flags.h"
 #include "gateway/server.h"
 
-#define HLOG(l) LOG(l) << "NodeManager: "
-#define HVLOG(l) VLOG(l) << "NodeManager: "
+#define log_header_ "NodeManager: "
 
 namespace faas {
 namespace gateway {

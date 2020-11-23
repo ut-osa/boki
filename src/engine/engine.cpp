@@ -12,8 +12,7 @@
 #include "engine/constants.h"
 #include "engine/sequencer_connection.h"
 
-#define HLOG(l) LOG(l) << "Engine: "
-#define HVLOG(l) VLOG(l) << "Engine: "
+#define log_header_ "Engine: "
 
 namespace faas {
 namespace engine {

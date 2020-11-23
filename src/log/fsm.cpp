@@ -2,8 +2,7 @@
 
 #include "common/protocol.h"
 
-#define HLOG(l) LOG(l) << "LogFsm: "
-#define HVLOG(l) VLOG(l) << "LogFsm: "
+#define log_header_ "LogFsm: "
 
 namespace faas {
 namespace log {

@@ -3,8 +3,7 @@
 #include "utils/io.h"
 #include "utils/fs.h"
 
-#define HLOG(l) LOG(l) << "Server: "
-#define HVLOG(l) VLOG(l) << "Server: "
+#define log_header_ "Server: "
 
 namespace faas {
 namespace sequencer {

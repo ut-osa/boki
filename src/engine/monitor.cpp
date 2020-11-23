@@ -7,8 +7,7 @@
 
 #include <sys/timerfd.h>
 
-#define HLOG(l) LOG(l) << "Monitor: "
-#define HVLOG(l) VLOG(l) << "Monitor: "
+#define log_header_ "Monitor: "
 
 namespace faas {
 namespace engine {

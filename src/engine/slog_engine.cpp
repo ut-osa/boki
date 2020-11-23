@@ -6,8 +6,7 @@
 #include "engine/sequencer_connection.h"
 #include "engine/engine.h"
 
-#define HLOG(l) LOG(l) << "SLogEngine: "
-#define HVLOG(l) VLOG(l) << "SLogEngine: "
+#define log_header_ "SLogEngine: "
 
 namespace faas {
 namespace engine {

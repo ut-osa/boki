@@ -2,8 +2,7 @@
 
 #include "log/flags.h"
 
-#define HLOG(l) LOG(l) << "SequencerCore: "
-#define HVLOG(l) VLOG(l) << "SequencerCore: "
+#define log_header_ "SequencerCore: "
 
 namespace faas {
 namespace log {

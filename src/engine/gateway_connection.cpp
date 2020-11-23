@@ -5,10 +5,6 @@
 #include "engine/constants.h"
 #include "engine/engine.h"
 
-#define HLOG(l) LOG(l) << log_header_
-#define HPLOG(l) PLOG(l) << log_header_
-#define HVLOG(l) VLOG(l) << log_header_
-
 namespace faas {
 namespace engine {
 

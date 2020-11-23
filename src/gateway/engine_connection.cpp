@@ -3,9 +3,6 @@
 #include "gateway/flags.h"
 #include "gateway/server.h"
 
-#define HLOG(l) LOG(l) << log_header_
-#define HVLOG(l) VLOG(l) << log_header_
-
 namespace faas {
 namespace gateway {
 

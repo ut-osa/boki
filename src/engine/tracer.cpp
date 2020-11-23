@@ -4,8 +4,7 @@
 #include "engine/engine.h"
 #include "engine/worker_manager.h"
 
-#define HLOG(l) LOG(l) << "Tracer: "
-#define HVLOG(l) VLOG(l) << "Tracer: "
+#define log_header_ "Tracer: "
 
 namespace faas {
 namespace engine {

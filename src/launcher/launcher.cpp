@@ -5,8 +5,7 @@
 #include "utils/fs.h"
 #include "utils/docker.h"
 
-#define HLOG(l) LOG(l) << "Launcher: "
-#define HVLOG(l) VLOG(l) << "Launcher: "
+#define log_header_ "Launcher: "
 
 namespace faas {
 namespace launcher {

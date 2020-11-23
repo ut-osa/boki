@@ -1,7 +1,6 @@
 #include "server/server_base.h"
 
-#define HLOG(l) LOG(l) << "Server: "
-#define HVLOG(l) VLOG(l) << "Server: "
+#define log_header_ "Server: "
 
 namespace faas {
 namespace server {

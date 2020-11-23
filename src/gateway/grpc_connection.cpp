@@ -6,9 +6,6 @@
 
 #include <arpa/inet.h>
 
-#define HLOG(l) LOG(l) << log_header_
-#define HVLOG(l) VLOG(l) << log_header_
-
 #define H2_CHECK_OK(NGHTTP2_CALL)                          \
     do {                                                   \
         int ret = NGHTTP2_CALL;                            \

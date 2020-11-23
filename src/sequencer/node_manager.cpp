@@ -4,9 +4,6 @@
 #include "utils/appendable_buffer.h"
 #include "sequencer/server.h"
 
-#define HLOG(l) LOG(l) << log_header_
-#define HVLOG(l) VLOG(l) << log_header_
-
 namespace faas {
 namespace sequencer {
 

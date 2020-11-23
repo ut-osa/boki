@@ -1,7 +1,6 @@
 #include "common/subprocess.h"
 
-#define HLOG(l) LOG(l) << "Subprocess: "
-#define HVLOG(l) VLOG(l) << "Subprocess: "
+#define log_header_ "Subprocess: "
 
 namespace faas {
 namespace uv {
