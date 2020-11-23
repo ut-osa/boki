@@ -1,5 +1,7 @@
 #include "sequencer/raft.h"
 
+#include "sequencer/flags.h"
+
 #define HLOG(l) LOG(l) << "Raft: "
 #define HVLOG(l) VLOG(l) << "Raft: "
 
@@ -70,10 +72,11 @@ void Raft::Start(uv_loop_t* uv_loop, std::string_view listen_address,
     RAFT_DCHECK_OK(raft_bootstrap(&raft_, &configuration));
     raft_configuration_close(&configuration);
 
-    // TODO: investigate these parameters
-    raft_set_snapshot_threshold(&raft_, 64);
-    raft_set_snapshot_trailing(&raft_, 16);
-    raft_set_pre_vote(&raft_, true);
+    raft_set_election_timeout(&raft_, absl::GetFlag(FLAGS_raft_election_timeout_ms));
+    raft_set_heartbeat_timeout(&raft_, absl::GetFlag(FLAGS_raft_heartbeat_timeout_ms));
+    raft_set_snapshot_threshold(&raft_, absl::GetFlag(FLAGS_raft_snapshot_threshold));
+    raft_set_snapshot_trailing(&raft_, absl::GetFlag(FLAGS_raft_snapshot_trailing));
+    raft_set_pre_vote(&raft_, absl::GetFlag(FLAGS_raft_pre_vote));
 
     HLOG(INFO) << fmt::format("Raft voter started with id {}", id_);
     RAFT_DCHECK_OK(raft_start(&raft_));
