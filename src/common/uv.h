@@ -255,6 +255,28 @@ private:
     DISALLOW_COPY_AND_ASSIGN(HandleScope);
 };
 
+class Timer : public Base {
+public:
+    Timer();
+    ~Timer();
+
+    void Init(uv_loop_t* loop, std::function<void(Timer*)> callback);
+    void Close();
+
+    void ExpireIn(absl::Duration duration);
+    void StochasticExpireIn(absl::Duration duration);  // Poisson process
+    void PeriodicExpire(absl::Duration interval);
+
+private:
+    int timerfd_;
+    uv_poll_t uv_handle_;
+    std::function<void(Timer*)> cb_;
+
+    DECLARE_UV_POLL_CB_FOR_CLASS(Expired);
+
+    DISALLOW_COPY_AND_ASSIGN(Timer);
+};
+
 }  // namespace uv
 }  // namespace faas
 

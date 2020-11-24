@@ -33,6 +33,7 @@ Raft::Raft(uint64_t id)
     raft_fsm_.apply = &Raft::FsmApplyCallbackWrapper;
     raft_fsm_.snapshot = &Raft::FsmSnapshotCallbackWrapper;
     raft_fsm_.restore = &Raft::FsmRestoreCallbackWrapper;
+    transfer_req_.data = nullptr;
 }
 
 Raft::~Raft() {
@@ -129,6 +130,21 @@ void Raft::Apply(std::span<const char> payload, ApplyCallback cb) {
     apply_cbs_[req] = cb;
 }
 
+bool Raft::GiveUpLeadership(uint64_t next_leader) {
+    if (!IsLeader() || transfer_req_.data != nullptr) {
+        return false;
+    }
+    if (next_leader == 0) {
+        HLOG(INFO) << "Give up leadership, the new leader will be selected automatically";
+    } else {
+        HLOG(INFO) << fmt::format("Transfer leadership to voter {}", next_leader);
+    }
+    transfer_req_.data = this;
+    RAFT_DCHECK_OK(raft_transfer(&raft_, &transfer_req_, next_leader,
+                                 &Raft::TransferCallbackWrapper));
+    return true;
+}
+
 void Raft::ScheduleClose() {
     if (state_ == kClosing) {
         HLOG(WARNING) << "Already scheduled for closing";
@@ -137,9 +153,7 @@ void Raft::ScheduleClose() {
     DCHECK(state_ == kRunning);
     state_ = kClosing;
     if (IsLeader()) {
-        transfer_req_.data = this;
-        RAFT_DCHECK_OK(raft_transfer(&raft_, &transfer_req_, 0,
-                                     &Raft::TransferCallbackWrapper));
+        GiveUpLeadership();
     } else {
         raft_close(&raft_, &Raft::CloseCallbackWrapper);
     }
@@ -159,6 +173,8 @@ void Raft::OnApplyFinished(struct raft_apply* req, int status) {
 }
 
 void Raft::OnLeadershipTransferred() {
+    HLOG(INFO) << "Leadership transferred";
+    transfer_req_.data = nullptr;
     if (state_ == kClosing) {
         raft_close(&raft_, &Raft::CloseCallbackWrapper);
     }
@@ -174,8 +190,7 @@ int Raft::FsmApplyCallbackWrapper(struct raft_fsm* fsm,
                                   const struct raft_buffer* buf, void** result) {
     Raft* self = reinterpret_cast<Raft*>(fsm->data);
     if (!self->fsm_apply_cb_(DecodeFromRaftBuffer(buf))) {
-        HLOG(ERROR) << "FsmApply failed";
-        return RAFT_INVALID;
+        HLOG(FATAL) << "FsmApply failed";
     }
     *result = nullptr;
     return 0;
@@ -186,8 +201,7 @@ int Raft::FsmSnapshotCallbackWrapper(struct raft_fsm* fsm,
     Raft* self = reinterpret_cast<Raft*>(fsm->data);
     std::string data;
     if (!self->fsm_snapshot_cb_(&data)) {
-        LOG(ERROR) << "FsmSnapshot failed";
-        return RAFT_INVALID;
+        HLOG(FATAL) << "FsmSnapshot failed";
     }
     *n_bufs = 1;
     *bufs = (struct raft_buffer*) raft_malloc(sizeof(struct raft_buffer*));
@@ -208,8 +222,7 @@ int Raft::FsmRestoreCallbackWrapper(struct raft_fsm* fsm, struct raft_buffer* bu
     Raft* self = reinterpret_cast<Raft*>(fsm->data);
     std::span<const char> payload(reinterpret_cast<char*>(buf->base), buf->len);
     if (!self->fsm_restore_cb_(payload)) {
-        HLOG(ERROR) << "FsmRestore failed";
-        return RAFT_INVALID;
+        HLOG(FATAL) << "FsmRestore failed";
     }
     return 0;
 }

@@ -15,5 +15,10 @@ float GetRandomFloat(float a, float b) {
     return distribution(rd_gen);
 }
 
+double GetRandomDouble(double a, double b) {
+    std::uniform_real_distribution<double> distribution(a, b);
+    return distribution(rd_gen);
+}
+
 }  // namespace utils
 }  // namespace faas

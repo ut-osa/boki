@@ -35,6 +35,8 @@ public:
     typedef std::function<void(bool /* success */)> ApplyCallback;
     void Apply(std::span<const char> payload, ApplyCallback cb);
 
+    bool GiveUpLeadership(uint64_t next_leader = 0);
+
     void ScheduleClose();
 
 private:

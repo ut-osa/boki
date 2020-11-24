@@ -41,7 +41,7 @@ void SequencerCore::OnNewNodeConnected(uint16_t node_id, std::string_view addr) 
     HLOG(INFO) << fmt::format("Node {} connected with address {}", node_id, addr);
     conencted_nodes_[node_id] = std::string(addr);
     SendAllFsmRecords(node_id);
-    BuildNewViewIfNeeded();
+    ReconfigViewIfDoable();
 }
 
 void SequencerCore::OnNodeDisconnected(uint16_t node_id) {
@@ -51,7 +51,7 @@ void SequencerCore::OnNodeDisconnected(uint16_t node_id) {
     }
     HLOG(INFO) << fmt::format("Node {} disconnected", node_id);
     conencted_nodes_.erase(node_id);
-    BuildNewViewIfNeeded();
+    ReconfigViewIfDoable();
 }
 
 void SequencerCore::OnRecvLocalCutMessage(const LocalCutMsgProto& message) {
@@ -98,8 +98,7 @@ void SequencerCore::OnRecvLocalCutMessage(const LocalCutMsgProto& message) {
     }
 }
 
-void SequencerCore::BuildNewViewIfNeeded() {
-    HVLOG(1) << "is_raft_leader=" << is_raft_leader();
+void SequencerCore::ReconfigViewIfDoable() {
     if (!is_raft_leader() || new_view_pending_) {
         return;
     }

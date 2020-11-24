@@ -2,6 +2,7 @@
 
 #include "utils/io.h"
 #include "utils/fs.h"
+#include "sequencer/flags.h"
 
 #define log_header_ "Server: "
 
@@ -17,15 +18,11 @@ Server::Server(uint16_t sequencer_id)
       event_loop_thread_("Server/EL", absl::bind_front(&Server::EventLoopThreadMain, this)),
       node_manager_(this),
       raft_(sequencer_id),
-      core_(sequencer_id),
-      global_cut_timerfd_(io_utils::CreateTimerFd()) {
+      core_(sequencer_id) {
     UV_CHECK_OK(uv_loop_init(&uv_loop_));
     uv_loop_.data = &event_loop_thread_;
     UV_CHECK_OK(uv_async_init(&uv_loop_, &stop_event_, &Server::StopCallback));
     stop_event_.data = this;
-    CHECK(global_cut_timerfd_ != -1);
-    UV_CHECK_OK(uv_poll_init(&uv_loop_, &global_cut_timer_, global_cut_timerfd_));
-    global_cut_timer_.data = this;
     // Setup callbacks for SequencerCore
     core_.SetRaftLeaderCallback([this] (uint16_t* leader_id) -> bool {
         uint64_t id = raft_.GetLeader();
@@ -65,6 +62,7 @@ void Server::Start() {
         HLOG(FATAL) << "Cannot find myself in the sequencer config";
     }
     node_manager_.Start(&uv_loop_, address_, myself->engine_conn_port);
+    // Setup Raft
     std::string raft_addr(fmt::format("{}:{}", address_, myself->raft_port));
     std::vector<std::pair<uint64_t, std::string>> peers;
     config_.ForEachPeer([&peers] (const SequencerConfig::Peer* peer) {
@@ -76,8 +74,46 @@ void Server::Start() {
     }
     PCHECK(fs_utils::MakeDirectory(raft_data_dir_));
     raft_.Start(&uv_loop_, raft_addr, raft_data_dir_, peers);
-    CHECK(io_utils::SetupTimerFd(global_cut_timerfd_, 0, core_.global_cut_interval_us()));
-    UV_CHECK_OK(uv_poll_start(&global_cut_timer_, UV_READABLE, &Server::GlobalCutTimerCallback));
+    // Setup timers
+    global_cut_timer_.Init(&uv_loop_, [this] (uv::Timer* timer) {
+        core_.MarkGlobalCutIfNeeded();
+    });
+    global_cut_timer_.PeriodicExpire(absl::Microseconds(core_.global_cut_interval_us()));
+    if (absl::GetFlag(FLAGS_enable_raft_leader_fuzzer)) {
+        SetupFuzzer(
+            &raft_leader_fuzzer_timer_,
+            absl::Milliseconds(absl::GetFlag(FLAGS_raft_leader_fuzz_interval_ms)),
+            [this] () {
+                if (!raft_.IsLeader()) {
+                    return;
+                }
+                std::vector<uint16_t> other_peers;
+                config_.ForEachPeer([&other_peers, this] (const SequencerConfig::Peer* peer) {
+                    if (peer->id != my_sequencer_id_) {
+                        other_peers.push_back(peer->id);
+                    }
+                });
+                if (other_peers.empty()) {
+                    HLOG(ERROR) << "Cannot find other voters";
+                    return;
+                }
+                std::random_shuffle(other_peers.begin(), other_peers.end());
+                raft_.GiveUpLeadership(/* next_leader= */ other_peers[0]);
+            }
+        );
+    }
+    if (absl::GetFlag(FLAGS_enable_view_reconfig_fuzzer)) {
+        SetupFuzzer(
+            &view_reconfig_fuzzer_timer_,
+            absl::Milliseconds(absl::GetFlag(FLAGS_view_reconfig_fuzz_interval_ms)),
+            [this] () {
+                if (!raft_.IsLeader()) {
+                    return;
+                }
+                core_.ReconfigViewIfDoable();
+            }
+        );
+    }
     // Start thread for running event loop
     event_loop_thread_.Start();
     state_.store(kRunning);
@@ -135,8 +171,12 @@ void Server::SendFsmRecordsMessage(uint16_t node_id, std::span<const char> data)
     }
 }
 
-UV_POLL_CB_FOR_CLASS(Server, GlobalCutTimer) {
-    core_.MarkGlobalCutIfNeeded();
+void Server::SetupFuzzer(uv::Timer* timer, absl::Duration interval, std::function<void()> cb) {
+    timer->Init(&uv_loop_, [interval, cb] (uv::Timer* timer) {
+        cb();
+        timer->StochasticExpireIn(interval);
+    });
+    timer->StochasticExpireIn(interval);
 }
 
 UV_ASYNC_CB_FOR_CLASS(Server, Stop) {
@@ -147,8 +187,14 @@ UV_ASYNC_CB_FOR_CLASS(Server, Stop) {
     HLOG(INFO) << "Start stopping process";
     node_manager_.ScheduleStop();
     raft_.ScheduleClose();
+    global_cut_timer_.Close();
+    if (absl::GetFlag(FLAGS_enable_raft_leader_fuzzer)) {
+        raft_leader_fuzzer_timer_.Close();
+    }
+    if (absl::GetFlag(FLAGS_enable_view_reconfig_fuzzer)) {
+        view_reconfig_fuzzer_timer_.Close();
+    }
     uv_close(UV_AS_HANDLE(&stop_event_), nullptr);
-    uv_close(UV_AS_HANDLE(&global_cut_timer_), nullptr);
     state_.store(kStopping);
 }
 

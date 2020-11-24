@@ -25,6 +25,7 @@ public:
 
     int global_cut_interval_us() const;
     void MarkGlobalCutIfNeeded();
+    void ReconfigViewIfDoable();
 
     void OnNewNodeConnected(uint16_t node_id, std::string_view addr);
     void OnNodeDisconnected(uint16_t node_id);
@@ -57,9 +58,8 @@ private:
     bool has_ongoing_fsm_record() { return fsm_apply_progress_ < fsm_records_.size(); }
     bool is_raft_leader();
 
-    void BuildNewViewIfNeeded();
     void NewView();
-    
+
     void RaftApplyRecord(FsmRecordProto* record);
     void ApplyNewViewRecord(FsmRecordProto* record);
     void ApplyGlobalCutRecord(FsmRecordProto* record);
