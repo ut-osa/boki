@@ -124,6 +124,9 @@ private:
     DISALLOW_COPY_AND_ASSIGN(IOUring);
 };
 
+}  // namespace engine
+}  // namespace faas
+
 #define URING_CHECK_OK(URING_CALL)                     \
     do {                                               \
         bool ret = URING_CALL;                         \
@@ -135,6 +138,3 @@ private:
         bool ret = URING_CALL;                         \
         DLOG_IF(FATAL, !ret) << "IOUring call failed"; \
     } while (0)
-
-}  // namespace engine
-}  // namespace faas

@@ -44,7 +44,6 @@ bool SequencerConfig::Load(std::string_view json_contents) {
             peer.id = gsl::narrow_cast<uint16_t>(sequencer_id);
             peer.host_addr = value["hostAddr"].get<std::string>();
             peer.raft_port = value["raftPort"].get<uint16_t>();
-            peer.whisper_port = value["whisperPort"].get<uint16_t>();
             peer.engine_conn_port = value["engineConnPort"].get<uint16_t>();
             peers_[peer.id] = std::move(peer);
         }

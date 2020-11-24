@@ -16,7 +16,6 @@ public:
         uint16_t    id;
         std::string host_addr;
         uint16_t    raft_port;
-        uint16_t    whisper_port;
         uint16_t    engine_conn_port;
     };
 
