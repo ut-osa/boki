@@ -48,12 +48,12 @@ const (
 
 // SharedLogOpType enum
 const (
-	SharedLogOpType_APPEND    uint16 = 0
-	SharedLogOpType_PERSISTED uint16 = 1
-	SharedLogOpType_DISCARDED uint16 = 2
-	SharedLogOpType_READ_AT   uint16 = 3
-	SharedLogOpType_READ_NEXT uint16 = 4
-	SharedLogOpType_TRIM      uint16 = 5
+	SharedLogOpType_APPEND     uint16 = 0
+	SharedLogOpType_PERSISTED  uint16 = 1
+	SharedLogOpType_DISCARDED  uint16 = 2
+	SharedLogOpType_CHECK_TAIL uint16 = 3
+	SharedLogOpType_READ_NEXT  uint16 = 4
+	SharedLogOpType_TRIM       uint16 = 5
 )
 
 const MessageTypeBits = 4

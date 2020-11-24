@@ -85,7 +85,7 @@ void SLogEngine::OnMessageFromOtherEngine(const Message& message) {
     SharedLogOpType op_type = MessageHelper::GetSharedLogOpType(message);
     if (op_type == SharedLogOpType::APPEND) {
         HandleRemoteAppend(message);
-    } else if (op_type == SharedLogOpType::READ_AT) {
+    } else if (op_type == SharedLogOpType::CHECK_TAIL) {
         // TODO
     } else if (op_type == SharedLogOpType::READ_NEXT) {
         // TODO
@@ -101,7 +101,7 @@ void SLogEngine::OnMessageFromFuncWorker(const Message& message) {
     SharedLogOpType op_type = MessageHelper::GetSharedLogOpType(message);
     if (op_type == SharedLogOpType::APPEND) {
         HandleLocalAppend(message);
-    } else if (op_type == SharedLogOpType::READ_AT) {
+    } else if (op_type == SharedLogOpType::CHECK_TAIL) {
         // TODO
     } else if (op_type == SharedLogOpType::READ_NEXT) {
         // TODO

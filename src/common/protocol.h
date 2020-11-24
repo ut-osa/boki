@@ -54,11 +54,11 @@ public:
     static std::string DebugString(const FuncCall& func_call) {
         if (func_call.method_id == 0) {
             return fmt::format("func_id={}, client_id={}, call_id={}",
-                            func_call.func_id, func_call.client_id, func_call.call_id);
+                                func_call.func_id, func_call.client_id, func_call.call_id);
         } else {
             return fmt::format("func_id={}, method_id={}, client_id={}, call_id={}",
-                            func_call.func_id, func_call.method_id,
-                            func_call.client_id, func_call.call_id);
+                               func_call.func_id, func_call.method_id,
+                               func_call.client_id, func_call.call_id);
         }
     }
 
@@ -88,7 +88,7 @@ enum class SharedLogOpType : uint16_t {
     APPEND     = 0,
     PERSISTED  = 1,
     DISCARDED  = 2,
-    READ_AT    = 3,
+    CHECK_TAIL = 3,
     READ_NEXT  = 4,
     TRIM       = 5
 };
@@ -109,29 +109,33 @@ struct Message {
         uint32_t call_id;
     } __attribute__ ((packed));
     union {
-        uint64_t parent_call_id;  // Used in INVOKE_FUNC, saved as full_call_id
+        uint64_t parent_call_id;      // [8:16]  Used in INVOKE_FUNC, saved as full_call_id
         struct {
-            int32_t dispatch_delay;   // Used in FUNC_CALL_COMPLETE, FUNC_CALL_FAILED
-            int32_t processing_time;  // Used in FUNC_CALL_COMPLETE
+            int32_t dispatch_delay;   // [8:12]  Used in FUNC_CALL_COMPLETE, FUNC_CALL_FAILED
+            int32_t processing_time;  // [12:16] Used in FUNC_CALL_COMPLETE
         } __attribute__ ((packed));
-        uint64_t log_seqnum;  // Used in SHARED_LOG_OP
+        uint64_t log_seqnum;          // [8:16]  Used in SHARED_LOG_OP (PERSISTED, CHECK_TAIL)
+        uint64_t log_start_seqnum;    // [8:16]  Used in SHARED_LOG_OP (READ_NEXT)
     };
-    int64_t send_timestamp;
-    int32_t payload_size;  // Used in HANDSHAKE_RESPONSE, INVOKE_FUNC, FUNC_CALL_COMPLETE, SHARED_LOG_OP
-    uint32_t flags;
+    int64_t send_timestamp;       // [16:24]
+    int32_t payload_size;         // [24:28] Used in HANDSHAKE_RESPONSE, INVOKE_FUNC,
+                                  //                 FUNC_CALL_COMPLETE, SHARED_LOG_OP
+    uint32_t flags;               // [28:32]
 
     struct {
-        uint16_t log_op;
-        uint16_t log_client_id;
+        uint16_t log_op;          // [32:34]
+        uint16_t log_client_id;   // [34:36]
     } __attribute__ ((packed));
 
-    uint32_t log_tag;
+    uint32_t log_tag;             // [36:40]
     union {
-        uint64_t log_localid;
-        uint64_t log_client_data;
+        uint64_t log_localid;     // [40:48]
+        uint64_t log_client_data; // [40:48] will be preserved for response to clients
     };
 
-    char padding[__FAAS_CACHE_LINE_SIZE - 48];
+    uint64_t log_end_seqnum;      // [48:56] Used in SHARED_LOG_OP (READ_NEXT)
+
+    char padding[__FAAS_CACHE_LINE_SIZE - 56];
     char inline_data[__FAAS_MESSAGE_SIZE - __FAAS_CACHE_LINE_SIZE]
         __attribute__ ((aligned (__FAAS_CACHE_LINE_SIZE)));
 };
@@ -348,11 +352,12 @@ public:
         return message;
     }
 
-    static Message NewSharedLogReadAt(uint64_t log_seqnum) {
+    static Message NewSharedLogReadNext(uint64_t log_start_seqnum, uint64_t log_end_seqnum) {
         NEW_EMPTY_MESSAGE(message);
         message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
-        message.log_op = static_cast<uint16_t>(SharedLogOpType::READ_AT);
-        message.log_seqnum = log_seqnum;
+        message.log_op = static_cast<uint16_t>(SharedLogOpType::READ_NEXT);
+        message.log_start_seqnum = log_start_seqnum;
+        message.log_end_seqnum = log_end_seqnum;
         return message;
     }
 
