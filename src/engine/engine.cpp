@@ -126,6 +126,16 @@ void Engine::SetupSharedLog() {
         HLOG(FATAL) << "Failed to load sequencer config";
     }
     slog_engine_.reset(new SLogEngine(this));
+    // Listen on shared_log_tcp_port
+    CHECK_NE(shared_log_tcp_port_, -1);
+    shared_log_sockfd_ = utils::TcpSocketBindAndListen(
+        "0.0.0.0", shared_log_tcp_port_, absl::GetFlag(FLAGS_socket_listen_backlog));
+    CHECK(shared_log_sockfd_ != -1)
+        << fmt::format("Failed to listen on 0.0.0.0:{}", shared_log_tcp_port_);
+    HLOG(INFO) << fmt::format("Listen on 0.0.0.0:{} for shared log related connections",
+                              shared_log_tcp_port_);
+    ListenForNewConnections(shared_log_sockfd_,
+                            absl::bind_front(&Engine::OnNewSLogConnection, this));
     // Connect to sequencer
     int total_sequencer_conn = num_io_workers_ * absl::GetFlag(FLAGS_sequencer_conn_per_worker);
     sequencer_config_.ForEachPeer([this, total_sequencer_conn] (const SequencerConfig::Peer* peer) {
@@ -149,16 +159,6 @@ void Engine::SetupSharedLog() {
         RegisterConnection(io_workers_[i], hub.get());
         slog_message_hubs_.insert(std::move(hub));
     }
-    // Listen on shared_log_tcp_port
-    CHECK_NE(shared_log_tcp_port_, -1);
-    shared_log_sockfd_ = utils::TcpSocketBindAndListen(
-        "0.0.0.0", shared_log_tcp_port_, absl::GetFlag(FLAGS_socket_listen_backlog));
-    CHECK(shared_log_sockfd_ != -1)
-        << fmt::format("Failed to listen on 0.0.0.0:{}", shared_log_tcp_port_);
-    HLOG(INFO) << fmt::format("Listen on 0.0.0.0:{} for shared log related connections",
-                              shared_log_tcp_port_);
-    ListenForNewConnections(shared_log_sockfd_,
-                            absl::bind_front(&Engine::OnNewSLogConnection, this));
 }
 
 void Engine::StopInternal() {

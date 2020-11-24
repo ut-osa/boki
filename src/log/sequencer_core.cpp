@@ -58,6 +58,7 @@ void SequencerCore::OnRecvLocalCutMessage(const LocalCutMsgProto& message) {
     const Fsm::View* view = fsm_.current_view();
     if (message.view_id() < view->id()) {
         // Outdated message, can safely discard
+        HLOG(WARNING) << "Outdated local cut message";
         return;
     }
     if (message.view_id() > view->id()) {
@@ -102,6 +103,7 @@ void SequencerCore::ReconfigViewIfDoable() {
     if (!is_raft_leader() || new_view_pending_) {
         return;
     }
+    HLOG(INFO) << "Will reconfigure view";
     if (has_ongoing_fsm_record()) {
         new_view_pending_ = true;
     } else {
@@ -118,6 +120,7 @@ void SequencerCore::NewView() {
         HLOG(WARNING) << fmt::format("Connected nodes less than replicas {}", replicas);
         return;
     }
+    HLOG(INFO) << "Create new view";
     FsmRecordProto* record = fsm_record_pool_.Get();
     Fsm::NodeVec node_vec(conencted_nodes_.begin(), conencted_nodes_.end());
     fsm_.BuildNewViewRecord(replicas, node_vec, record);

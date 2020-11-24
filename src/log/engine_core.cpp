@@ -87,9 +87,11 @@ void EngineCore::NewRemoteLog(uint64_t localid, uint32_t tag, std::span<const ch
     if (node_id == my_node_id_) {
         HLOG(FATAL) << "Same node_id from remote logs";
     }
+    HVLOG(1) << fmt::format("Receive remote log (view_id={}, node_id={})", view_id, node_id);
     const Fsm::View* current_view = fsm_.current_view();
     if (current_view != nullptr && current_view->id() > view_id) {
         // Can safely discard this log
+        HLOG(WARNING) << "Receive outdated log";
         return;
     }
     pending_entries_[localid] = std::move(log_entry);
@@ -108,6 +110,7 @@ void EngineCore::OnFsmNewView(const Fsm::View* view) {
         iter = pending_entries_.erase(iter);
         log_discarded_cb_(std::move(log_entry));
     }
+    next_localid_ = 0;
     log_progress_.clear();
     view->ForEachPrimaryNode(my_node_id_, [this, view] (uint16_t node_id) {
         log_progress_[node_id] = 0;

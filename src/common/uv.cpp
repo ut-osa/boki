@@ -82,6 +82,15 @@ void Timer::PeriodicExpire(absl::Duration interval) {
 }
 
 UV_POLL_CB_FOR_CLASS(Timer, Expired) {
+    uint64_t n_expired;
+    ssize_t nread = read(timerfd_, &n_expired, sizeof(uint64_t));
+    if (nread != sizeof(uint64_t)) {
+        PLOG(ERROR) << "Failed to read on timerfd";
+        return;
+    }
+    if (n_expired > 1) {
+        LOG(WARNING) << "Expired more than once: " << n_expired;
+    }
     cb_(this);
 }
 

@@ -143,6 +143,8 @@ void SLogEngine::HandleLocalAppend(const Message& message) {
     }
 
     // Replicate new log to backup nodes
+    HVLOG(1) << fmt::format("Will replicate new log (view_id={}, localid={}) to backup nodes",
+                            view->id(), localid);
     Message message_copy = message;
     message_copy.log_localid = localid;
     IOWorker* io_worker = IOWorker::current();

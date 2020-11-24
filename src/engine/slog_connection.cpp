@@ -222,6 +222,7 @@ void SLogMessageHub::SendMessage(uint16_t view_id, uint16_t node_id,
     }
     NodeContext* ctx = nullptr;
     if (!node_ctxes_.contains(node_id)) {
+        HLOG(INFO) << fmt::format("New node {}", node_id);
         ctx = new NodeContext;
         ctx->reset(view_id);
         node_ctxes_[node_id] = std::unique_ptr<NodeContext>(ctx);
@@ -232,16 +233,17 @@ void SLogMessageHub::SendMessage(uint16_t view_id, uint16_t node_id,
             HLOG(WARNING) << "Outdated message";
             return;
         } else if (view_id > ctx->view_id) {
-            for (Connection* conn : ctx->active_connections) {
-                conn->ScheduleClose();
-            }
+            HLOG(INFO) << fmt::format("View changed for node {}, from {} to {}",
+                                      node_id, ctx->view_id, view_id);
             ctx->reset(view_id);
             SetupConnections(view_id, node_id);
         }
     }
+    DCHECK_EQ(ctx->view_id, view_id);
     // TODO: consider sending messages in batches
     // TODO: consider implementing receiver-side acks to ensure delivery
     if (ctx->active_connections.empty()) {
+        HLOG(INFO) << fmt::format("No active connection for node {} (view {})", node_id, view_id);
         ctx->pending_messages.push_back(message);
         return;
     }
@@ -284,10 +286,13 @@ void SLogMessageHub::OnConnectionConnected(Connection* conn) {
         ctx->active_connections.insert(conn);
         ctx->next_connection = ctx->active_connections.begin();
         while (!ctx->pending_messages.empty()) {
+            HLOG(INFO) << "Send pending messages with the new connection";
             conn->SendMessage(ctx->pending_messages.back());
             ctx->pending_messages.pop_back();
         }
     } else {
+        HLOG(WARNING) << fmt::format("Outdated connection: conn_view={}, current_view={}",
+                                     conn->view_id(), ctx->view_id);
         conn->ScheduleClose();
     }
 }
