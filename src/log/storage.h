@@ -22,7 +22,9 @@ public:
     bool Read(uint64_t log_seqnum, std::span<const char>* data) override;
 
 private:
-    absl::flat_hash_map</* seqnum */ uint64_t, std::unique_ptr<LogEntry>> entries_;
+    absl::Mutex mu_;
+    absl::flat_hash_map</* seqnum */ uint64_t, std::unique_ptr<LogEntry>>
+        entries_ ABSL_GUARDED_BY(mu_);
 
     DISALLOW_COPY_AND_ASSIGN(InMemoryStorage);
 };

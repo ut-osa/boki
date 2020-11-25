@@ -36,7 +36,13 @@ public:
         return gsl::narrow_cast<uint16_t>(views_.size());
     }
 
-    bool LogSeqNumToLocalId(uint64_t seqnum, uint64_t* localid);
+    // Find the first log entry whose `seqnum` >= `start_seqnum`
+    // Will return the seqnum, associated view and primary node
+    bool FindNextSeqnum(uint64_t start_seqnum, uint64_t* seqnum,
+                        const View** view, uint16_t* primary_node_id) const;
+
+    // Find the `seqnum` of the tailing log entry, associated view and primary node
+    bool CheckTail(uint64_t* seqnum, const View** view, uint16_t* primary_node_id) const;
 
     // ApplyRecord only works if records are applied in strict order
     // Used in sequencers, where Raft guarantees the order 
@@ -67,7 +73,9 @@ private:
     struct GlobalCut {
         uint16_t view_id;
         uint64_t start_seqnum;
+        uint64_t end_seqnum;
         std::vector<uint32_t> localid_cuts;
+        std::vector<uint32_t> deltas;
     };
     std::vector<std::unique_ptr<GlobalCut>> global_cuts_;
 
@@ -100,6 +108,9 @@ public:
                            std::function<void(uint16_t /* node_id */)> cb) const;
     void ForEachPrimaryNode(uint16_t backup_node_id,
                             std::function<void(uint16_t /* node_id */)> cb) const;
+
+    bool IsStorageNodeOf(uint16_t primary_node_id, uint16_t node_id) const;
+    uint16_t PickOneStorageNode(uint16_t primary_node_id) const;
 
 private:
     uint16_t id_;

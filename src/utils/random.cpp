@@ -10,6 +10,11 @@ namespace {
 static thread_local std::mt19937_64 rd_gen(syscall(SYS_gettid));
 }
 
+int GetRandomInt(int a, int b) {
+    std::uniform_int_distribution<int> distribution(a, b + 1);
+    return distribution(rd_gen);
+}
+
 float GetRandomFloat(float a, float b) {
     std::uniform_real_distribution<float> distribution(a, b);
     return distribution(rd_gen);

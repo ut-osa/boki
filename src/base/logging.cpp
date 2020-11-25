@@ -19,6 +19,7 @@
 
 #ifdef __FAAS_SRC
 
+#include <absl/container/flat_hash_map.h>
 #include <absl/synchronization/mutex.h>
 #include <absl/synchronization/notification.h>
 #include "base/thread.h"

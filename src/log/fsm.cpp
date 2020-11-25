@@ -1,6 +1,7 @@
 #include "log/fsm.h"
 
 #include "common/protocol.h"
+#include "utils/random.h"
 
 #define log_header_ "LogFsm: "
 
@@ -63,8 +64,61 @@ void Fsm::BuildGlobalCutRecord(const CutVec& cuts, FsmRecordProto* record) {
     }
 }
 
-bool Fsm::LogSeqNumToLocalId(uint64_t seqnum, uint64_t* localid) {
-    HLOG(FATAL) << "Not implemented";
+bool Fsm::FindNextSeqnum(uint64_t start_seqnum, uint64_t* seqnum,
+                         const View** view, uint16_t* primary_node_id) const {
+    if (global_cuts_.empty()) {
+        return false;
+    }
+    size_t left = 0;
+    size_t right = global_cuts_.size();
+    while (left < right) {
+        size_t mid = (left + right) / 2;
+        DCHECK_LT(mid, global_cuts_.size());
+        if (start_seqnum >= global_cuts_.at(mid)->end_seqnum) {
+            left = mid + 1;
+        } else {
+            right = mid;
+        }
+    }
+    if (right >= global_cuts_.size()) {
+        return false;
+    }
+    size_t pos = right;
+    DCHECK(start_seqnum < global_cuts_.at(pos)->end_seqnum);
+    DCHECK(pos == 0 || start_seqnum >= global_cuts_.at(pos-1)->end_seqnum);
+    const GlobalCut* target_cut = global_cuts_.at(pos).get();
+    const View* target_view = view_with_id(target_cut->view_id);
+    if (target_cut->start_seqnum < start_seqnum) {
+        uint64_t current_seqnum = target_cut->start_seqnum;
+        size_t node_idx = 0;
+        while (node_idx < target_view->num_nodes()) {
+            uint32_t delta = target_cut->deltas.at(node_idx);
+            if (current_seqnum <= start_seqnum && start_seqnum < current_seqnum + delta) {
+                *seqnum = start_seqnum;
+                *primary_node_id = target_view->node(node_idx);
+                break;
+            }
+            current_seqnum += delta;
+            node_idx++;
+        }
+        DCHECK(node_idx < target_view->num_nodes());
+    } else {
+        *seqnum = target_cut->start_seqnum;
+        *primary_node_id = target_view->node(0);
+    }
+    *view = target_view;
+    return true;
+}
+
+bool Fsm::CheckTail(uint64_t* seqnum, const View** view, uint16_t* primary_node_id) const {
+    if (global_cuts_.empty()) {
+        return false;
+    }
+    const View* target_view = view_with_id(global_cuts_.back()->view_id);
+    *view = target_view;
+    *seqnum = global_cuts_.back()->end_seqnum - 1;
+    *primary_node_id = target_view->node(target_view->num_nodes() - 1);
+    return true;
 }
 
 void Fsm::ApplyRecord(const FsmRecordProto& record) {
@@ -111,21 +165,28 @@ void Fsm::ApplyGlobalCutRecord(const GlobalCutRecordProto& record) {
     new_cut->view_id = view->id();
     new_cut->start_seqnum = record.start_seqnum();
     new_cut->localid_cuts.assign(record.localid_cuts().begin(), record.localid_cuts().end());
+    new_cut->deltas.assign(view->num_nodes(), 0);
     global_cuts_.emplace_back(new_cut);
     for (size_t i = 0; i < view->num_nodes(); i++) {
         uint16_t node_id = view->node(i);
         uint32_t start_localid = previous_cut == nullptr ? 0 : previous_cut->localid_cuts[i];
         uint32_t end_localid = new_cut->localid_cuts[i];
         if (start_localid < end_localid) {
+            uint32_t delta = end_localid - start_localid;
             log_replicated_cb_(
                 /* start_localid= */ BuildLocalId(view->id(), node_id, start_localid),
                 /* start_seqnum= */  next_log_seqnum_,
-                /* delta= */         end_localid - start_localid
+                /* delta= */         delta
             );
-            next_log_seqnum_ += end_localid - start_localid;
+            next_log_seqnum_ += delta;
+            new_cut->deltas[i] = delta;
         } else if (start_localid > end_localid) {
             HLOG(FATAL) << "localid_cuts from GlobalCutRecordProto not increasing";
         }
+    }
+    new_cut->end_seqnum = next_log_seqnum_;
+    if (new_cut->start_seqnum >= new_cut->end_seqnum) {
+        HLOG(FATAL) << "New global cut does not replicate any new log";
     }
 }
 
@@ -159,6 +220,27 @@ void Fsm::View::ForEachPrimaryNode(uint16_t backup_node_id,
         size_t node_id = node_ids_[(base - i + node_ids_.size()) % node_ids_.size()];
         cb(node_id);
     }
+}
+
+bool Fsm::View::IsStorageNodeOf(uint16_t primary_node_id, uint16_t node_id) const {
+    if (!node_indices_.contains(node_id)) {
+        return false;
+    }
+    DCHECK(node_indices_.contains(primary_node_id));
+    size_t base = node_indices_.at(primary_node_id);
+    for (size_t i = 1; i < replicas_; i++) {
+        if (node_id == node_ids_[(base + i) % node_ids_.size()]) {
+            return true;
+        }
+    }
+    return false;
+}
+
+uint16_t Fsm::View::PickOneStorageNode(uint16_t primary_node_id) const {
+    DCHECK(node_indices_.contains(primary_node_id));
+    size_t base = node_indices_.at(primary_node_id);
+    size_t off = gsl::narrow_cast<size_t>(utils::GetRandomInt(0, replicas_));
+    return node_ids_[(base + off) % node_ids_.size()];
 }
 
 }  // namespace log

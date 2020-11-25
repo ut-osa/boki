@@ -45,8 +45,7 @@ public:
     void Start(IOWorker* io_worker) override;
     void ScheduleClose() override;
 
-    void SendMessage(uint16_t view_id, uint16_t node_id,
-                     const protocol::Message& message);
+    void SendMessage(uint16_t node_id, const protocol::Message& message);
 
 private:
     enum State { kCreated, kRunning, kClosing, kClosed };
@@ -64,7 +63,7 @@ private:
     absl::flat_hash_map<int, std::unique_ptr<Connection>> connections_;
     int next_connection_id_;
 
-    void SetupConnections(uint16_t view_id, uint16_t node_id);
+    void SetupConnections(uint16_t node_id);
     void OnConnectionConnected(Connection* connection);
     void OnConnectionClosing(Connection* connection);
     void OnConnectionClosed(Connection* connection);
