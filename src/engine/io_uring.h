@@ -45,7 +45,7 @@ private:
     int uring_id_;
     static std::atomic<int> next_uring_id_;
     struct io_uring ring_;
-    struct __kernel_timespec cqe_wait_timeout;
+    struct __kernel_timespec cqe_wait_timeout_;
 
     std::vector<int> fds_;
     absl::flat_hash_map</* fd */ int, /* index */ size_t> fd_indices_;

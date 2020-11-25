@@ -41,11 +41,11 @@ IOUring::IOUring()
     }
     CHECK((params.features & IORING_FEAT_FAST_POLL) != 0)
         << "IORING_FEAT_FAST_POLL not supported";
-    memset(&cqe_wait_timeout, 0, sizeof(cqe_wait_timeout));
+    memset(&cqe_wait_timeout_, 0, sizeof(cqe_wait_timeout_));
     int wait_timeout_us = absl::GetFlag(FLAGS_io_uring_cq_wait_timeout_us);
     if (wait_timeout_us != 0) {
-        cqe_wait_timeout.tv_sec = wait_timeout_us / 1000000;
-        cqe_wait_timeout.tv_nsec = int64_t{wait_timeout_us % 1000000} * 1000;
+        cqe_wait_timeout_.tv_sec = wait_timeout_us / 1000000;
+        cqe_wait_timeout_.tv_nsec = int64_t{wait_timeout_us % 1000000} * 1000;
     } else {
         CHECK_EQ(absl::GetFlag(FLAGS_io_uring_cq_nr_wait), 1)
             << "io_uring_cq_nr_wait should be set to 1 if timeout is 0";
@@ -241,7 +241,7 @@ void IOUring::EventLoopRunOnce(int* inflight_ops) {
         io_uring_enter_time_stat_.AddSample(gsl::narrow_cast<int>(elasped_time));
     } else {
         int64_t start_timestamp = GetMonotonicNanoTimestamp();
-        int ret = io_uring_wait_cqes(&ring_, &cqe, nr_wait, &cqe_wait_timeout, nullptr);
+        int ret = io_uring_wait_cqes(&ring_, &cqe, nr_wait, &cqe_wait_timeout_, nullptr);
         int64_t elasped_time = GetMonotonicNanoTimestamp() - start_timestamp;
         if (ret < 0) {
             if (ret == -ETIME) {
