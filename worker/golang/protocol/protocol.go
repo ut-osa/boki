@@ -48,12 +48,22 @@ const (
 
 // SharedLogOpType enum
 const (
-	SharedLogOpType_APPEND     uint16 = 0
-	SharedLogOpType_PERSISTED  uint16 = 1
-	SharedLogOpType_DISCARDED  uint16 = 2
-	SharedLogOpType_CHECK_TAIL uint16 = 3
-	SharedLogOpType_READ_NEXT  uint16 = 4
-	SharedLogOpType_TRIM       uint16 = 5
+	SharedLogOpType_INVALID uint16 = 0x00
+	// Client operations
+	SharedLogOpType_APPEND     uint16 = 0x01
+	SharedLogOpType_CHECK_TAIL uint16 = 0x02
+	SharedLogOpType_READ_NEXT  uint16 = 0x03
+	SharedLogOpType_TRIM       uint16 = 0x04
+	// Successful results
+	SharedLogOpType_APPEND_OK uint16 = 0x20
+	SharedLogOpType_READ_OK   uint16 = 0x21
+	SharedLogOpType_TRIM_OK   uint16 = 0x22
+	// Error results
+	SharedLogOpType_BAD_ARGS    uint16 = 0x30
+	SharedLogOpType_DISCARDED   uint16 = 0x31
+	SharedLogOpType_EMPTY       uint16 = 0x32
+	SharedLogOpType_DATA_LOST   uint16 = 0x33
+	SharedLogOpType_TRIM_FAILED uint16 = 0x34
 )
 
 const MessageTypeBits = 4
@@ -167,6 +177,18 @@ func NewSharedLogAppendMessage(myClientId uint16, tag uint32, clientData uint64)
 	binary.LittleEndian.PutUint16(buffer[34:36], myClientId)
 	binary.LittleEndian.PutUint32(buffer[36:40], tag)
 	binary.LittleEndian.PutUint64(buffer[40:48], clientData)
+	return buffer
+}
+
+func NewSharedLogReadNextMessage(myClientId uint16, tag uint32, clientData uint64, startSeqNum uint64, endSeqNum uint64) []byte {
+	buffer := NewEmptyMessage()
+	binary.LittleEndian.PutUint64(buffer[0:8], uint64(MessageType_SHARED_LOG_OP))
+	binary.LittleEndian.PutUint16(buffer[32:34], SharedLogOpType_READ_NEXT)
+	binary.LittleEndian.PutUint16(buffer[34:36], myClientId)
+	binary.LittleEndian.PutUint32(buffer[36:40], tag)
+	binary.LittleEndian.PutUint64(buffer[40:48], clientData)
+	binary.LittleEndian.PutUint64(buffer[8:16], startSeqNum)
+	binary.LittleEndian.PutUint64(buffer[48:56], endSeqNum)
 	return buffer
 }
 

@@ -500,9 +500,38 @@ func (w *FuncWorker) SharedLogAppend(ctx context.Context, tag uint32, data []byt
 
 	response := <-outputChan
 	messageType := protocol.GetSharedLogOpTypeFromMessage(response)
-	if messageType == protocol.SharedLogOpType_PERSISTED {
+	if messageType == protocol.SharedLogOpType_APPEND_OK {
 		return protocol.GetLogSeqNumFromMessage(response), nil
 	} else {
 		return 0, fmt.Errorf("Failed to append log")
+	}
+}
+
+// Implement types.Environment
+func (w *FuncWorker) SharedLogReadNext(ctx context.Context, tag uint32, startSeqNum uint64, endSeqNum uint64) (*types.LogEntry, error) {
+	id := atomic.AddUint64(&w.nextLogOpId, 1)
+	message := protocol.NewSharedLogReadNextMessage(w.clientId, tag, id, startSeqNum, endSeqNum)
+
+	w.mux.Lock()
+	outputChan := make(chan []byte)
+	w.outgoingLogOps[id] = outputChan
+	_, err := w.outputPipe.Write(message)
+	w.mux.Unlock()
+	if err != nil {
+		return nil, err
+	}
+
+	response := <-outputChan
+	messageType := protocol.GetSharedLogOpTypeFromMessage(response)
+	if messageType == protocol.SharedLogOpType_READ_OK {
+		logEntry := types.LogEntry{
+			SeqNum: protocol.GetLogSeqNumFromMessage(response),
+			Data:   protocol.GetInlineDataFromMessage(response),
+		}
+		return &logEntry, nil
+	} else if messageType == protocol.SharedLogOpType_EMPTY {
+		return nil, nil
+	} else {
+		return nil, fmt.Errorf("Failed to append log")
 	}
 }
