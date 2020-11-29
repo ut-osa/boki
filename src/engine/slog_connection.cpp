@@ -213,8 +213,11 @@ void SLogMessageHub::SendMessage(uint16_t node_id, const protocol::Message& mess
     NodeContext* ctx = nullptr;
     if (!node_ctxes_.contains(node_id)) {
         HLOG(INFO) << fmt::format("New node {}", node_id);
+        ctx = new NodeContext;
         node_ctxes_[node_id] = std::unique_ptr<NodeContext>(ctx);
         SetupConnections(node_id);
+    } else {
+        ctx = node_ctxes_[node_id].get();
     }
     // TODO: consider sending messages in batches
     // TODO: consider implementing receiver-side acks to ensure delivery
