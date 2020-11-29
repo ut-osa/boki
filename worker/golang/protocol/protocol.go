@@ -192,6 +192,16 @@ func NewSharedLogReadNextMessage(myClientId uint16, tag uint32, clientData uint6
 	return buffer
 }
 
+func NewSharedLogCheckTail(myClientId uint16, tag uint32, clientData uint64) []byte {
+	buffer := NewEmptyMessage()
+	binary.LittleEndian.PutUint64(buffer[0:8], uint64(MessageType_SHARED_LOG_OP))
+	binary.LittleEndian.PutUint16(buffer[32:34], SharedLogOpType_CHECK_TAIL)
+	binary.LittleEndian.PutUint16(buffer[34:36], myClientId)
+	binary.LittleEndian.PutUint32(buffer[36:40], tag)
+	binary.LittleEndian.PutUint64(buffer[40:48], clientData)
+	return buffer
+}
+
 func GetClientIdFromMessage(buffer []byte) uint16 {
 	return GetFuncCallFromMessage(buffer).ClientId
 }

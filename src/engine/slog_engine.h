@@ -66,6 +66,11 @@ private:
 
     void HandleLocalAppend(const protocol::Message& message);
     void HandleLocalReadNext(const protocol::Message& message);
+    void HandleLocalCheckTail(const protocol::Message& message);
+
+    void ReadLog(uint16_t client_id, uint64_t client_data,
+                 uint32_t log_tag, uint64_t log_seqnum,
+                 const log::Fsm::View* view, uint16_t primary_node_id);
 
     void ReadAtFinished(const protocol::Message& message);
     void LogPersisted(std::unique_ptr<log::LogEntry> log_entry);

@@ -532,6 +532,35 @@ func (w *FuncWorker) SharedLogReadNext(ctx context.Context, tag uint32, startSeq
 	} else if messageType == protocol.SharedLogOpType_EMPTY {
 		return nil, nil
 	} else {
-		return nil, fmt.Errorf("Failed to append log")
+		return nil, fmt.Errorf("Failed to read log")
+	}
+}
+
+// Implement types.Environment
+func (w *FuncWorker) SharedLogCheckTail(ctx context.Context, tag uint32) (*types.LogEntry, error) {
+	id := atomic.AddUint64(&w.nextLogOpId, 1)
+	message := protocol.NewSharedLogCheckTail(w.clientId, tag, id)
+
+	w.mux.Lock()
+	outputChan := make(chan []byte)
+	w.outgoingLogOps[id] = outputChan
+	_, err := w.outputPipe.Write(message)
+	w.mux.Unlock()
+	if err != nil {
+		return nil, err
+	}
+
+	response := <-outputChan
+	messageType := protocol.GetSharedLogOpTypeFromMessage(response)
+	if messageType == protocol.SharedLogOpType_READ_OK {
+		logEntry := types.LogEntry{
+			SeqNum: protocol.GetLogSeqNumFromMessage(response),
+			Data:   protocol.GetInlineDataFromMessage(response),
+		}
+		return &logEntry, nil
+	} else if messageType == protocol.SharedLogOpType_EMPTY {
+		return nil, nil
+	} else {
+		return nil, fmt.Errorf("Failed to read log")
 	}
 }

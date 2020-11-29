@@ -129,7 +129,7 @@ void SLogEngine::OnMessageFromFuncWorker(const Message& message) {
     if (op_type == SharedLogOpType::APPEND) {
         HandleLocalAppend(message);
     } else if (op_type == SharedLogOpType::CHECK_TAIL) {
-        // TODO
+        HandleLocalCheckTail(message);
     } else if (op_type == SharedLogOpType::READ_NEXT) {
         HandleLocalReadNext(message);
     } else if (op_type == SharedLogOpType::TRIM) {
@@ -210,25 +210,51 @@ void SLogEngine::HandleLocalReadNext(const protocol::Message& message) {
         return;
     }
 
-    if (view->IsStorageNodeOf(primary_node_id, engine_->node_id())) {
-        HVLOG(1) << fmt::format("Find log (seqnum={}) locally", seqnum);
-        Message response;
-        ReadLogFromStorage(seqnum, message.log_client_data, &response);
+    ReadLog(message.log_client_id, message.log_client_data, message.log_tag,
+            seqnum, view, primary_node_id);
+}
+
+void SLogEngine::HandleLocalCheckTail(const protocol::Message& message) {
+    const log::Fsm::View* view;
+    uint64_t seqnum;
+    uint16_t primary_node_id;
+    bool success = false;
+    {
+        absl::ReaderMutexLock lk(&mu_);
+        success = core_.fsm()->CheckTail(&seqnum, &view, &primary_node_id);
+    }
+
+    if (!success) {
+        Message response = MessageHelper::NewSharedLogOpFailed(
+            SharedLogOpType::EMPTY, message.log_client_data);
         engine_->SendFuncWorkerMessage(message.log_client_id, &response);
         return;
     }
 
-    LogOp* op = AllocLogOp(LogOpType::kRead, message.log_client_id, message.log_client_data);
-    op->log_tag = message.log_tag;
-    op->log_seqnum = seqnum;
+    ReadLog(message.log_client_id, message.log_client_data, message.log_tag,
+            seqnum, view, primary_node_id);
+}
+
+void SLogEngine::ReadLog(uint16_t client_id, uint64_t client_data,
+                         uint32_t log_tag, uint64_t log_seqnum,
+                         const log::Fsm::View* view, uint16_t primary_node_id) {
+    if (view->IsStorageNodeOf(primary_node_id, engine_->node_id())) {
+        HVLOG(1) << fmt::format("Find log (seqnum={}) locally", log_seqnum);
+        Message response;
+        ReadLogFromStorage(log_seqnum, client_data, &response);
+        engine_->SendFuncWorkerMessage(client_id, &response);
+        return;
+    }
+    LogOp* op = AllocLogOp(LogOpType::kRead, client_id, client_data);
+    op->log_tag = log_tag;
+    op->log_seqnum = log_seqnum;
     {
         absl::MutexLock lk(&mu_);
         read_ops_[op->id] = op;
     }
-    
-    Message new_message = MessageHelper::NewSharedLogReadAt(engine_->node_id(), seqnum);
-    new_message.log_client_data = op->id;
-    SendMessageToEngine(view->PickOneStorageNode(primary_node_id), new_message);
+    Message message = MessageHelper::NewSharedLogReadAt(engine_->node_id(), log_seqnum);
+    message.log_client_data = op->id;
+    SendMessageToEngine(view->PickOneStorageNode(primary_node_id), message);
 }
 
 void SLogEngine::ReadAtFinished(const protocol::Message& message) {

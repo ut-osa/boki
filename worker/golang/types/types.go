@@ -14,6 +14,7 @@ type Environment interface {
 	GrpcCall(ctx context.Context, service string, method string, request []byte) ( /* reply */ []byte, error)
 	SharedLogAppend(ctx context.Context, tag uint32, data []byte) ( /* seqnum */ uint64, error)
 	SharedLogReadNext(ctx context.Context, tag uint32, startSeqNum uint64, endSeqNum uint64) (*LogEntry, error)
+	SharedLogCheckTail(ctx context.Context, tag uint32) (*LogEntry, error)
 }
 
 type FuncHandler interface {
