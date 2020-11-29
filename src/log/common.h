@@ -30,6 +30,10 @@ inline uint64_t BuildLocalId(uint16_t view_id, uint16_t node_id, uint32_t counte
     return (uint64_t{view_id} << 48) + (uint64_t{node_id} << 32) + uint64_t{counter};
 }
 
+inline std::string SeqNumHexStr(uint64_t seqnum) {
+    return fmt::format("{:08x}", seqnum);
+}
+
 struct LogEntry {
     uint64_t localid;
     uint64_t seqnum;

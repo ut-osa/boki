@@ -26,3 +26,6 @@ ABSL_FLAG(bool, disable_concurrency_limiter, false, "");
 ABSL_FLAG(double, instant_rps_p_norm, 1.0, "");
 ABSL_FLAG(double, instant_rps_ema_alpha, 0.001, "");
 ABSL_FLAG(double, instant_rps_ema_tau_ms, 0, "");
+
+ABSL_FLAG(std::string, slog_storage_backend, "inmem", "inmem or rocksdb");
+ABSL_FLAG(std::string, slog_storage_datadir, "", "");

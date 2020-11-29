@@ -3,6 +3,7 @@
 #include "common/time.h"
 #include "log/common.h"
 #include "engine/constants.h"
+#include "engine/flags.h"
 #include "engine/sequencer_connection.h"
 #include "engine/engine.h"
 
@@ -20,14 +21,23 @@ using protocol::SequencerMessageHelper;
 SLogEngine::SLogEngine(Engine* engine)
     : engine_(engine),
       sequencer_config_(&engine->sequencer_config_),
-      core_(engine->node_id()),
-      storage_(new log::InMemoryStorage()) {
+      core_(engine->node_id()) {
     core_.SetLogPersistedCallback(
         absl::bind_front(&SLogEngine::LogPersisted, this));
     core_.SetLogDiscardedCallback(
         absl::bind_front(&SLogEngine::LogDiscarded, this));
     core_.SetScheduleLocalCutCallback(
         absl::bind_front(&SLogEngine::ScheduleLocalCut, this));
+    std::string storage_backend = absl::GetFlag(FLAGS_slog_storage_backend);
+    if (storage_backend == "inmem") {
+        storage_.reset(new log::InMemoryStorage());
+    } else if (storage_backend == "rocksdb") {
+        std::string db_path = absl::GetFlag(FLAGS_slog_storage_datadir);
+        CHECK(!db_path.empty()) << "Empty slog_storage_datadir";
+        storage_.reset(new log::RocksDBStorage(db_path));
+    } else {
+        HLOG(FATAL) << "Unknown storage backend: " << storage_backend;
+    }
     SetupTimers();
 }
 
@@ -307,7 +317,7 @@ void SLogEngine::LogDiscarded(std::unique_ptr<log::LogEntry> log_entry) {
 
 void SLogEngine::ReadLogFromStorage(uint64_t seqnum, uint64_t client_data,
                                     protocol::Message* message) {
-    std::span<const char> data;
+    std::string data;
     if (storage_->Read(seqnum, &data)) {
         if (data.size() > MESSAGE_INLINE_DATA_SIZE) {
             HLOG(FATAL) << "Log data too long to fit into one message, "

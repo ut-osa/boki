@@ -28,3 +28,6 @@ ABSL_DECLARE_FLAG(bool, disable_concurrency_limiter);
 ABSL_DECLARE_FLAG(double, instant_rps_p_norm);
 ABSL_DECLARE_FLAG(double, instant_rps_ema_alpha);
 ABSL_DECLARE_FLAG(double, instant_rps_ema_tau_ms);
+
+ABSL_DECLARE_FLAG(std::string, slog_storage_backend);
+ABSL_DECLARE_FLAG(std::string, slog_storage_datadir);
