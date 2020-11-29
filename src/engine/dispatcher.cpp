@@ -78,7 +78,6 @@ bool Dispatcher::OnNewFuncCall(const FuncCall& func_call, const FuncCall& parent
                                bool shm_input) {
     VLOG(1) << "OnNewFuncCall " << FuncCallHelper::DebugString(func_call);
     DCHECK_EQ(func_id_, func_call.func_id);
-    absl::MutexLock lk(&mu_);
     Message* dispatch_func_call_message = message_pool_.Get();
     *dispatch_func_call_message = MessageHelper::NewDispatchFuncCall(func_call);
     if (shm_input) {
@@ -86,9 +85,10 @@ bool Dispatcher::OnNewFuncCall(const FuncCall& func_call, const FuncCall& parent
     } else {
         MessageHelper::SetInlineData(dispatch_func_call_message, inline_input);
     }
-
     Tracer::FuncCallInfo* func_call_info = engine_->tracer()->OnNewFuncCall(
         func_call, parent_func_call, input_size);
+
+    absl::MutexLock lk(&mu_);
     FuncWorker* idle_worker = PickIdleWorker();
     if (idle_worker) {
         DispatchFuncCall(idle_worker, dispatch_func_call_message);

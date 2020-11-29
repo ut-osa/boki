@@ -36,16 +36,17 @@ private:
     const FuncConfig::Entry* func_config_entry_;
     size_t min_workers_;
     size_t max_workers_;
-    absl::Mutex mu_;
 
     std::string log_header_;
+    utils::ThreadSafeObjectPool<protocol::Message> message_pool_;
+
+    absl::Mutex mu_;
 
     absl::flat_hash_map</* client_id */ uint16_t, std::shared_ptr<FuncWorker>>
         workers_ ABSL_GUARDED_BY(mu_);
     absl::flat_hash_map</* client_id */ uint16_t, protocol::FuncCall>
         running_workers_ ABSL_GUARDED_BY(mu_);
     std::vector</* client_id */ uint16_t> idle_workers_ ABSL_GUARDED_BY(mu_);
-    utils::SimpleObjectPool<protocol::Message> message_pool_ ABSL_GUARDED_BY(mu_);
 
     absl::flat_hash_map</* client_id */ uint16_t, /* request_timestamp */ int64_t>
         requested_workers_ ABSL_GUARDED_BY(mu_);

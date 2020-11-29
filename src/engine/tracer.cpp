@@ -245,7 +245,9 @@ void Tracer::DiscardFuncCallInfo(const protocol::FuncCall& func_call) {
         HLOG(WARNING) << "Cannot find FuncCall: " << FuncCallHelper::DebugString(func_call);
         return;
     }
+    FuncCallInfo* info = func_call_infos_[func_call.full_call_id];
     func_call_infos_.erase(func_call.full_call_id);
+    func_call_info_pool_.Return(info);
 }
 
 double Tracer::GetAverageInstantRps(uint16_t func_id) {

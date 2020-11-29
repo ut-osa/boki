@@ -5,12 +5,9 @@
 #ifdef __FAAS_HAVE_ABSL
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/inlined_vector.h>
-#include <absl/synchronization/mutex.h>
-#include <absl/synchronization/notification.h>
 #endif
 
 #ifdef __FAAS_SRC
-#include "base/thread.h"
 #include <google/protobuf/arena.h>
 #endif
 
@@ -96,31 +93,18 @@ public:
 
     ~ThreadSafeObjectPool() {}
 
+    // TODO: implement a real object pool that is thread-safe
+
     T* Get() {
-        auto free_objs = base::Thread::current()->LocalStorageGet<std::vector<T*>>(this);
-        if (free_objs->empty()) {
-            T* new_obj = object_constructor_();
-            free_objs->push_back(new_obj);
-            absl::MutexLock lk(&mu_);
-            objs_.emplace_back(new_obj);
-        }
-        DCHECK(!free_objs->empty());
-        T* obj = free_objs->back();
-        free_objs->pop_back();
-        return obj;
+        return object_constructor_();
     }
 
     void Return(T* obj) {
-        auto free_objs = base::Thread::current()->LocalStorageGet<std::vector<T*>>(this);
-        free_objs->push_back(obj);
+        delete obj;
     }
 
 private:
     std::function<T*()> object_constructor_;
-
-    absl::Mutex mu_;
-    absl::InlinedVector<std::unique_ptr<T>, 16> objs_ ABSL_GUARDED_BY(mu_);
-
     DISALLOW_COPY_AND_ASSIGN(ThreadSafeObjectPool);
 };
 

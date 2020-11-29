@@ -34,9 +34,6 @@ public:
 
     static void RegisterMainThread();
 
-    template<class T>
-    T* LocalStorageGet(void* key);
-
 private:
     enum State { kCreated, kStarting, kRunning, kFinished };
 
@@ -57,16 +54,6 @@ private:
 
     DISALLOW_COPY_AND_ASSIGN(Thread);
 };
-
-template<class T>
-T* Thread::LocalStorageGet(void* key) {
-    intptr_t intkey = reinterpret_cast<intptr_t>(key);
-    if (!local_storage_.contains(intkey)) {
-        local_storage_[intkey] = new T();
-    }
-    DCHECK(local_storage_.contains(intkey));
-    return reinterpret_cast<T*>(local_storage_[intkey]);
-}
 
 }  // namespace base
 }  // namespace faas
