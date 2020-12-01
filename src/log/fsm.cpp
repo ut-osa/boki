@@ -2,6 +2,7 @@
 
 #include "common/protocol.h"
 #include "utils/random.h"
+#include "utils/hash.h"
 
 #define log_header_ "LogFsm: "
 
@@ -254,6 +255,11 @@ uint16_t Fsm::View::PickOneStorageNode(uint16_t primary_node_id) const {
     size_t base = node_indices_.at(primary_node_id);
     size_t off = gsl::narrow_cast<size_t>(utils::GetRandomInt(0, replicas_));
     return node_ids_[(base + off) % node_ids_.size()];
+}
+
+uint16_t Fsm::View::LogTagToPrimaryNode(uint32_t log_tag) const {
+    uint64_t h = hash::xxHash64(log_tag);
+    return node_ids_[h % node_ids_.size()];
 }
 
 }  // namespace log

@@ -17,7 +17,8 @@ DCOMPILE_FLAGS = -DDEBUG -g
 INCLUDES = -I$(SRC_PATH) -I./include -I./deps/out/include \
 	-DFMT_HEADER_ONLY -I./deps/fmt/include \
 	-I./deps/GSL/include \
-	-I./deps/json/single_include
+	-I./deps/json/single_include \
+	-I./deps/xxHash
 # Protobuf compiler
 PROTOC = ./deps/out/bin/protoc
 # General linker settings

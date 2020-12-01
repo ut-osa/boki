@@ -120,6 +120,8 @@ public:
     bool IsStorageNodeOf(uint16_t primary_node_id, uint16_t node_id) const;
     uint16_t PickOneStorageNode(uint16_t primary_node_id) const;
 
+    uint16_t LogTagToPrimaryNode(uint32_t log_tag) const;
+
 private:
     uint16_t id_;
     size_t replicas_;
