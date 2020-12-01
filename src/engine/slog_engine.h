@@ -55,9 +55,9 @@ private:
     absl::flat_hash_map</* op_id */ uint64_t, LogOp*> remote_append_ops_ ABSL_GUARDED_BY(mu_);
     absl::flat_hash_map</* op_id */ uint64_t, LogOp*> read_ops_ ABSL_GUARDED_BY(mu_);
 
-    uint16_t my_node_id() const;
+    inline uint16_t my_node_id() const;
 
-    inline LogOpType op_type(const LogOp* op) {
+    static inline LogOpType op_type(const LogOp* op) {
         return gsl::narrow_cast<LogOpType>(op->id & 0xff);
     }
 
@@ -95,13 +95,13 @@ private:
     void ScheduleLocalCut(int duration_us);
 
     template<class KeyT>
-    static LogOp* GrabLogOp(absl::flat_hash_map<KeyT, LogOp*> op_map, KeyT key);
+    static inline LogOp* GrabLogOp(absl::flat_hash_map<KeyT, LogOp*>& op_map, KeyT key);
 
     DISALLOW_COPY_AND_ASSIGN(SLogEngine);
 };
 
 template<class KeyT>
-SLogEngine::LogOp* SLogEngine::GrabLogOp(absl::flat_hash_map<KeyT, LogOp*> op_map, KeyT key) {
+SLogEngine::LogOp* SLogEngine::GrabLogOp(absl::flat_hash_map<KeyT, LogOp*>& op_map, KeyT key) {
     if (!op_map.contains(key)) {
         return nullptr;
     }
