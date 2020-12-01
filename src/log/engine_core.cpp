@@ -1,6 +1,7 @@
 #include "log/engine_core.h"
 
 #include "common/time.h"
+#include "utils/random.h"
 #include "log/flags.h"
 
 #define log_header_ "LogEngineCore: "
@@ -51,6 +52,26 @@ void EngineCore::OnNewFsmRecordsMessage(const FsmRecordsMsgProto& message) {
     }
 }
 
+bool EngineCore::LogTagToPrimaryNode(uint32_t tag, uint16_t* primary_node_id) {
+    const Fsm::View* current_view = fsm_.current_view();
+    if (current_view == nullptr) {
+        HLOG(ERROR) << "No view message from sequencer!";
+        return false;
+    }
+    if (tag == kDefaultLogTag) {
+        if (current_view->has_node(my_node_id_)) {
+            *primary_node_id = my_node_id_;
+        } else {
+            HLOG(WARNING) << "Current view does not contain myself, "
+                          << "will choose a random node for this log";
+            *primary_node_id = current_view->PickOneNode();
+        }
+    } else {
+        *primary_node_id = current_view->LogTagToPrimaryNode(tag);
+    }
+    return true;
+}
+
 bool EngineCore::StoreLogAsPrimaryNode(uint32_t tag, std::span<const char> data,
                                        uint64_t* localid) {
     const Fsm::View* current_view = fsm_.current_view();
@@ -60,6 +81,11 @@ bool EngineCore::StoreLogAsPrimaryNode(uint32_t tag, std::span<const char> data,
     }
     if (!current_view->has_node(my_node_id_)) {
         HLOG(ERROR) << "Current view does not contain myself!";
+        return false;
+    }
+    if (tag != kDefaultLogTag && tag != current_view->LogTagToPrimaryNode(tag)) {
+        HLOG(ERROR) << fmt::format("This node is not the primary node of log tag {} "
+                                   "in the current view", tag, current_view->id());
         return false;
     }
     HVLOG(1) << fmt::format("NewLocalLog: tag={}, data_size={}", tag, data.size());

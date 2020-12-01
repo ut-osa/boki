@@ -6,6 +6,8 @@
 namespace faas {
 namespace log {
 
+constexpr uint32_t kDefaultLogTag = 0;
+
 inline uint16_t SeqNumToViewId(uint64_t seqnum) {
     return gsl::narrow_cast<uint16_t>(seqnum >> 48);
 }

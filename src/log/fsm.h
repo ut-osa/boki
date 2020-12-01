@@ -117,6 +117,7 @@ public:
     void ForEachPrimaryNode(uint16_t backup_node_id,
                             std::function<void(uint16_t /* node_id */)> cb) const;
 
+    uint16_t PickOneNode() const;
     bool IsStorageNodeOf(uint16_t primary_node_id, uint16_t node_id) const;
     uint16_t PickOneStorageNode(uint16_t primary_node_id) const;
 

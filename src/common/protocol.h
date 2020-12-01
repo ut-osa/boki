@@ -93,6 +93,7 @@ enum class SharedLogOpType : uint16_t {
     TRIM        = 0x04,
     // Operations between engines
     READ_AT     = 0x10,
+    REPLICATE   = 0x11,
     // Successful results
     APPEND_OK   = 0x20,
     READ_OK     = 0x21,
@@ -105,7 +106,7 @@ enum class SharedLogOpType : uint16_t {
     TRIM_FAILED = 0x34
 };
 
-constexpr uint32_t kDefaultLogTag     = 0;
+constexpr uint32_t kInvalidLogTag     = std::numeric_limits<uint32_t>::max();
 constexpr uint64_t kInvalidLogLocalId = std::numeric_limits<uint64_t>::max();
 constexpr uint64_t kInvalidLogSeqNum  = std::numeric_limits<uint64_t>::max();
 
@@ -138,7 +139,7 @@ struct Message {
         uint16_t log_op;          // [32:34]
         union {                   // [34:36]
             uint16_t log_client_id;
-            uint16_t log_node_id;
+            uint16_t src_node_id;
         };
     } __attribute__ ((packed));
 
@@ -340,67 +341,46 @@ public:
         return message;
     }
 
-    static Message NewSharedLogAppend(uint32_t log_tag,
-                                      uint64_t log_localid = kInvalidLogLocalId) {
+    static Message NewSharedLogAppend(uint32_t log_tag, uint64_t log_client_data) {
         NEW_EMPTY_MESSAGE(message);
         message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
         message.log_op = static_cast<uint16_t>(SharedLogOpType::APPEND);
+        message.log_tag = log_tag;
+        message.log_client_data = log_client_data;
+        return message;
+    }
+
+    static Message NewSharedLogReadAt(uint64_t log_seqnum, uint64_t log_client_data) {
+        NEW_EMPTY_MESSAGE(message);
+        message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
+        message.log_op = static_cast<uint16_t>(SharedLogOpType::READ_AT);
+        message.log_seqnum = log_seqnum;
+        message.log_client_data = log_client_data;
+        return message;
+    }
+
+    static Message NewSharedLogReplicate(uint32_t log_tag, uint64_t log_localid) {
+        NEW_EMPTY_MESSAGE(message);
+        message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
+        message.log_op = static_cast<uint16_t>(SharedLogOpType::REPLICATE);
         message.log_tag = log_tag;
         message.log_localid = log_localid;
         return message;
     }
 
-    static Message NewSharedLogAppendOK(uint64_t log_client_data, uint64_t log_seqnum) {
-        NEW_EMPTY_MESSAGE(message);
-        message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
-        message.log_op = static_cast<uint16_t>(SharedLogOpType::APPEND_OK);
-        message.log_client_data = log_client_data;
-        message.log_seqnum = log_seqnum;
-        return message;
-    }
-
-    static Message NewSharedLogReadOK(uint64_t log_client_data, uint64_t log_seqnum) {
-        NEW_EMPTY_MESSAGE(message);
-        message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
-        message.log_op = static_cast<uint16_t>(SharedLogOpType::READ_OK);
-        message.log_client_data = log_client_data;
-        message.log_seqnum = log_seqnum;
-        return message;
-    }
-
-    static Message NewSharedLogReadNext(uint64_t log_start_seqnum, uint64_t log_end_seqnum) {
-        NEW_EMPTY_MESSAGE(message);
-        message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
-        message.log_op = static_cast<uint16_t>(SharedLogOpType::READ_NEXT);
-        message.log_start_seqnum = log_start_seqnum;
-        message.log_end_seqnum = log_end_seqnum;
-        return message;
-    }
-
-    static Message NewSharedLogReadAt(uint16_t src_node_id, uint64_t log_seqnum) {
-        NEW_EMPTY_MESSAGE(message);
-        message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
-        message.log_op = static_cast<uint16_t>(SharedLogOpType::READ_AT);
-        message.log_seqnum = log_seqnum;
-        message.log_node_id = src_node_id;
-        return message;
-    }
-
-    static Message NewSharedLogOpSucceeded(SharedLogOpType reason, uint64_t log_client_data,
+    static Message NewSharedLogOpSucceeded(SharedLogOpType reason,
                                            uint64_t log_seqnum = kInvalidLogSeqNum) {
         NEW_EMPTY_MESSAGE(message);
         message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
         message.log_op = static_cast<uint16_t>(reason);
-        message.log_client_data = log_client_data;
         message.log_seqnum = log_seqnum;
         return message;
     }
 
-    static Message NewSharedLogOpFailed(SharedLogOpType reason, uint64_t log_client_data) {
+    static Message NewSharedLogOpFailed(SharedLogOpType reason) {
         NEW_EMPTY_MESSAGE(message);
         message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
         message.log_op = static_cast<uint16_t>(reason);
-        message.log_client_data = log_client_data;
         return message;
     }
 

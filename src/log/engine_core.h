@@ -28,6 +28,7 @@ public:
     void BuildLocalCutMessage(LocalCutMsgProto* message);
     void OnNewFsmRecordsMessage(const FsmRecordsMsgProto& message);
 
+    bool LogTagToPrimaryNode(uint32_t tag, uint16_t* primary_node_id);
     bool StoreLogAsPrimaryNode(uint32_t tag, std::span<const char> data, uint64_t* localid);
     bool StoreLogAsBackupNode(uint32_t tag, std::span<const char> data, uint64_t localid);
 

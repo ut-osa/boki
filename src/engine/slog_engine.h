@@ -39,54 +39,76 @@ private:
     struct LogOp {
         uint64_t id;  // Lower 8-bit stores type
         uint16_t client_id;
+        uint16_t src_node_id;
         uint64_t client_data;
         uint32_t log_tag;
         uint64_t log_seqnum;
+        std::string log_data;
+        int remaining_retries;
     };
+    static constexpr int kMaxRetires = 3;
 
     utils::ThreadSafeObjectPool<LogOp> log_op_pool_;
     std::atomic<uint64_t> next_op_id_;
 
     absl::flat_hash_map</* localid */ uint64_t, LogOp*> append_ops_ ABSL_GUARDED_BY(mu_);
+    absl::flat_hash_map</* op_id */ uint64_t, LogOp*> remote_append_ops_ ABSL_GUARDED_BY(mu_);
     absl::flat_hash_map</* op_id */ uint64_t, LogOp*> read_ops_ ABSL_GUARDED_BY(mu_);
+
+    uint16_t my_node_id() const;
 
     inline LogOpType op_type(const LogOp* op) {
         return gsl::narrow_cast<LogOpType>(op->id & 0xff);
     }
 
     LogOp* AllocLogOp(LogOpType type, uint16_t client_id, uint64_t client_data);
-    LogOp* GrabAppendLogOp(uint64_t localid) ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
-    LogOp* GrabReadLogOp(uint64_t op_id) ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
 
     void SetupTimers();
     void LocalCutTimerTriggered();
 
     void HandleRemoteAppend(const protocol::Message& message);
+    void HandleRemoteReplicate(const protocol::Message& message);
     void HandleRemoteReadAt(const protocol::Message& message);
 
     void HandleLocalAppend(const protocol::Message& message);
     void HandleLocalReadNext(const protocol::Message& message);
     void HandleLocalCheckTail(const protocol::Message& message);
 
-    void ReadLog(uint16_t client_id, uint64_t client_data,
-                 uint32_t log_tag, uint64_t log_seqnum,
-                 const log::Fsm::View* view, uint16_t primary_node_id);
-
+    void AppendFinished(const protocol::Message& message);
     void ReadAtFinished(const protocol::Message& message);
     void LogPersisted(std::unique_ptr<log::LogEntry> log_entry);
     void LogDiscarded(std::unique_ptr<log::LogEntry> log_entry);
 
-    void ReadLogFromStorage(uint64_t seqnum, uint64_t client_data,
-                            protocol::Message* message);
-    void AppendBackupLog(uint16_t view_id, uint16_t backup_node_id,
-                         const log::LogEntry* log_entry);
+    void FinishLogOp(LogOp* op, protocol::Message* response);
+    void NewReadLogOp(LogOp* op, const log::Fsm::View* view, uint16_t primary_node_id);
+    void NewAppendLogOp(LogOp* op, std::span<const char> data);
+
+    void ReplicateLog(const log::Fsm::View* view, int32_t tag, uint64_t localid,
+                      std::span<const char> data);
+    void ReadLogFromStorage(uint64_t seqnum, protocol::Message* response);
+
+    void SendFailedResponse(const protocol::Message& request,
+                            protocol::SharedLogOpType reason);
     void SendSequencerMessage(const protocol::SequencerMessage& message,
                               std::span<const char> payload);
-    void SendMessageToEngine(uint16_t node_id, const protocol::Message& message);
+    void SendMessageToEngine(uint16_t node_id, protocol::Message* message);
     void ScheduleLocalCut(int duration_us);
+
+    template<class KeyT>
+    static LogOp* GrabLogOp(absl::flat_hash_map<KeyT, LogOp*> op_map, KeyT key);
 
     DISALLOW_COPY_AND_ASSIGN(SLogEngine);
 };
+
+template<class KeyT>
+SLogEngine::LogOp* SLogEngine::GrabLogOp(absl::flat_hash_map<KeyT, LogOp*> op_map, KeyT key) {
+    if (!op_map.contains(key)) {
+        return nullptr;
+    }
+    LogOp* op = op_map[key];
+    op_map.erase(key);
+    return op;
+}
 
 }  // namespace engine
 }  // namespace faas

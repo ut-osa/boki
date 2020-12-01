@@ -236,6 +236,11 @@ void Fsm::View::ForEachPrimaryNode(uint16_t backup_node_id,
     }
 }
 
+uint16_t Fsm::View::PickOneNode() const {
+    size_t idx = gsl::narrow_cast<size_t>(utils::GetRandomInt(0, node_ids_.size()));
+    return node_ids_[idx];
+}
+
 bool Fsm::View::IsStorageNodeOf(uint16_t primary_node_id, uint16_t node_id) const {
     if (!node_indices_.contains(node_id)) {
         return false;
