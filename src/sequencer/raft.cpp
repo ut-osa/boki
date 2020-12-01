@@ -74,8 +74,13 @@ void Raft::Start(uv_loop_t* uv_loop, std::string_view listen_address,
 
     raft_set_election_timeout(&raft_, absl::GetFlag(FLAGS_raft_election_timeout_ms));
     raft_set_heartbeat_timeout(&raft_, absl::GetFlag(FLAGS_raft_heartbeat_timeout_ms));
-    raft_set_snapshot_threshold(&raft_, absl::GetFlag(FLAGS_raft_snapshot_threshold));
-    raft_set_snapshot_trailing(&raft_, absl::GetFlag(FLAGS_raft_snapshot_trailing));
+    if (absl::GetFlag(FLAGS_raft_enable_snapshot)) {
+        raft_set_snapshot_threshold(&raft_, absl::GetFlag(FLAGS_raft_snapshot_threshold));
+        raft_set_snapshot_trailing(&raft_, absl::GetFlag(FLAGS_raft_snapshot_trailing));
+    } else {
+        // Set to a very large value to essentially disable snapshot
+        raft_set_snapshot_threshold(&raft_, std::numeric_limits<unsigned>::max());
+    }
     raft_set_pre_vote(&raft_, absl::GetFlag(FLAGS_raft_pre_vote));
 
     HLOG(INFO) << fmt::format("Raft voter started with id {}", id_);
