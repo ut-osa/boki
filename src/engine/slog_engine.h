@@ -53,7 +53,7 @@ private:
 
     absl::flat_hash_map</* localid */ uint64_t, LogOp*> append_ops_ ABSL_GUARDED_BY(mu_);
     absl::flat_hash_map</* op_id */ uint64_t, LogOp*> remote_append_ops_ ABSL_GUARDED_BY(mu_);
-    absl::flat_hash_map</* op_id */ uint64_t, LogOp*> read_ops_ ABSL_GUARDED_BY(mu_);
+    absl::flat_hash_map</* op_id */ uint64_t, LogOp*> remote_read_ops_ ABSL_GUARDED_BY(mu_);
 
     inline uint16_t my_node_id() const;
 
@@ -74,8 +74,8 @@ private:
     void HandleLocalReadNext(const protocol::Message& message);
     void HandleLocalCheckTail(const protocol::Message& message);
 
-    void AppendFinished(const protocol::Message& message);
-    void ReadAtFinished(const protocol::Message& message);
+    void RemoteAppendFinished(const protocol::Message& message);
+    void RemoteReadAtFinished(const protocol::Message& message);
     void LogPersisted(std::unique_ptr<log::LogEntry> log_entry);
     void LogDiscarded(std::unique_ptr<log::LogEntry> log_entry);
 

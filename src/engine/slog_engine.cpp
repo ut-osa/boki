@@ -108,9 +108,9 @@ void SLogEngine::OnMessageFromOtherEngine(const Message& message) {
     } else if (op_type == SharedLogOpType::READ_AT) {
         HandleRemoteReadAt(message);
     } else if (op_type == SharedLogOpType::APPEND_OK || op_type == SharedLogOpType::DISCARDED) {
-        AppendFinished(message);
+        RemoteAppendFinished(message);
     } else if (op_type == SharedLogOpType::READ_OK || op_type == SharedLogOpType::DATA_LOST) {
-        ReadAtFinished(message);
+        RemoteReadAtFinished(message);
     } else {
         HLOG(FATAL) << "Unknown SharedLogOpType from remote message: "
                     << static_cast<uint16_t>(op_type);
@@ -137,7 +137,7 @@ void SLogEngine::OnMessageFromFuncWorker(const Message& message) {
 void SLogEngine::HandleRemoteAppend(const protocol::Message& message) {
     DCHECK(message.src_node_id != my_node_id());
     std::span<const char> data = MessageHelper::GetInlineData(message);
-    LogOp* op = AllocLogOp(LogOpType::kAppend, 0, message.log_client_data);
+    LogOp* op = AllocLogOp(LogOpType::kAppend, /* client_id= */ 0, message.log_client_data);
     op->log_tag = message.log_tag;
     op->src_node_id = message.src_node_id;
     NewAppendLogOp(op, data);
@@ -226,7 +226,7 @@ void SLogEngine::HandleLocalCheckTail(const protocol::Message& message) {
     NewReadLogOp(op, view, primary_node_id);
 }
 
-void SLogEngine::AppendFinished(const protocol::Message& message) {
+void SLogEngine::RemoteAppendFinished(const protocol::Message& message) {
     LogOp* op = nullptr;
     {
         absl::MutexLock lk(&mu_);
@@ -245,11 +245,11 @@ void SLogEngine::AppendFinished(const protocol::Message& message) {
     }
 }
 
-void SLogEngine::ReadAtFinished(const protocol::Message& message) {
+void SLogEngine::RemoteReadAtFinished(const protocol::Message& message) {
     LogOp* op = nullptr;
     {
         absl::MutexLock lk(&mu_);
-        op = GrabLogOp(read_ops_, message.log_client_data);
+        op = GrabLogOp(remote_read_ops_, message.log_client_data);
     }
     if (op == nullptr) {
         return;
@@ -315,7 +315,7 @@ void SLogEngine::NewReadLogOp(LogOp* op, const log::Fsm::View* view, uint16_t pr
     }
     {
         absl::MutexLock lk(&mu_);
-        read_ops_[op->id] = op;
+        remote_read_ops_[op->id] = op;
     }
     Message message = MessageHelper::NewSharedLogReadAt(op->log_seqnum, op->id);
     SendMessageToEngine(view->PickOneStorageNode(primary_node_id), &message);
