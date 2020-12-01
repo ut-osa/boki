@@ -36,6 +36,13 @@ public:
         return gsl::narrow_cast<uint16_t>(views_.size());
     }
 
+    std::string get_addr(uint16_t node_id) const {
+        if (!node_addr_.contains(node_id)) {
+            return "";
+        }
+        return node_addr_.at(node_id);
+    }
+
     // Find the first log entry whose `seqnum` >= `start_seqnum`
     // Will return the seqnum, associated view and primary node
     bool FindNextSeqnum(uint64_t start_seqnum, uint64_t* seqnum,
@@ -69,6 +76,7 @@ private:
     uint64_t next_log_seqnum_;
 
     std::vector<std::unique_ptr<View>> views_;
+    absl::flat_hash_map</* node_id */ uint16_t, std::string> node_addr_;
 
     struct GlobalCut {
         uint16_t view_id;

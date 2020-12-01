@@ -365,9 +365,9 @@ void SLogEngine::ScheduleLocalCut(int duration_us) {
     timer->as_ptr<Timer>()->TriggerIn(duration_us);
 }
 
-std::string_view SLogEngine::GetNodeAddr(uint16_t node_id) {
+std::string SLogEngine::GetNodeAddr(uint16_t node_id) {
     absl::ReaderMutexLock lk(&mu_);
-    return DCHECK_NOTNULL(core_.fsm()->current_view())->get_addr(node_id);
+    return core_.fsm()->get_addr(node_id);
 }
 
 }  // namespace engine

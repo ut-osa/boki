@@ -142,6 +142,19 @@ void Fsm::ApplyNewViewRecord(const NewViewRecordProto& record) {
     if (view->id() != next_view_id()) {
         HLOG(FATAL) << "View ID not increasing!";
     }
+    for (size_t i = 0; i < view->num_nodes(); i++) {
+        uint16_t node_id = view->node(i);
+        std::string_view addr = view->get_addr(node_id);
+        if (node_addr_.contains(node_id)) {
+            if (addr != node_addr_[node_id]) {
+                HLOG(FATAL) << fmt::format("Node {} has inconsistent address: {} and {}",
+                                           node_id, node_addr_[node_id], addr);
+            }
+        } else {
+            HLOG(INFO) << fmt::format("Seen new node {} with address {}", node_id, addr);
+            node_addr_[node_id] = std::string(addr);
+        }
+    }
     HLOG(INFO) << "Start new view with id " << view->id();
     views_.emplace_back(view);
     next_log_seqnum_ = BuildSeqNum(view->id(), 0);

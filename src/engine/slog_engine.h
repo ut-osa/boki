@@ -23,7 +23,7 @@ public:
     void OnMessageFromOtherEngine(const protocol::Message& message);
     void OnMessageFromFuncWorker(const protocol::Message& message);
 
-    std::string_view GetNodeAddr(uint16_t node_id);
+    std::string GetNodeAddr(uint16_t node_id);
 
 private:
     Engine* engine_;
