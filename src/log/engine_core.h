@@ -26,11 +26,10 @@ public:
     void SetScheduleLocalCutCallback(ScheduleLocalCutCallback cb);
 
     void BuildLocalCutMessage(LocalCutMsgProto* message);
+    void OnNewFsmRecordsMessage(const FsmRecordsMsgProto& message);
 
-    void NewFsmRecordsMessage(const FsmRecordsMsgProto& message);
-    bool NewLocalLog(uint32_t tag, std::span<const char> data,
-                     const Fsm::View** view, uint64_t* localid);
-    void NewRemoteLog(uint64_t localid, uint32_t tag, std::span<const char> data);
+    bool StoreLogAsPrimaryNode(uint32_t tag, std::span<const char> data, uint64_t* localid);
+    bool StoreLogAsBackupNode(uint32_t tag, std::span<const char> data, uint64_t localid);
 
 private:
     Fsm fsm_;

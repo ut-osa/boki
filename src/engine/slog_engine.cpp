@@ -74,7 +74,7 @@ void SLogEngine::OnSequencerMessage(const SequencerMessage& message,
             return;
         }
         absl::MutexLock lk(&mu_);
-        core_.NewFsmRecordsMessage(message_proto);
+        core_.OnNewFsmRecordsMessage(message_proto);
     } else {
         HLOG(ERROR) << fmt::format("Unknown message type: {}!", message.message_type);
     }
@@ -113,13 +113,6 @@ SLogEngine::LogOp* SLogEngine::GrabReadLogOp(uint64_t op_id) {
 
 void SLogEngine::OnMessageFromOtherEngine(const Message& message) {
     DCHECK(MessageHelper::IsSharedLogOp(message));
-    if (message.log_tag != protocol::kDefaultLogTag) {
-        HLOG(ERROR) << "Cannot handle non-zero log tag at the moment";
-        Message response = MessageHelper::NewSharedLogOpFailed(
-            SharedLogOpType::BAD_ARGS, message.log_client_data);
-        engine_->SendFuncWorkerMessage(message.log_client_id, &response);
-        return;
-    }
     SharedLogOpType op_type = MessageHelper::GetSharedLogOpType(message);
     if (op_type == SharedLogOpType::APPEND) {
         HandleRemoteAppend(message);
@@ -135,6 +128,13 @@ void SLogEngine::OnMessageFromOtherEngine(const Message& message) {
 
 void SLogEngine::OnMessageFromFuncWorker(const Message& message) {
     DCHECK(MessageHelper::IsSharedLogOp(message));
+    if (message.log_tag != protocol::kDefaultLogTag) {
+        HLOG(ERROR) << "Cannot handle non-zero log tag at the moment";
+        Message response = MessageHelper::NewSharedLogOpFailed(
+            SharedLogOpType::BAD_ARGS, message.log_client_data);
+        engine_->SendFuncWorkerMessage(message.log_client_id, &response);
+        return;
+    }
     SharedLogOpType op_type = MessageHelper::GetSharedLogOpType(message);
     if (op_type == SharedLogOpType::APPEND) {
         HandleLocalAppend(message);
@@ -151,8 +151,8 @@ void SLogEngine::OnMessageFromFuncWorker(const Message& message) {
 
 void SLogEngine::HandleRemoteAppend(const Message& message) {
     absl::MutexLock lk(&mu_);
-    core_.NewRemoteLog(message.log_localid, message.log_tag,
-                       MessageHelper::GetInlineData(message));
+    core_.StoreLogAsBackupNode(message.log_tag, MessageHelper::GetInlineData(message),
+                               message.log_localid);
 }
 
 void SLogEngine::HandleRemoteReadAt(const protocol::Message& message) {
@@ -170,13 +170,15 @@ void SLogEngine::HandleLocalAppend(const Message& message) {
     bool success = false;
     {
         absl::MutexLock lk(&mu_);
-        success = core_.NewLocalLog(message.log_tag, data, &view, &localid);
+        success = core_.StoreLogAsPrimaryNode(message.log_tag, data, &localid);
         if (success) {
+            view = core_.fsm()->view_with_id(log::LocalIdToViewId(localid));
+            DCHECK(view != nullptr);
             append_ops_[localid] = op;
         }
     }
     if (!success) {
-        HLOG(ERROR) << "NewLocalLog failed";
+        HLOG(ERROR) << "StoreLogAsPrimaryNode failed";
         log_op_pool_.Return(op);
         Message response = MessageHelper::NewSharedLogOpFailed(
             SharedLogOpType::DISCARDED, message.log_client_data);

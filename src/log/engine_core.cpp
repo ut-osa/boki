@@ -45,14 +45,14 @@ void EngineCore::BuildLocalCutMessage(LocalCutMsgProto* message) {
     });
 }
 
-void EngineCore::NewFsmRecordsMessage(const FsmRecordsMsgProto& message) {
+void EngineCore::OnNewFsmRecordsMessage(const FsmRecordsMsgProto& message) {
     for (const FsmRecordProto& record : message.records()) {
         fsm_.OnRecvRecord(record);
     }
 }
 
-bool EngineCore::NewLocalLog(uint32_t tag, std::span<const char> data,
-                             const Fsm::View** view, uint64_t* localid) {
+bool EngineCore::StoreLogAsPrimaryNode(uint32_t tag, std::span<const char> data,
+                                       uint64_t* localid) {
     const Fsm::View* current_view = fsm_.current_view();
     if (current_view == nullptr) {
         HLOG(ERROR) << "No view message from sequencer!";
@@ -70,34 +70,35 @@ bool EngineCore::NewLocalLog(uint32_t tag, std::span<const char> data,
     log_entry->localid = BuildLocalId(current_view->id(), my_node_id_, next_localid_++);
     pending_entries_[log_entry->localid] = std::unique_ptr<LogEntry>(log_entry);
     ScheduleLocalCutIfNecessary();
-
-    *view = current_view;
     *localid = log_entry->localid;
     return true;
 }
 
-void EngineCore::NewRemoteLog(uint64_t localid, uint32_t tag, std::span<const char> data) {
+bool EngineCore::StoreLogAsBackupNode(uint32_t tag, std::span<const char> data,
+                                      uint64_t localid) {
     std::unique_ptr<LogEntry> log_entry(new LogEntry);
     log_entry->localid = localid;
     log_entry->seqnum = 0;
     log_entry->tag = tag;
     log_entry->data = std::string(data.data(), data.size());
     uint16_t view_id = LocalIdToViewId(localid);
-    uint16_t node_id = LocalIdToNodeId(localid);
-    if (node_id == my_node_id_) {
-        HLOG(FATAL) << "Same node_id from remote logs";
+    uint16_t primary_node_id = LocalIdToNodeId(localid);
+    if (primary_node_id == my_node_id_) {
+        HLOG(FATAL) << "Primary node ID is same as mine";
     }
-    HVLOG(1) << fmt::format("Receive remote log (view_id={}, node_id={})", view_id, node_id);
+    HVLOG(1) << fmt::format("Store new log as backup node (view_id={}, primary_node_id={})",
+                            view_id, primary_node_id);
     const Fsm::View* current_view = fsm_.current_view();
     if (current_view != nullptr && current_view->id() > view_id) {
         // Can safely discard this log
         HLOG(WARNING) << "Receive outdated log";
-        return;
+        return false;
     }
     pending_entries_[localid] = std::move(log_entry);
     if (current_view != nullptr && current_view->id() == view_id) {
-        AdvanceLogProgress(current_view, node_id);
+        AdvanceLogProgress(current_view, primary_node_id);
     }
+    return true;
 }
 
 void EngineCore::OnFsmNewView(const Fsm::View* view) {
