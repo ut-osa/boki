@@ -69,7 +69,7 @@ cd $BASE_DIR/deps/raft && autoreconf -i && \
 # Build rocksdb
 cd $BASE_DIR/deps/rocksdb && rm -rf build && mkdir -p build && cd build && \
   cmake -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DCMAKE_CXX_STANDARD=17 \
-        -DROCKSDB_LITE=ON -DWITH_GFLAGS=OFF -DWITH_TESTS=OFF -DWITH_BENCHMARK_TOOLS=OFF \
+        -DWITH_GFLAGS=OFF -DWITH_TESTS=OFF -DWITH_BENCHMARK_TOOLS=OFF \
         -DWITH_CORE_TOOLS=OFF -DWITH_TOOLS=OFF -DWITH_FOLLY_DISTRIBUTED_MUTEX=OFF \
         -DCMAKE_INSTALL_PREFIX=${DEPS_INSTALL_PATH} .. && \
   make -j$(nproc) install && \

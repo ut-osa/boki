@@ -32,6 +32,7 @@ RocksDBStorage::RocksDBStorage(std::string_view db_path) {
     rocksdb::Options options;
     options.create_if_missing = true;
     rocksdb::DB* db;
+    LOG(INFO) << "Open RocksDB at path " << db_path;
     auto status = rocksdb::DB::Open(options, std::string(db_path), &db);
     if (!status.ok()) {
         LOG(FATAL) << "RocksDB open failed: " << status.ToString();
