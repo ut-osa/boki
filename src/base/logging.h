@@ -164,7 +164,7 @@ T CheckNotNull(const char* file, int line, const char* exprtext, T&& t) {
                faas::logging::GetReferenceableValue(val1), \
                faas::logging::GetReferenceableValue(val2), \
                #val1 " " #op " " #val2)))                  \
-    log(__FILE__, __LINE__, *_result).stream()
+        log(__FILE__, __LINE__, *_result).stream()
 
 #define CHECK_OP(name, op, val1, val2) \
     CHECK_OP_LOG(name, op, val1, val2, faas::logging::LogMessageFatal)

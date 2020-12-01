@@ -246,7 +246,7 @@ void Raft::CloseCallbackWrapper(struct raft* raft) {
 bool Raft::EncodeToRaftBuffer(std::span<const char> data, struct raft_buffer* buf) {
     size_t data_size = data.size();
     size_t buf_len = sizeof(size_t) + data_size;
-    // Align to 8 bytes
+    // Round up to multiply of 8 bytes
     if (buf_len % 8 != 0) {
         buf_len = (buf_len / 8 + 1) * 8;
     }

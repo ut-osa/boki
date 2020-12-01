@@ -273,6 +273,7 @@ void NodeManager::OnConnectionClosing(Connection* connection) {
     ctx->active_connections.erase(connection);
     ctx->next_connection = ctx->active_connections.begin();
     if (ctx->active_connections.empty()) {
+        HLOG(WARNING) << fmt::format("Node {} disconnected!", node_id);
         connected_nodes_.erase(node_id);
         server_->OnNodeDisconnected(node_id);
     }
