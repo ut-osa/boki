@@ -257,18 +257,20 @@ void SLogEngine::RemoteReadAtFinished(const protocol::Message& message) {
 
 void SLogEngine::LogPersisted(std::unique_ptr<log::LogEntry> log_entry) {
     mu_.AssertHeld();
-    if (log::LocalIdToNodeId(log_entry->localid) == my_node_id()) {
-        LogOp* op = GrabLogOp(append_ops_, log_entry->localid);
+    uint64_t localid = log_entry->localid;
+    uint64_t seqnum = log_entry->seqnum;
+    storage_->Add(std::move(log_entry));
+    if (log::LocalIdToNodeId(localid) == my_node_id()) {
+        LogOp* op = GrabLogOp(append_ops_, localid);
         if (op == nullptr) {
             return;
         }
         HVLOG(1) << fmt::format("Log (localid {}) replicated with seqnum {}",
-                                log_entry->localid, log_entry->seqnum);
+                                localid, seqnum);
         Message response = MessageHelper::NewSharedLogOpSucceeded(
-            SharedLogOpType::APPEND_OK, log_entry->seqnum);
+            SharedLogOpType::APPEND_OK, seqnum);
         FinishLogOp(op, &response);
     }
-    storage_->Add(std::move(log_entry));
 }
 
 void SLogEngine::LogDiscarded(std::unique_ptr<log::LogEntry> log_entry) {
