@@ -359,6 +359,8 @@ void SLogEngine::LogDiscarded(std::unique_ptr<log::LogEntry> log_entry) {
         HLOG(WARNING) << fmt::format("Log with localid {} discarded", log_entry->localid);
         if (op->src_node_id == my_node_id() && --op->remaining_retries > 0) {
             std::span<const char> data(log_entry->data.data(), log_entry->data.size());
+            // This is buggy, as NewAppendLogOp will try to acquire mu_
+            // TODO: Fix it
             NewAppendLogOp(op, data);
         } else {
             Message response = MessageHelper::NewSharedLogOpFailed(

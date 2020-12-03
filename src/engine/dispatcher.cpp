@@ -68,6 +68,7 @@ void Dispatcher::OnFuncWorkerDisconnected(FuncWorker* func_worker) {
     absl::MutexLock lk(&mu_);
     if (running_workers_.contains(client_id)) {
         // TODO: how to handle this?
+        HLOG(FATAL) << fmt::format("Running worker {} exited", client_id);
     }
     DCHECK(workers_.contains(client_id));
     workers_.erase(client_id);
