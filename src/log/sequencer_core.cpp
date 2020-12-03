@@ -123,6 +123,7 @@ void SequencerCore::NewView() {
     HLOG(INFO) << "Create new view";
     FsmRecordProto* record = fsm_record_pool_.Get();
     Fsm::NodeVec node_vec(conencted_nodes_.begin(), conencted_nodes_.end());
+    std::random_shuffle(node_vec.begin(), node_vec.end());
     fsm_.BuildNewViewRecord(replicas, node_vec, record);
     RaftApplyRecord(record);
 }

@@ -54,6 +54,13 @@ private:
     absl::flat_hash_map</* localid */ uint64_t, LogOp*> append_ops_ ABSL_GUARDED_BY(mu_);
     absl::flat_hash_map</* op_id */ uint64_t, LogOp*> remote_ops_ ABSL_GUARDED_BY(mu_);
 
+    struct CompletedLogEntry {
+        std::unique_ptr<log::LogEntry> log_entry;
+        bool persisted;
+        LogOp* append_op;
+    };
+    absl::InlinedVector<CompletedLogEntry, 8> completed_log_entries_ ABSL_GUARDED_BY(mu_);
+
     inline uint16_t my_node_id() const;
 
     static inline LogOpType op_type(const LogOp* op) {
@@ -91,6 +98,7 @@ private:
     void ReplicateLog(const log::Fsm::View* view, int32_t tag, uint64_t localid,
                       std::span<const char> data);
     void ReadLogFromStorage(uint64_t seqnum, protocol::Message* response);
+    void LogEntryCompleted(CompletedLogEntry entry);
 
     void SendFailedResponse(const protocol::Message& request,
                             protocol::SharedLogResultType result);

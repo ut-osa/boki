@@ -92,8 +92,15 @@ void SLogEngine::OnSequencerMessage(const SequencerMessage& message,
             HLOG(ERROR) << "Failed to parse sequencer message!";
             return;
         }
-        absl::MutexLock lk(&mu_);
-        core_.OnNewFsmRecordsMessage(message_proto);
+        absl::InlinedVector<CompletedLogEntry, 8> completed_log_entries;
+        {
+            absl::MutexLock lk(&mu_);
+            core_.OnNewFsmRecordsMessage(message_proto);
+            completed_log_entries_.swap(completed_log_entries);
+        }
+        for (CompletedLogEntry& entry : completed_log_entries) {
+            LogEntryCompleted(std::move(entry));
+        }
     } else {
         HLOG(ERROR) << fmt::format("Unknown message type: {}!", message.message_type);
     }
@@ -186,7 +193,7 @@ void SLogEngine::HandleRemoteRead(const protocol::Message& message) {
     LogOpType type = (msg_type == SharedLogOpType::READ_NEXT) ? LogOpType::kReadNext
                                                               : LogOpType::kReadPrev;
     if (message.src_node_id == my_node_id()) {
-        // Route back to myself
+        VLOG(1) << "Remote read request routes back to myself";
         {
             absl::MutexLock lk(&mu_);
             op = GrabLogOp(remote_ops_, message.log_client_data);
@@ -333,41 +340,28 @@ void SLogEngine::RemoteReadFinished(const protocol::Message& message, LogOp* op)
 
 void SLogEngine::LogPersisted(std::unique_ptr<log::LogEntry> log_entry) {
     mu_.AssertHeld();
-    uint64_t localid = log_entry->localid;
-    uint64_t seqnum = log_entry->seqnum;
-    storage_->Add(std::move(log_entry));
-    if (log::LocalIdToNodeId(localid) == my_node_id()) {
-        LogOp* op = GrabLogOp(append_ops_, localid);
-        if (op == nullptr) {
-            return;
-        }
-        HVLOG(1) << fmt::format("Log (localid {}) replicated with seqnum {}",
-                                localid, seqnum);
-        Message response = MessageHelper::NewSharedLogOpSucceeded(
-            SharedLogResultType::APPEND_OK, seqnum);
-        FinishLogOp(op, &response);
+    LogOp* op = nullptr;
+    if (log::LocalIdToNodeId(log_entry->localid) == my_node_id()) {
+        op = GrabLogOp(append_ops_, log_entry->localid);
     }
+    completed_log_entries_.push_back({
+        .log_entry = std::move(log_entry),
+        .persisted = true,
+        .append_op = op
+    });
 }
 
 void SLogEngine::LogDiscarded(std::unique_ptr<log::LogEntry> log_entry) {
     mu_.AssertHeld();
+    LogOp* op = nullptr;
     if (log::LocalIdToNodeId(log_entry->localid) == my_node_id()) {
-        LogOp* op = GrabLogOp(append_ops_, log_entry->localid);
-        if (op == nullptr) {
-            return;
-        }
-        HLOG(WARNING) << fmt::format("Log with localid {} discarded", log_entry->localid);
-        if (op->src_node_id == my_node_id() && --op->remaining_retries > 0) {
-            std::span<const char> data(log_entry->data.data(), log_entry->data.size());
-            // This is buggy, as NewAppendLogOp will try to acquire mu_
-            // TODO: Fix it
-            NewAppendLogOp(op, data);
-        } else {
-            Message response = MessageHelper::NewSharedLogOpFailed(
-                SharedLogResultType::DISCARDED);
-            FinishLogOp(op, &response);
-        }
+        op = GrabLogOp(append_ops_, log_entry->localid);
     }
+    completed_log_entries_.push_back({
+        .log_entry = std::move(log_entry),
+        .persisted = false,
+        .append_op = op
+    });
 }
 
 void SLogEngine::FinishLogOp(LogOp* op, protocol::Message* response) {
@@ -545,6 +539,31 @@ void SLogEngine::ReadLogFromStorage(uint64_t seqnum, protocol::Message* response
         FillReadLogResponse(seqnum, data, response);
     } else {
         *response = MessageHelper::NewSharedLogOpFailed(SharedLogResultType::DATA_LOST);
+    }
+}
+
+void SLogEngine::LogEntryCompleted(CompletedLogEntry entry) {
+    if (entry.persisted) {
+        uint64_t seqnum = entry.log_entry->seqnum;
+        HVLOG(1) << fmt::format("Log (localid {}) replicated with seqnum {}",
+                                entry.log_entry->localid, seqnum);
+        storage_->Add(std::move(entry.log_entry));
+        Message response = MessageHelper::NewSharedLogOpSucceeded(
+            SharedLogResultType::APPEND_OK, seqnum);
+        FinishLogOp(entry.append_op, &response);
+    } else {
+        HLOG(WARNING) << fmt::format("Log with localid {} discarded",
+                                     entry.log_entry->localid);
+        LogOp* op = entry.append_op;
+        if (op->src_node_id == my_node_id() && --op->remaining_retries > 0) {
+            std::span<const char> data(entry.log_entry->data.data(),
+                                       entry.log_entry->data.size());
+            NewAppendLogOp(op, data);
+        } else {
+            Message response = MessageHelper::NewSharedLogOpFailed(
+                SharedLogResultType::DISCARDED);
+            FinishLogOp(op, &response);
+        }
     }
 }
 
