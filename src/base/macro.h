@@ -45,3 +45,6 @@ static_assert(__FAAS_MESSAGE_SIZE <= PIPE_BUF,
               "__FAAS_MESSAGE_SIZE cannot exceed PIPE_BUF");
 static_assert(__FAAS_MESSAGE_SIZE >= __FAAS_CACHE_LINE_SIZE * 2,
               "__FAAS_MESSAGE_SIZE is too small");
+
+#define NOT_IMPLEMENTED()  LOG(FATAL) << "Not implemented"
+#define UNREACHABLE()      LOG(FATAL) << "Unreachable"

@@ -278,11 +278,11 @@ bool SequencerCore::RaftFsmApplyCallback(std::span<const char> payload) {
 }
 
 bool SequencerCore::RaftFsmRestoreCallback(std::span<const char> payload) {
-    HLOG(FATAL) << "Not implemented";
+    NOT_IMPLEMENTED();
 }
 
 bool SequencerCore::RaftFsmSnapshotCallback(std::string* data) {
-    HLOG(FATAL) << "Not implemented";
+    NOT_IMPLEMENTED();
 }
 
 }  // namespace log

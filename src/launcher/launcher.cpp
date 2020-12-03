@@ -147,7 +147,7 @@ void Launcher::OnRecvMessage(const protocol::Message& message) {
                 func_process->SendMessage(message);
             }
         } else {
-            HLOG(FATAL) << "Unreachable";
+            UNREACHABLE();
         }
     } else {
         HLOG(ERROR) << "Unknown message type!";

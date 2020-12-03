@@ -237,7 +237,7 @@ bool ParseHostPort(std::string_view addr_str, std::string_view* host, uint16_t* 
     *port = gsl::narrow_cast<uint16_t>(parsed_port);
     return true;
 #else
-    LOG(FATAL) << "Not implemented";
+    NOT_IMPLEMENTED();
 #endif
 }
 

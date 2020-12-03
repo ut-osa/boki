@@ -107,12 +107,12 @@ bool RocksDBStorage::Read(uint64_t seqnum, std::string* data) {
 
 bool RocksDBStorage::ReadFirst(uint32_t tag, uint64_t start_seqnum, uint64_t end_seqnum,
                                uint64_t* seqnum, std::string* data) {
-    LOG(FATAL) << "Not implemented";
+    NOT_IMPLEMENTED();
 }
 
 bool RocksDBStorage::ReadLast(uint32_t tag, uint64_t start_seqnum, uint64_t end_seqnum,
                               uint64_t* seqnum, std::string* data) {
-    LOG(FATAL) << "Not implemented";
+    NOT_IMPLEMENTED();
 }
 
 

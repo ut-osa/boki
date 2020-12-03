@@ -91,7 +91,7 @@ void ServerBase::EventLoopThreadMain() {
                     DoReadClosedConnection(item.fd);
                 }
             } else {
-                HLOG(FATAL) << "Unreachable";
+                UNREACHABLE();
             }
         }
     }

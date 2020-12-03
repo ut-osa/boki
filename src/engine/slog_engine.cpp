@@ -144,6 +144,7 @@ void SLogEngine::OnMessageFromFuncWorker(const Message& message) {
         HandleLocalReadNext(message);
     } else if (op_type == SharedLogOpType::TRIM) {
         // TODO
+        NOT_IMPLEMENTED();
     } else {
         HLOG(FATAL) << "Unknown SharedLogOpType from local message: "
                     << static_cast<uint16_t>(op_type);
@@ -304,7 +305,7 @@ void SLogEngine::RemoteOpFinished(const protocol::Message& response) {
         RemoteReadFinished(response, op);
         break;
     default:
-        LOG(FATAL) << "Unreachable";
+        UNREACHABLE();
     }
 }
 

@@ -119,7 +119,7 @@ void Server::OnConnectionClose(server::ConnectionBase* connection) {
         DCHECK(engine_connections_.contains(connection->id()));
         engine_connections_.erase(connection->id());
     } else {
-        HLOG(FATAL) << "Unreachable";
+        UNREACHABLE();
     }
 }
 
@@ -240,7 +240,7 @@ void Server::HandleFuncCallCompleteOrFailedMessage(uint16_t node_id,
         } else if (GatewayMessageHelper::IsFuncCallFailed(message)) {
             func_call_context->set_status(FuncCallContext::kFailed);
         } else {
-            HLOG(FATAL) << "Unreachable";
+            UNREACHABLE();
         }
         FinishFuncCall(std::move(parent_connection), func_call_context);
     }
@@ -346,7 +346,7 @@ void Server::FinishFuncCall(std::shared_ptr<server::ConnectionBase> parent_conne
         parent_connection->as_ptr<GrpcConnection>()->OnFuncCallFinished(func_call_context);
         break;
     default:
-        HLOG(FATAL) << "Unreachable";
+        UNREACHABLE();
     }
 }
 
