@@ -76,6 +76,7 @@
 #include <absl/random/distributions.h>
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
+#include <absl/container/fixed_array.h>
 #include <absl/container/inlined_vector.h>
 #include <absl/synchronization/mutex.h>
 #include <absl/synchronization/notification.h>

@@ -79,11 +79,13 @@ private:
     absl::flat_hash_map</* node_id */ uint16_t, std::string> node_addr_;
 
     struct GlobalCut {
-        uint16_t view_id;
+        const View* view;
         uint64_t start_seqnum;
         uint64_t end_seqnum;
-        std::vector<uint32_t> localid_cuts;
-        std::vector<uint32_t> deltas;
+        absl::FixedArray<uint32_t> localid_cuts;
+        absl::FixedArray<uint32_t> deltas;
+
+        explicit GlobalCut(const View* view);
     };
     std::vector<std::unique_ptr<GlobalCut>> global_cuts_;
 
@@ -129,6 +131,9 @@ private:
     std::vector<uint16_t> node_ids_;
     absl::flat_hash_map</* node_id */ uint16_t, size_t> node_indices_;
     absl::flat_hash_map</* node_id */ uint16_t, std::string> node_addr_;
+    uint64_t hash_seed_;
+
+    void ComputeHashSeed();
 
     DISALLOW_COPY_AND_ASSIGN(View);
 };

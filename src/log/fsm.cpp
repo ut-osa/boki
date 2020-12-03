@@ -18,6 +18,12 @@ Fsm::Fsm(uint16_t sequencer_id)
 
 Fsm::~Fsm() {}
 
+Fsm::GlobalCut::GlobalCut(const View* view)
+    : localid_cuts(view->num_nodes()),
+      deltas(view->num_nodes()) {
+    this->view = view;
+}
+
 void Fsm::SetNewViewCallback(NewViewCallback cb) {
     new_view_cb_ = cb;
 }
@@ -88,7 +94,7 @@ bool Fsm::FindNextSeqnum(uint64_t start_seqnum, uint64_t* seqnum,
     DCHECK(start_seqnum < global_cuts_.at(pos)->end_seqnum);
     DCHECK(pos == 0 || start_seqnum >= global_cuts_.at(pos-1)->end_seqnum);
     const GlobalCut* target_cut = global_cuts_.at(pos).get();
-    const View* target_view = view_with_id(target_cut->view_id);
+    const View* target_view = target_cut->view;
     if (target_cut->start_seqnum < start_seqnum) {
         uint64_t current_seqnum = target_cut->start_seqnum;
         size_t node_idx = 0;
@@ -115,7 +121,7 @@ bool Fsm::CheckTail(uint64_t* seqnum, const View** view, uint16_t* primary_node_
     if (global_cuts_.empty()) {
         return false;
     }
-    const View* target_view = view_with_id(global_cuts_.back()->view_id);
+    const View* target_view = global_cuts_.back()->view;
     *view = target_view;
     *seqnum = global_cuts_.back()->end_seqnum - 1;
     *primary_node_id = target_view->node(target_view->num_nodes() - 1);
@@ -172,16 +178,14 @@ void Fsm::ApplyGlobalCutRecord(const GlobalCutRecordProto& record) {
         HLOG(FATAL) << "Inconsistent size of localid_cuts from GlobalCutRecordProto";
     }
     GlobalCut* previous_cut = nullptr;
-    if (!global_cuts_.empty() && global_cuts_.back()->view_id == view->id()) {
+    if (!global_cuts_.empty() && global_cuts_.back()->view == view) {
         previous_cut = global_cuts_.back().get();
     }
-    GlobalCut* new_cut = new GlobalCut;
-    new_cut->view_id = view->id();
+    GlobalCut* new_cut = new GlobalCut(view);
     new_cut->start_seqnum = record.start_seqnum();
-    new_cut->localid_cuts.assign(record.localid_cuts().begin(), record.localid_cuts().end());
-    new_cut->deltas.assign(view->num_nodes(), 0);
     global_cuts_.emplace_back(new_cut);
     for (size_t i = 0; i < view->num_nodes(); i++) {
+        new_cut->localid_cuts[i] = record.localid_cuts(i);
         uint16_t node_id = view->node(i);
         uint32_t start_localid = previous_cut == nullptr ? 0 : previous_cut->localid_cuts[i];
         uint32_t end_localid = new_cut->localid_cuts[i];
@@ -214,6 +218,7 @@ Fsm::View::View(const NewViewRecordProto& proto)
         node_indices_[node_id] = idx;
         node_addr_[node_id] = node.addr();
     }
+    ComputeHashSeed();
 }
 
 Fsm::View::~View() {}
@@ -263,8 +268,16 @@ uint16_t Fsm::View::PickOneStorageNode(uint16_t primary_node_id) const {
 }
 
 uint16_t Fsm::View::LogTagToPrimaryNode(uint32_t log_tag) const {
-    uint64_t h = hash::xxHash64(log_tag);
+    uint64_t h = hash::xxHash64(log_tag, hash_seed_);
     return node_ids_[h % node_ids_.size()];
+}
+
+void Fsm::View::ComputeHashSeed() {
+    uint64_t v = (replicas_ << 16) + id_;
+    for (size_t i = 0; i < node_ids_.size(); i++) {
+        v = v * 1299833 + node_ids_[i];
+    }
+    hash_seed_ = hash::xxHash64(v);
 }
 
 }  // namespace log

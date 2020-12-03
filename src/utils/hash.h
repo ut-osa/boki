@@ -6,11 +6,11 @@
 namespace faas {
 namespace hash {
 
-constexpr uint64_t kHashSeed64 = 0xecae064502f9bedcULL;
+constexpr uint64_t kDefaultHashSeed64 = 0xecae064502f9bedcULL;
 
 template<class IntType>
-uint64_t xxHash64(IntType value) {
-    return XXH64(&value, sizeof(IntType), kHashSeed64);
+uint64_t xxHash64(IntType value, uint64_t seed = kDefaultHashSeed64) {
+    return XXH64(&value, sizeof(IntType), seed);
 }
 
 }  // namespace hash
