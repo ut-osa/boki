@@ -127,8 +127,7 @@ struct Message {
             int32_t dispatch_delay;   // [8:12]  Used in FUNC_CALL_COMPLETE, FUNC_CALL_FAILED
             int32_t processing_time;  // [12:16] Used in FUNC_CALL_COMPLETE
         } __attribute__ ((packed));
-        uint64_t log_seqnum;          // [8:16]  Used in SHARED_LOG_OP (PERSISTED, CHECK_TAIL)
-        uint64_t log_start_seqnum;    // [8:16]  Used in SHARED_LOG_OP (READ_NEXT)
+        uint64_t log_seqnum;          // [8:16]  Used in SHARED_LOG_OP
     };
     int64_t send_timestamp;       // [16:24]
     int32_t payload_size;         // [24:28] Used in HANDSHAKE_RESPONSE, INVOKE_FUNC,
@@ -149,9 +148,7 @@ struct Message {
         uint64_t log_client_data; // [40:48] will be preserved for response to clients
     };
 
-    uint64_t log_end_seqnum;      // [48:56] Used in SHARED_LOG_OP (READ_NEXT)
-
-    char padding[__FAAS_CACHE_LINE_SIZE - 56];
+    char padding[__FAAS_CACHE_LINE_SIZE - 48];
     char inline_data[__FAAS_MESSAGE_SIZE - __FAAS_CACHE_LINE_SIZE]
         __attribute__ ((aligned (__FAAS_CACHE_LINE_SIZE)));
 };

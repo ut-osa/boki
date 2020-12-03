@@ -95,7 +95,7 @@ private:
     void ScheduleLocalCut(int duration_us);
 
     template<class KeyT>
-    static inline LogOp* GrabLogOp(absl::flat_hash_map<KeyT, LogOp*>& op_map, KeyT key);
+    static LogOp* GrabLogOp(absl::flat_hash_map<KeyT, LogOp*>& op_map, KeyT key);
 
     DISALLOW_COPY_AND_ASSIGN(SLogEngine);
 };

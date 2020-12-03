@@ -181,11 +181,7 @@ void SLogEngine::HandleLocalReadNext(const protocol::Message& message) {
     {
         absl::ReaderMutexLock lk(&mu_);
         success = core_.fsm()->FindNextSeqnum(
-            message.log_start_seqnum, &seqnum, &view, &primary_node_id);
-    }
-
-    if (success && message.log_end_seqnum <= seqnum) {
-        success = false;
+            message.log_seqnum, &seqnum, &view, &primary_node_id);
     }
 
     if (!success) {

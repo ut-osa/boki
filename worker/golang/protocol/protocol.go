@@ -180,7 +180,7 @@ func NewSharedLogAppendMessage(myClientId uint16, tag uint32, clientData uint64)
 	return buffer
 }
 
-func NewSharedLogReadNextMessage(myClientId uint16, tag uint32, clientData uint64, startSeqNum uint64, endSeqNum uint64) []byte {
+func NewSharedLogReadNextMessage(myClientId uint16, tag uint32, clientData uint64, startSeqNum uint64) []byte {
 	buffer := NewEmptyMessage()
 	binary.LittleEndian.PutUint64(buffer[0:8], uint64(MessageType_SHARED_LOG_OP))
 	binary.LittleEndian.PutUint16(buffer[32:34], SharedLogOpType_READ_NEXT)
@@ -188,7 +188,6 @@ func NewSharedLogReadNextMessage(myClientId uint16, tag uint32, clientData uint6
 	binary.LittleEndian.PutUint32(buffer[36:40], tag)
 	binary.LittleEndian.PutUint64(buffer[40:48], clientData)
 	binary.LittleEndian.PutUint64(buffer[8:16], startSeqNum)
-	binary.LittleEndian.PutUint64(buffer[48:56], endSeqNum)
 	return buffer
 }
 

@@ -508,9 +508,9 @@ func (w *FuncWorker) SharedLogAppend(ctx context.Context, tag uint32, data []byt
 }
 
 // Implement types.Environment
-func (w *FuncWorker) SharedLogReadNext(ctx context.Context, tag uint32, startSeqNum uint64, endSeqNum uint64) (*types.LogEntry, error) {
+func (w *FuncWorker) SharedLogReadNext(ctx context.Context, tag uint32, startSeqNum uint64) (*types.LogEntry, error) {
 	id := atomic.AddUint64(&w.nextLogOpId, 1)
-	message := protocol.NewSharedLogReadNextMessage(w.clientId, tag, id, startSeqNum, endSeqNum)
+	message := protocol.NewSharedLogReadNextMessage(w.clientId, tag, id, startSeqNum)
 
 	w.mux.Lock()
 	outputChan := make(chan []byte)

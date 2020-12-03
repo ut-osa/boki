@@ -162,6 +162,11 @@ void EngineCore::OnFsmLogReplicated(uint64_t start_localid, uint64_t start_seqnu
 
 void EngineCore::AdvanceLogProgress(const Fsm::View* view, uint16_t node_id) {
     DCHECK(view->has_node(node_id));
+    if (!log_progress_.contains(node_id)) {
+        HLOG(ERROR) << fmt::format("This node is not backup of node {} in the view {}",
+                                   node_id, view->id());
+        return;
+    }
     uint32_t counter = log_progress_[node_id];
     uint32_t initial_counter = counter;
     while (pending_entries_.count(BuildLocalId(view->id(), node_id, counter)) > 0) {
