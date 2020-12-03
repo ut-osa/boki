@@ -34,7 +34,7 @@ private:
     log::EngineCore core_ ABSL_GUARDED_BY(mu_);
     std::unique_ptr<log::StorageInterface> storage_;
 
-    enum LogOpType : uint16_t { kAppend, kRead, kTrim };
+    enum LogOpType : uint16_t { kAppend, kReadAt, kTrim, kReadNext, kReadPrev };
 
     struct LogOp {
         uint64_t id;  // Lower 8-bit stores type
@@ -52,8 +52,7 @@ private:
     std::atomic<uint64_t> next_op_id_;
 
     absl::flat_hash_map</* localid */ uint64_t, LogOp*> append_ops_ ABSL_GUARDED_BY(mu_);
-    absl::flat_hash_map</* op_id */ uint64_t, LogOp*> remote_append_ops_ ABSL_GUARDED_BY(mu_);
-    absl::flat_hash_map</* op_id */ uint64_t, LogOp*> remote_read_ops_ ABSL_GUARDED_BY(mu_);
+    absl::flat_hash_map</* op_id */ uint64_t, LogOp*> remote_ops_ ABSL_GUARDED_BY(mu_);
 
     inline uint16_t my_node_id() const;
 
@@ -69,29 +68,37 @@ private:
     void HandleRemoteAppend(const protocol::Message& message);
     void HandleRemoteReplicate(const protocol::Message& message);
     void HandleRemoteReadAt(const protocol::Message& message);
+    void HandleRemoteRead(const protocol::Message& message);
 
     void HandleLocalAppend(const protocol::Message& message);
     void HandleLocalReadNext(const protocol::Message& message);
     void HandleLocalCheckTail(const protocol::Message& message);
 
-    void RemoteAppendFinished(const protocol::Message& message);
-    void RemoteReadAtFinished(const protocol::Message& message);
+    void RemoteOpFinished(const protocol::Message& response);
+    void RemoteAppendFinished(const protocol::Message& message, LogOp* op);
+    void RemoteReadAtFinished(const protocol::Message& message, LogOp* op);
+    void RemoteReadFinished(const protocol::Message& message, LogOp* op);
+
     void LogPersisted(std::unique_ptr<log::LogEntry> log_entry);
     void LogDiscarded(std::unique_ptr<log::LogEntry> log_entry);
 
     void FinishLogOp(LogOp* op, protocol::Message* response);
-    void NewReadLogOp(LogOp* op, const log::Fsm::View* view, uint16_t primary_node_id);
+    void ForwardLogOp(LogOp* op, uint16_t dst_node_id, protocol::Message* message);
     void NewAppendLogOp(LogOp* op, std::span<const char> data);
+    void NewReadAtLogOp(LogOp* op, const log::Fsm::View* view, uint16_t primary_node_id);
+    void NewReadLogOp(LogOp* op);
 
     void ReplicateLog(const log::Fsm::View* view, int32_t tag, uint64_t localid,
                       std::span<const char> data);
     void ReadLogFromStorage(uint64_t seqnum, protocol::Message* response);
 
     void SendFailedResponse(const protocol::Message& request,
-                            protocol::SharedLogOpType reason);
+                            protocol::SharedLogResultType result);
     void SendSequencerMessage(const protocol::SequencerMessage& message,
                               std::span<const char> payload);
     void SendMessageToEngine(uint16_t node_id, protocol::Message* message);
+    void SendMessageToEngine(uint16_t src_node_id, uint16_t dst_node_id,
+                             protocol::Message* message);
     void ScheduleLocalCut(int duration_us);
 
     template<class KeyT>
