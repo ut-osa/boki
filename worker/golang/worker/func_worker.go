@@ -523,7 +523,6 @@ func (w *FuncWorker) SharedLogReadNext(ctx context.Context, tag uint32, startSeq
 
 	response := <-outputChan
 	result := protocol.GetSharedLogResultTypeFromMessage(response)
-	log.Printf("[INFO] ReadNext result %x", result)
 	if result == protocol.SharedLogResultType_READ_OK {
 		logEntry := types.LogEntry{
 			SeqNum: protocol.GetLogSeqNumFromMessage(response),

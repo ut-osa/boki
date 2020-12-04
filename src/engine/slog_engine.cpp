@@ -223,6 +223,11 @@ void SLogEngine::HandleLocalAppend(const Message& message) {
     }
     LogOp* op = AllocLogOp(LogOpType::kAppend, message.log_client_id, message.log_client_data);
     op->log_tag = message.log_tag;
+    if (op->log_tag == log::kDefaultLogTag) {
+        HVLOG(1) << "Local append with default tag";
+    } else {
+        HVLOG(1) << fmt::format("Local append with tag {}", op->log_tag);
+    }
     NewAppendLogOp(op, data);
 }
 
@@ -401,11 +406,13 @@ void SLogEngine::NewAppendLogOp(LogOp* op, std::span<const char> data) {
         if (primary_node_id == my_node_id()) {
             success = core_.StoreLogAsPrimaryNode(op->log_tag, data, &localid);
             if (success) {
+                HVLOG(1) << fmt::format("New log stored (localid {:#018x})", localid);
                 view = core_.fsm()->view_with_id(log::LocalIdToViewId(localid));
                 DCHECK(view != nullptr);
                 append_ops_[localid] = op;
             }
         } else {
+            HVLOG(1) << fmt::format("Will append the new log to remote node {}", primary_node_id);
             if (op->src_node_id != my_node_id()) {
                 success = false;
             } else {

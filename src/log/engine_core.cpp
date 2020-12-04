@@ -83,7 +83,7 @@ bool EngineCore::StoreLogAsPrimaryNode(uint32_t tag, std::span<const char> data,
         HLOG(ERROR) << "Current view does not contain myself!";
         return false;
     }
-    if (tag != kDefaultLogTag && tag != current_view->LogTagToPrimaryNode(tag)) {
+    if (tag != kDefaultLogTag && my_node_id_ != current_view->LogTagToPrimaryNode(tag)) {
         HLOG(ERROR) << fmt::format("This node is not the primary node of log tag {} "
                                    "in the current view", tag, current_view->id());
         return false;
