@@ -18,7 +18,7 @@ do
 done
 
 export CFLAGS="-fdata-sections -ffunction-sections"
-export CXXFLAGS="-fdata-sections -ffunction-sections"
+export CXXFLAGS="-std=c++17 -fdata-sections -ffunction-sections"
 
 rm -rf ${DEPS_INSTALL_PATH}
 mkdir -p ${DEPS_INSTALL_PATH}
