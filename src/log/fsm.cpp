@@ -71,6 +71,20 @@ void Fsm::BuildGlobalCutRecord(const CutVec& cuts, FsmRecordProto* record) {
     }
 }
 
+uint16_t Fsm::LocatePrimaryNode(const GlobalCut& cut, uint64_t seqnum) {
+    DCHECK_GE(seqnum, cut.start_seqnum);
+    DCHECK_LT(seqnum, cut.end_seqnum);
+    uint64_t current_seqnum = cut.start_seqnum;
+    for (size_t i = 0; i < cut.deltas.size(); i++) {
+        uint32_t delta = cut.deltas.at(i);
+        if (current_seqnum <= seqnum && seqnum < current_seqnum + delta) {
+            return cut.view->node(i);
+        }
+        current_seqnum += delta;
+    }
+    UNREACHABLE();
+}
+
 bool Fsm::FindNextSeqnum(uint64_t start_seqnum, uint64_t* seqnum,
                          const View** view, uint16_t* primary_node_id) const {
     if (global_cuts_.empty()) {
@@ -94,35 +108,9 @@ bool Fsm::FindNextSeqnum(uint64_t start_seqnum, uint64_t* seqnum,
     DCHECK(start_seqnum < global_cuts_.at(pos)->end_seqnum);
     DCHECK(pos == 0 || start_seqnum >= global_cuts_.at(pos-1)->end_seqnum);
     const GlobalCut* target_cut = global_cuts_.at(pos).get();
-    const View* target_view = target_cut->view;
-    if (target_cut->start_seqnum < start_seqnum) {
-        uint64_t current_seqnum = target_cut->start_seqnum;
-        size_t node_idx = 0;
-        while (node_idx < target_view->num_nodes()) {
-            uint32_t delta = target_cut->deltas.at(node_idx);
-            if (current_seqnum <= start_seqnum && start_seqnum < current_seqnum + delta) {
-                *seqnum = start_seqnum;
-                *primary_node_id = target_view->node(node_idx);
-                break;
-            }
-            current_seqnum += delta;
-            node_idx++;
-        }
-        DCHECK(node_idx < target_view->num_nodes());
-    } else {
-        *seqnum = target_cut->start_seqnum;
-        size_t node_idx = 0;
-        while (node_idx < target_view->num_nodes()) {
-            uint32_t delta = target_cut->deltas.at(node_idx);
-            if (delta > 0) {
-                *primary_node_id = target_view->node(node_idx);
-                break;
-            }
-            node_idx++;
-        }
-        DCHECK(node_idx < target_view->num_nodes());
-    }
-    *view = target_view;
+    *view = target_cut->view;
+    *seqnum = std::max(target_cut->start_seqnum, start_seqnum);
+    *primary_node_id = LocatePrimaryNode(*target_cut, *seqnum);
     return true;
 }
 
@@ -131,16 +119,9 @@ bool Fsm::CheckTail(uint64_t* seqnum, const View** view, uint16_t* primary_node_
         return false;
     }
     const GlobalCut* target_cut = global_cuts_.back().get();
-    const View* target_view = target_cut->view;
-    *view = target_view;
+    *view = target_cut->view;
     *seqnum = target_cut->end_seqnum - 1;
-    uint16_t last_node_id;
-    for (size_t i = 0; i < target_view->num_nodes(); i++) {
-        if (target_cut->deltas.at(i) > 0) {
-            last_node_id = target_view->node(i);
-        }
-    }
-    *primary_node_id = last_node_id;
+    *primary_node_id = LocatePrimaryNode(*target_cut, *seqnum);
     return true;
 }
 

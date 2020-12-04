@@ -89,6 +89,8 @@ private:
     };
     std::vector<std::unique_ptr<GlobalCut>> global_cuts_;
 
+    static uint16_t LocatePrimaryNode(const GlobalCut& cut, uint64_t seqnum);
+
     void ApplyNewViewRecord(const NewViewRecordProto& record);
     void ApplyGlobalCutRecord(const GlobalCutRecordProto& record);
 
