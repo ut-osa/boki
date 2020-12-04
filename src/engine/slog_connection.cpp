@@ -179,6 +179,7 @@ void SLogMessageHub::Connection::SendMessage(const protocol::Message& message) {
     std::span<char> buf;
     io_worker_->NewWriteBuffer(&buf);
     CHECK_GE(buf.size(), sizeof(protocol::Message));
+    // TODO: consider payload size, instead of copying the entire message struct
     memcpy(buf.data(), &message, sizeof(protocol::Message));
     URING_DCHECK_OK(current_io_uring()->SendAll(
         sockfd_, std::span<const char>(buf.data(), sizeof(protocol::Message)),

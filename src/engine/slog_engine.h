@@ -45,6 +45,8 @@ private:
         uint64_t log_seqnum;
         std::string log_data;
         int remaining_retries;
+        int64_t start_timestamp;
+        uint16_t hop_times;
     };
     static constexpr int kMaxRetires = 3;
 
@@ -99,6 +101,7 @@ private:
                       std::span<const char> data);
     void ReadLogFromStorage(uint64_t seqnum, protocol::Message* response);
     void LogEntryCompleted(CompletedLogEntry entry);
+    void RecordLogOpCompletion(LogOp* op);
 
     void SendFailedResponse(const protocol::Message& request,
                             protocol::SharedLogResultType result);

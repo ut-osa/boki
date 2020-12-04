@@ -117,6 +117,8 @@ SLogEngine::LogOp* SLogEngine::AllocLogOp(LogOpType type, uint16_t client_id,
     op->log_seqnum = protocol::kInvalidLogSeqNum;
     op->log_data.clear();
     op->remaining_retries = kMaxRetires;
+    op->start_timestamp = GetMonotonicMicroTimestamp();
+    op->hop_times = 0;
     return op;
 }
 
@@ -165,6 +167,7 @@ void SLogEngine::HandleRemoteAppend(const protocol::Message& message) {
     LogOp* op = AllocLogOp(LogOpType::kAppend, /* client_id= */ 0, message.log_client_data);
     op->log_tag = message.log_tag;
     op->src_node_id = message.src_node_id;
+    op->hop_times = message.hop_times;
     NewAppendLogOp(op, data);
 }
 
@@ -182,6 +185,7 @@ void SLogEngine::HandleRemoteReadAt(const protocol::Message& message) {
     Message response;
     ReadLogFromStorage(message.log_seqnum, &response);
     response.log_client_data = message.log_client_data;
+    response.hop_times = message.hop_times + 1;
     SendMessageToEngine(message.src_node_id, &response);
 }
 
@@ -206,11 +210,13 @@ void SLogEngine::HandleRemoteRead(const protocol::Message& message) {
         DCHECK((type == LogOpType::kReadNext && message.log_seqnum > op->log_seqnum)
                || (type == LogOpType::kReadPrev && message.log_seqnum < op->log_seqnum));
         op->log_seqnum = message.log_seqnum;
+        op->hop_times = message.hop_times;
     } else {
         op = AllocLogOp(type, /* client_id= */ 0, message.log_client_data);
         op->log_tag = message.log_tag;
         op->log_seqnum = message.log_seqnum;
         op->src_node_id = message.src_node_id;
+        op->hop_times = message.hop_times;
     }
     NewReadLogOp(op);
 }
@@ -307,6 +313,7 @@ void SLogEngine::RemoteOpFinished(const protocol::Message& response) {
     if (op == nullptr) {
         return;
     }
+    op->hop_times = response.hop_times;
     switch (op_type(op)) {
     case LogOpType::kAppend:
         RemoteAppendFinished(response, op);
@@ -375,8 +382,10 @@ void SLogEngine::FinishLogOp(LogOp* op, protocol::Message* response) {
     if (response != nullptr) {
         response->log_client_data = op->client_data;
         if (op->src_node_id == my_node_id()) {
+            RecordLogOpCompletion(op);
             engine_->SendFuncWorkerMessage(op->client_id, response);
         } else {
+            response->hop_times = ++op->hop_times;
             SendMessageToEngine(op->src_node_id, response);
         }
     }
@@ -434,6 +443,7 @@ void SLogEngine::NewAppendLogOp(LogOp* op, std::span<const char> data) {
         }
         Message message = MessageHelper::NewSharedLogAppend(op->log_tag, op->id);
         MessageHelper::SetInlineData(&message, data);
+        message.hop_times = ++op->hop_times;
         SendMessageToEngine(primary_node_id, &message);
     }
 }
@@ -454,6 +464,7 @@ void SLogEngine::NewReadAtLogOp(LogOp* op, const log::Fsm::View* view, uint16_t 
         remote_ops_[op->id] = op;
     }
     Message message = MessageHelper::NewSharedLogReadAt(op->log_seqnum, op->id);
+    message.hop_times = ++op->hop_times;
     SendMessageToEngine(view->PickOneStorageNode(primary_node_id), &message);
 }
 
@@ -501,6 +512,7 @@ void SLogEngine::NewReadLogOp(LogOp* op) {
                 op->log_tag, op->log_seqnum,
                 /* next= */ op_type(op) == LogOpType::kReadNext,
                 /* log_client_data= */ op->id);
+            message.hop_times = ++op->hop_times;
             if (op->src_node_id == my_node_id()) {
                 {
                     absl::MutexLock lk(&mu_);
@@ -583,6 +595,29 @@ void SLogEngine::LogEntryCompleted(CompletedLogEntry entry) {
             FinishLogOp(op, &response);
         }
     }
+}
+
+void SLogEngine::RecordLogOpCompletion(LogOp* op) {
+    int64_t elapsed_time = GetMonotonicMicroTimestamp() - op->start_timestamp;
+    std::string kind = "";
+    switch (op_type(op)) {
+    case LogOpType::kAppend:
+        kind = "Append";
+        break;
+    case LogOpType::kReadAt:
+        kind = "ReadAt";
+        break;
+    case LogOpType::kReadNext:
+        kind = "ReadNext";
+        break;
+    case LogOpType::kReadPrev:
+        kind = "ReadPrev";
+        break;
+    default:
+        UNREACHABLE();
+    }
+    HVLOG(1) << fmt::format("{} op finished: elapsed_time={}, hop={}",
+                            kind, elapsed_time, op->hop_times);
 }
 
 void SLogEngine::SendFailedResponse(const protocol::Message& request,

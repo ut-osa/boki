@@ -280,6 +280,7 @@ void Fsm::View::ComputeHashSeed() {
         v = v * 1299833 + node_ids_[i];
     }
     hash_seed_ = hash::xxHash64(v);
+    HVLOG(1) << fmt::format("Hash seed for view {}: {:#018x}", id_, hash_seed_);
 }
 
 }  // namespace log

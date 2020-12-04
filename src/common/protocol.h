@@ -133,7 +133,14 @@ struct Message {
         } __attribute__ ((packed));
         uint64_t log_seqnum;          // [8:16]  Used in SHARED_LOG_OP
     };
-    int64_t send_timestamp;       // [16:24]
+    union {
+        int64_t send_timestamp;       // [16:24]
+        struct {
+            uint16_t hop_times;   // Used in SHARED_LOG_OP
+            uint16_t padding1;
+            uint32_t padding2;
+        } __attribute__ ((packed));
+    };
     int32_t payload_size;         // [24:28] Used in HANDSHAKE_RESPONSE, INVOKE_FUNC,
                                   //                 FUNC_CALL_COMPLETE, SHARED_LOG_OP
     uint32_t flags;               // [28:32]
@@ -153,7 +160,7 @@ struct Message {
         uint64_t log_client_data; // [40:48] will be preserved for response to clients
     };
 
-    char padding[__FAAS_CACHE_LINE_SIZE - 48];
+    char final_padding[__FAAS_CACHE_LINE_SIZE - 48];
     char inline_data[__FAAS_MESSAGE_SIZE - __FAAS_CACHE_LINE_SIZE]
         __attribute__ ((aligned (__FAAS_CACHE_LINE_SIZE)));
 };
