@@ -48,22 +48,26 @@ const (
 
 // SharedLogOpType enum
 const (
-	SharedLogOpType_INVALID uint16 = 0x00
-	// Client operations
+	SharedLogOpType_INVALID    uint16 = 0x00
 	SharedLogOpType_APPEND     uint16 = 0x01
 	SharedLogOpType_CHECK_TAIL uint16 = 0x02
 	SharedLogOpType_READ_NEXT  uint16 = 0x03
 	SharedLogOpType_TRIM       uint16 = 0x04
+)
+
+// SharedLogResultType enum
+const (
+	SharedLogResultType_INVALID uint16 = 0x00
 	// Successful results
-	SharedLogOpType_APPEND_OK uint16 = 0x20
-	SharedLogOpType_READ_OK   uint16 = 0x21
-	SharedLogOpType_TRIM_OK   uint16 = 0x22
+	SharedLogResultType_APPEND_OK uint16 = 0x20
+	SharedLogResultType_READ_OK   uint16 = 0x21
+	SharedLogResultType_TRIM_OK   uint16 = 0x22
 	// Error results
-	SharedLogOpType_BAD_ARGS    uint16 = 0x30
-	SharedLogOpType_DISCARDED   uint16 = 0x31
-	SharedLogOpType_EMPTY       uint16 = 0x32
-	SharedLogOpType_DATA_LOST   uint16 = 0x33
-	SharedLogOpType_TRIM_FAILED uint16 = 0x34
+	SharedLogResultType_BAD_ARGS    uint16 = 0x30
+	SharedLogResultType_DISCARDED   uint16 = 0x31
+	SharedLogResultType_EMPTY       uint16 = 0x32
+	SharedLogResultType_DATA_LOST   uint16 = 0x33
+	SharedLogResultType_TRIM_FAILED uint16 = 0x34
 )
 
 const MessageTypeBits = 4
@@ -91,6 +95,10 @@ func GetFuncCallFromMessage(buffer []byte) FuncCall {
 
 func GetSharedLogOpTypeFromMessage(buffer []byte) uint16 {
 	return binary.LittleEndian.Uint16(buffer[32:34])
+}
+
+func GetSharedLogResultTypeFromMessage(buffer []byte) uint16 {
+	return binary.LittleEndian.Uint16(buffer[34:36])
 }
 
 func GetLogSeqNumFromMessage(buffer []byte) uint64 {

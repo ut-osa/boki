@@ -20,7 +20,7 @@ Fsm::~Fsm() {}
 
 Fsm::GlobalCut::GlobalCut(const View* view)
     : localid_cuts(view->num_nodes()),
-      deltas(view->num_nodes()) {
+      deltas(view->num_nodes(), 0) {
     this->view = view;
 }
 
@@ -111,7 +111,16 @@ bool Fsm::FindNextSeqnum(uint64_t start_seqnum, uint64_t* seqnum,
         DCHECK(node_idx < target_view->num_nodes());
     } else {
         *seqnum = target_cut->start_seqnum;
-        *primary_node_id = target_view->node(0);
+        size_t node_idx = 0;
+        while (node_idx < target_view->num_nodes()) {
+            uint32_t delta = target_cut->deltas.at(node_idx);
+            if (delta > 0) {
+                *primary_node_id = target_view->node(node_idx);
+                break;
+            }
+            node_idx++;
+        }
+        DCHECK(node_idx < target_view->num_nodes());
     }
     *view = target_view;
     return true;
@@ -121,10 +130,17 @@ bool Fsm::CheckTail(uint64_t* seqnum, const View** view, uint16_t* primary_node_
     if (global_cuts_.empty()) {
         return false;
     }
-    const View* target_view = global_cuts_.back()->view;
+    const GlobalCut* target_cut = global_cuts_.back().get();
+    const View* target_view = target_cut->view;
     *view = target_view;
-    *seqnum = global_cuts_.back()->end_seqnum - 1;
-    *primary_node_id = target_view->node(target_view->num_nodes() - 1);
+    *seqnum = target_cut->end_seqnum - 1;
+    uint16_t last_node_id;
+    for (size_t i = 0; i < target_view->num_nodes(); i++) {
+        if (target_cut->deltas.at(i) > 0) {
+            last_node_id = target_view->node(i);
+        }
+    }
+    *primary_node_id = last_node_id;
     return true;
 }
 
@@ -225,6 +241,7 @@ Fsm::View::~View() {}
 
 void Fsm::View::ForEachBackupNode(uint16_t primary_node_id,
                                   std::function<void(uint16_t /* node_id */)> cb) const {
+    DCHECK(node_indices_.contains(primary_node_id));
     size_t base = node_indices_.at(primary_node_id);
     for (size_t i = 1; i < replicas_; i++) {
         size_t node_id = node_ids_[(base + i) % node_ids_.size()];
@@ -234,6 +251,7 @@ void Fsm::View::ForEachBackupNode(uint16_t primary_node_id,
 
 void Fsm::View::ForEachPrimaryNode(uint16_t backup_node_id,
                                    std::function<void(uint16_t /* node_id */)> cb) const {
+    DCHECK(node_indices_.contains(backup_node_id));
     size_t base = node_indices_.at(backup_node_id);
     for (size_t i = 1; i < replicas_; i++) {
         size_t node_id = node_ids_[(base - i + node_ids_.size()) % node_ids_.size()];
@@ -247,10 +265,13 @@ uint16_t Fsm::View::PickOneNode() const {
 }
 
 bool Fsm::View::IsStorageNodeOf(uint16_t primary_node_id, uint16_t node_id) const {
+    DCHECK(node_indices_.contains(primary_node_id));
     if (!node_indices_.contains(node_id)) {
         return false;
     }
-    DCHECK(node_indices_.contains(primary_node_id));
+    if (primary_node_id == node_id) {
+        return true;
+    }
     size_t base = node_indices_.at(primary_node_id);
     for (size_t i = 1; i < replicas_; i++) {
         if (node_id == node_ids_[(base + i) % node_ids_.size()]) {

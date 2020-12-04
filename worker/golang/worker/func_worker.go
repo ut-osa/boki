@@ -499,8 +499,8 @@ func (w *FuncWorker) SharedLogAppend(ctx context.Context, tag uint32, data []byt
 	}
 
 	response := <-outputChan
-	messageType := protocol.GetSharedLogOpTypeFromMessage(response)
-	if messageType == protocol.SharedLogOpType_APPEND_OK {
+	result := protocol.GetSharedLogResultTypeFromMessage(response)
+	if result == protocol.SharedLogResultType_APPEND_OK {
 		return protocol.GetLogSeqNumFromMessage(response), nil
 	} else {
 		return 0, fmt.Errorf("Failed to append log")
@@ -522,14 +522,15 @@ func (w *FuncWorker) SharedLogReadNext(ctx context.Context, tag uint32, startSeq
 	}
 
 	response := <-outputChan
-	messageType := protocol.GetSharedLogOpTypeFromMessage(response)
-	if messageType == protocol.SharedLogOpType_READ_OK {
+	result := protocol.GetSharedLogResultTypeFromMessage(response)
+	log.Printf("[INFO] ReadNext result %x", result)
+	if result == protocol.SharedLogResultType_READ_OK {
 		logEntry := types.LogEntry{
 			SeqNum: protocol.GetLogSeqNumFromMessage(response),
 			Data:   protocol.GetInlineDataFromMessage(response),
 		}
 		return &logEntry, nil
-	} else if messageType == protocol.SharedLogOpType_EMPTY {
+	} else if result == protocol.SharedLogResultType_EMPTY {
 		return nil, nil
 	} else {
 		return nil, fmt.Errorf("Failed to read log")
@@ -551,14 +552,14 @@ func (w *FuncWorker) SharedLogCheckTail(ctx context.Context, tag uint32) (*types
 	}
 
 	response := <-outputChan
-	messageType := protocol.GetSharedLogOpTypeFromMessage(response)
-	if messageType == protocol.SharedLogOpType_READ_OK {
+	result := protocol.GetSharedLogResultTypeFromMessage(response)
+	if result == protocol.SharedLogResultType_READ_OK {
 		logEntry := types.LogEntry{
 			SeqNum: protocol.GetLogSeqNumFromMessage(response),
 			Data:   protocol.GetInlineDataFromMessage(response),
 		}
 		return &logEntry, nil
-	} else if messageType == protocol.SharedLogOpType_EMPTY {
+	} else if result == protocol.SharedLogResultType_EMPTY {
 		return nil, nil
 	} else {
 		return nil, fmt.Errorf("Failed to read log")

@@ -139,10 +139,12 @@ void EngineCore::OnFsmNewView(const Fsm::View* view) {
     }
     next_localid_ = 0;
     log_progress_.clear();
-    view->ForEachPrimaryNode(my_node_id_, [this, view] (uint16_t node_id) {
-        log_progress_[node_id] = 0;
-        AdvanceLogProgress(view, node_id);
-    });
+    if (view->has_node(my_node_id_)) {
+        view->ForEachPrimaryNode(my_node_id_, [this, view] (uint16_t node_id) {
+            log_progress_[node_id] = 0;
+            AdvanceLogProgress(view, node_id);
+        });
+    }
 }
 
 void EngineCore::OnFsmLogReplicated(uint64_t start_localid, uint64_t start_seqnum,
@@ -153,6 +155,8 @@ void EngineCore::OnFsmLogReplicated(uint64_t start_localid, uint64_t start_seqnu
         if (iter == pending_entries_.end()) {
             continue;
         }
+        HVLOG(1) << fmt::format("Log (localid {:#018x}) replicated with seqnum {:#018x}",
+                                localid, start_seqnum + i);
         std::unique_ptr<LogEntry> log_entry = std::move(iter->second);
         pending_entries_.erase(iter);
         log_entry->seqnum = start_seqnum + i;

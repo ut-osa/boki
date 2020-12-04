@@ -228,6 +228,7 @@ void SLogEngine::HandleLocalAppend(const Message& message) {
 
 void SLogEngine::HandleLocalReadNext(const protocol::Message& message) {
     if (message.log_tag == log::kDefaultLogTag) {
+        HVLOG(1) << "Local read with default tag";
         const log::Fsm::View* view;
         uint64_t seqnum;
         uint16_t primary_node_id;
@@ -246,6 +247,7 @@ void SLogEngine::HandleLocalReadNext(const protocol::Message& message) {
         op->log_seqnum = seqnum;
         NewReadAtLogOp(op, view, primary_node_id);
     } else {
+        HVLOG(1) << fmt::format("Local read with tag {}", message.log_tag);
         LogOp* op = AllocLogOp(LogOpType::kReadNext,
                                message.log_client_id, message.log_client_data);
         op->log_seqnum = message.log_seqnum;
@@ -431,8 +433,10 @@ void SLogEngine::NewAppendLogOp(LogOp* op, std::span<const char> data) {
 
 void SLogEngine::NewReadAtLogOp(LogOp* op, const log::Fsm::View* view, uint16_t primary_node_id) {
     DCHECK(op_type(op) == LogOpType::kReadAt);
+    HVLOG(1) << fmt::format("Read log (seqnum={:#018x}) with primary_node {}",
+                            op->log_seqnum, primary_node_id);
     if (view->IsStorageNodeOf(primary_node_id, my_node_id())) {
-        HVLOG(1) << fmt::format("Find log (seqnum={}) locally", op->log_seqnum);
+        HVLOG(1) << fmt::format("Find log (seqnum={:#018x}) locally", op->log_seqnum);
         Message response;
         ReadLogFromStorage(op->log_seqnum, &response);
         FinishLogOp(op, &response);
@@ -519,8 +523,8 @@ void SLogEngine::NewReadLogOp(LogOp* op) {
 
 void SLogEngine::ReplicateLog(const log::Fsm::View* view, int32_t tag,
                               uint64_t localid, std::span<const char> data) {
-    HVLOG(1) << fmt::format("Will replicate log (view_id={}, localid={}) to backup nodes",
-                            view->id(), localid);
+    HVLOG(1) << fmt::format("Will replicate log (view_id={:#018x}, localid={:#018x}) "
+                            "to backup nodes", view->id(), localid);
     Message message = MessageHelper::NewSharedLogReplicate(tag, localid);
     message.src_node_id = my_node_id();
     MessageHelper::SetInlineData(&message, data);
@@ -538,6 +542,8 @@ void SLogEngine::ReadLogFromStorage(uint64_t seqnum, protocol::Message* response
     if (storage_->Read(seqnum, &data)) {
         FillReadLogResponse(seqnum, data, response);
     } else {
+        HLOG(WARNING) << fmt::format("Failed to read log with seqnum {:#018x} from log stroage",
+                                     seqnum);
         *response = MessageHelper::NewSharedLogOpFailed(SharedLogResultType::DATA_LOST);
     }
 }
@@ -545,16 +551,21 @@ void SLogEngine::ReadLogFromStorage(uint64_t seqnum, protocol::Message* response
 void SLogEngine::LogEntryCompleted(CompletedLogEntry entry) {
     if (entry.persisted) {
         uint64_t seqnum = entry.log_entry->seqnum;
-        HVLOG(1) << fmt::format("Log (localid {}) replicated with seqnum {}",
-                                entry.log_entry->localid, seqnum);
         storage_->Add(std::move(entry.log_entry));
+        LogOp* op = entry.append_op;
+        if (op == nullptr) {
+            return;
+        }
         Message response = MessageHelper::NewSharedLogOpSucceeded(
             SharedLogResultType::APPEND_OK, seqnum);
-        FinishLogOp(entry.append_op, &response);
+        FinishLogOp(op, &response);
     } else {
-        HLOG(WARNING) << fmt::format("Log with localid {} discarded",
+        HLOG(WARNING) << fmt::format("Log with localid {:#018x} discarded",
                                      entry.log_entry->localid);
         LogOp* op = entry.append_op;
+        if (op == nullptr) {
+            return;
+        }
         if (op->src_node_id == my_node_id() && --op->remaining_retries > 0) {
             std::span<const char> data(entry.log_entry->data.data(),
                                        entry.log_entry->data.size());
@@ -600,7 +611,11 @@ void SLogEngine::SendMessageToEngine(uint16_t src_node_id, uint16_t dst_node_id,
     DCHECK(io_worker != nullptr);
     SLogMessageHub* hub = DCHECK_NOTNULL(
         io_worker->PickConnection(kSLogMessageHubTypeId))->as_ptr<SLogMessageHub>();
-    message->src_node_id = src_node_id;
+    if (MessageHelper::GetSharedLogOpType(*message) != SharedLogOpType::RESPONSE) {
+        // `src_node_id` and `log_result` shares space
+        // `src_node_id` is not useful for response message
+        message->src_node_id = src_node_id;
+    }
     hub->SendMessage(dst_node_id, *message);
 }
 

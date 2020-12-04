@@ -111,6 +111,7 @@ public:
     }
 
     std::string_view get_addr(uint16_t node_id) const {
+        DCHECK(node_addr_.contains(node_id));
         return node_addr_.at(node_id);
     }
 

@@ -10,7 +10,7 @@ InMemoryStorage::InMemoryStorage() {}
 InMemoryStorage::~InMemoryStorage() {}
 
 void InMemoryStorage::Add(std::unique_ptr<LogEntry> log_entry) {
-    VLOG(1) << fmt::format("Storing log (localid={}, seqnum={})",
+    VLOG(1) << fmt::format("Storing log (localid={:#018x}, seqnum={:#018x})",
                            log_entry->localid, log_entry->seqnum);
     uint64_t seqnum = log_entry->seqnum;
     absl::MutexLock lk(&mu_);
