@@ -5,6 +5,10 @@
 #include "ipc/base.h"
 #include "launcher/launcher.h"
 
+#include <absl/flags/flag.h>
+
+ABSL_FLAG(bool, hostname_in_output_fname, false, "");
+
 namespace faas {
 namespace launcher {
 
@@ -38,15 +42,23 @@ bool FuncProcess::Start(uv_loop_t* uv_loop, utils::BufferPool* read_buffer_pool)
         subprocess_.AddEnvVariable("FAAS_ENGINE_TCP_PORT", launcher_->engine_tcp_port());
     }
     if (!launcher_->fprocess_output_dir().empty()) {
-        std::string_view func_name = launcher_->func_name();
+        std::string fname_prefix;
+        if (absl::GetFlag(FLAGS_hostname_in_output_fname)) {
+            std::string hostname;
+            if (!faas::fs_utils::ReadContents("/proc/sys/kernel/hostname", &hostname)) {
+                LOG(FATAL) << "Failed to read /proc/sys/kernel/hostname";
+            }
+            hostname = absl::StripSuffix(hostname, "\n");
+            fname_prefix = fmt::format("{}_{}_{}", launcher_->func_name(), hostname, id_);
+        } else {
+            fname_prefix = fmt::format("{}_worker_{}", launcher_->func_name(), id_);
+        }
         subprocess_.SetStandardFile(
             uv::Subprocess::kStdout,
-            fs_utils::JoinPath(launcher_->fprocess_output_dir(), 
-                               fmt::format("{}_worker_{}.stdout", func_name, id_)));
+            fs_utils::JoinPath(launcher_->fprocess_output_dir(), fname_prefix + ".stdout"));
         subprocess_.SetStandardFile(
             uv::Subprocess::kStderr,
-            fs_utils::JoinPath(launcher_->fprocess_output_dir(), 
-                               fmt::format("{}_worker_{}.stderr", func_name, id_)));
+            fs_utils::JoinPath(launcher_->fprocess_output_dir(), fname_prefix + ".stderr"));
     }
     if (!launcher_->fprocess_working_dir().empty()) {
         subprocess_.SetWorkingDir(launcher_->fprocess_working_dir());
