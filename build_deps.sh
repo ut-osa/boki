@@ -17,6 +17,10 @@ do
   shift
 done
 
+if [[ ! -z "${OVERLAY_PATH}" ]]; then
+  BASE_DIR=${OVERLAY_PATH}
+fi
+
 export CFLAGS="-fdata-sections -ffunction-sections"
 export CXXFLAGS="-std=c++17 -fdata-sections -ffunction-sections"
 
@@ -38,12 +42,12 @@ cd $BASE_DIR/deps/http-parser && make clean && make package && \
 
 # Build liburing
 cd $BASE_DIR/deps/liburing && make clean && \
-  ./configure --prefix=${DEPS_INSTALL_PATH} && make install
+  ./configure --prefix=${DEPS_INSTALL_PATH} && make install && make clean
 
 # Build protobuf
 cd $BASE_DIR/deps/protobuf && ./autogen.sh && \
   ./configure --prefix=${DEPS_INSTALL_PATH} && \
-  make clean && make -j$(nproc) install
+  make clean && make -j$(nproc) install && make clean
 
 # Build libuv
 cd $BASE_DIR/deps/libuv && rm -rf build && mkdir -p build && cd build && \
@@ -64,7 +68,7 @@ cd $BASE_DIR/deps/nghttp2 && rm -rf build && mkdir -p build && cd build && \
 cd $BASE_DIR/deps/raft && autoreconf -i && \
   PKG_CONFIG_PATH=${DEPS_INSTALL_PATH}/lib/pkgconfig \
       ./configure --prefix=${DEPS_INSTALL_PATH} --enable-debug=${ENABLE_DEBUG} && \
-  make clean && make -j$(nproc) install
+  make clean && make -j$(nproc) install && make clean
 
 # Build rocksdb
 cd $BASE_DIR/deps/rocksdb && rm -rf build && mkdir -p build && cd build && \
