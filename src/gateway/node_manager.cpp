@@ -116,6 +116,7 @@ bool NodeManager::SendMessage(uint16_t node_id, const protocol::GatewayMessage& 
         }
     }
     // Slow path
+    HLOG(WARNING) << "Using slow path in SendMessage";
     std::shared_ptr<server::ConnectionBase> connection = nullptr;
     {
         absl::ReaderMutexLock lk(&mu_);

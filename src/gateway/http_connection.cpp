@@ -289,11 +289,21 @@ void HttpConnection::OnNewHttpRequest(std::string_view method, std::string_view 
     DCHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
     HVLOG(1) << "New HTTP request: " << method << " " << path;
 
-    if (!(method == "GET" || method == "POST") || !absl::StartsWith(path, "/function/")) {
+    if (!(method == "GET" || method == "POST")) {
         SendHttpResponse(HttpStatus::NOT_FOUND);
         return;
     }
-    std::string_view func_name = absl::StripPrefix(path, "/function/");
+    std::string_view func_name;
+    bool async = false;
+    if (absl::StartsWith(path, "/function/")) {
+        func_name = absl::StripPrefix(path, "/function/");
+    } else if (absl::StartsWith(path, "/asyncFunction/")) {
+        func_name = absl::StripPrefix(path, "/asyncFunction/");
+        async = true;
+    } else {
+        SendHttpResponse(HttpStatus::NOT_FOUND);
+        return;
+    }
     auto func_entry = server_->func_config()->find_by_func_name(func_name);
     if (func_entry == nullptr || (!func_entry->allow_http_get && method == "GET")) {
         SendHttpResponse(HttpStatus::NOT_FOUND);
@@ -302,6 +312,7 @@ void HttpConnection::OnNewHttpRequest(std::string_view method, std::string_view 
 
     func_call_context_.Reset();
     func_call_context_.set_func_name(func_name);
+    func_call_context_.set_async(async);
     if (func_entry->qs_as_input) {
         if (body_buffer_.length() > 0) {
             HLOG(WARNING) << "Body not empty, but qsAsInput is set for func " << func_name;
@@ -362,7 +373,14 @@ void HttpConnection::OnFuncCallFinishedInternal() {
     }
     switch (func_call_context_.status()) {
     case FuncCallContext::kSuccess:
-        SendHttpResponse(HttpStatus::OK, func_call_context_.output());
+        if (func_call_context_.is_async()) {
+            uint64_t call_id = func_call_context_.func_call().full_call_id;
+            std::string response = fmt::format("{:016x}", call_id);
+            SendHttpResponse(HttpStatus::OK,
+                             std::span<const char>(response.data(), response.size()));
+        } else {
+            SendHttpResponse(HttpStatus::OK, func_call_context_.output());
+        }
         break;
     case FuncCallContext::kNotFound:
         SendHttpResponse(HttpStatus::NOT_FOUND);

@@ -174,18 +174,25 @@ void Server::TryDispatchingPendingFuncCalls() {
             discarded_func_calls_.erase(func_call.full_call_id);
             continue;
         }
+        bool async_call = (state.connection_id == -1);
         std::shared_ptr<server::ConnectionBase> parent_connection;
-        if (!connections_.contains(state.connection_id)) {
-            continue;
+        if (!async_call) {
+            if (!connections_.contains(state.connection_id)) {
+                continue;
+            }
+            parent_connection = connections_[state.connection_id];
         }
-        parent_connection = connections_[state.connection_id];
         mu_.Unlock();
         uint16_t node_id;
         bool node_picked = node_manager_.PickNodeForNewFuncCall(func_call, &node_id);
-        bool dispatch_success = false;
+        bool dispatched = false;
         if (node_picked) {
-            dispatch_success = DispatchFuncCall(std::move(parent_connection),
-                                                state.context, node_id);
+            if (async_call) {
+                dispatched = DispatchAsyncFuncCall(func_call, state.input, node_id);
+            } else {
+                dispatched = DispatchFuncCall(std::move(parent_connection),
+                                              state.context, node_id);
+            }
         }
         mu_.Lock();
         if (!node_picked) {
@@ -195,7 +202,7 @@ void Server::TryDispatchingPendingFuncCalls() {
         state.dispatch_timestamp = GetMonotonicMicroTimestamp();
         queueing_delay_stat_.AddSample(gsl::narrow_cast<int32_t>(
             state.dispatch_timestamp - state.recv_timestamp));
-        if (dispatch_success) {
+        if (dispatched) {
             running_func_calls_[func_call.full_call_id] = std::move(state);
             running_requests_stat_.AddSample(
                 gsl::narrow_cast<uint16_t>(running_func_calls_.size()));
@@ -211,29 +218,35 @@ void Server::HandleFuncCallCompleteOrFailedMessage(uint16_t node_id,
              || GatewayMessageHelper::IsFuncCallFailed(message));
     FuncCall func_call = GatewayMessageHelper::GetFuncCall(message);
     node_manager_.FuncCallFinished(func_call, node_id);
+    bool async_call = false;
     FuncCallContext* func_call_context = nullptr;
     std::shared_ptr<server::ConnectionBase> parent_connection;
-    {
+    do {
         absl::MutexLock lk(&mu_);
-        if (running_func_calls_.contains(func_call.full_call_id)) {
-            const FuncCallState& full_call_state = running_func_calls_[func_call.full_call_id];
-            // Check if corresponding connection is still active
-            if (connections_.contains(full_call_state.connection_id)
-                    && !discarded_func_calls_.contains(func_call.full_call_id)) {
-                parent_connection = connections_[full_call_state.connection_id];
-                func_call_context = full_call_state.context;
-            }
-            if (discarded_func_calls_.contains(func_call.full_call_id)) {
-                discarded_func_calls_.erase(func_call.full_call_id);
-            }
-            dispatch_overhead_stat_.AddSample(gsl::narrow_cast<int32_t>(
-                GetMonotonicMicroTimestamp()
-                - full_call_state.dispatch_timestamp
-                - message.processing_time));
-            running_func_calls_.erase(func_call.full_call_id);
+        if (!running_func_calls_.contains(func_call.full_call_id)) {
+            break;
         }
-    }
-    if (func_call_context != nullptr) {
+        const FuncCallState& state = running_func_calls_[func_call.full_call_id];
+        if (state.connection_id == -1) {
+            async_call = true;
+        }
+        if (!async_call && !discarded_func_calls_.contains(func_call.full_call_id)) {
+            // Check if corresponding connection is still active
+            if (connections_.contains(state.connection_id)) {
+                parent_connection = connections_[state.connection_id];
+                func_call_context = state.context;
+            }
+        }
+        if (discarded_func_calls_.contains(func_call.full_call_id)) {
+            discarded_func_calls_.erase(func_call.full_call_id);
+        }
+        dispatch_overhead_stat_.AddSample(gsl::narrow_cast<int32_t>(
+            GetMonotonicMicroTimestamp() - state.dispatch_timestamp - message.processing_time));
+        running_func_calls_.erase(func_call.full_call_id);
+    } while (0);
+    if (async_call) {
+        // TODO: handle this case
+    } else if (func_call_context != nullptr) {
         if (GatewayMessageHelper::IsFuncCallComplete(message)) {
             func_call_context->set_status(FuncCallContext::kSuccess);
             func_call_context->append_output(payload);
@@ -285,10 +298,12 @@ void Server::OnNewFuncCallCommon(std::shared_ptr<server::ConnectionBase> parent_
     FuncCall func_call = func_call_context->func_call();
     FuncCallState state = {
         .func_call = func_call,
-        .connection_id = parent_connection->id(),
-        .context = func_call_context,
+        .connection_id = func_call_context->is_async() ? -1 : parent_connection->id(),
+        .context = func_call_context->is_async() ? nullptr : func_call_context,
         .recv_timestamp = 0,
-        .dispatch_timestamp = 0
+        .dispatch_timestamp = 0,
+        .input_buf = nullptr,
+        .input = std::span<const char>()
     };
     uint16_t node_id;
     bool node_picked = node_manager_.PickNodeForNewFuncCall(func_call, &node_id);
@@ -309,11 +324,33 @@ void Server::OnNewFuncCallCommon(std::shared_ptr<server::ConnectionBase> parent_
         last_request_timestamp_ = current_timestamp;
         TickNewFuncCall(func_call.func_id, current_timestamp);
         if (!node_picked) {
+            if (func_call_context->is_async()) {
+                // Make a copy of input in state
+                std::span<const char> input = func_call_context->input();
+                char* input_buf = new char[input.size()];
+                state.input_buf.reset(input_buf);
+                memcpy(input_buf, input.data(), input.size());
+                state.input = std::span<const char>(input_buf, input.size());
+            }
             pending_func_calls_.push_back(std::move(state));
         }
     }
-    if (node_picked && DispatchFuncCall(std::move(parent_connection),
-                                        func_call_context, node_id)) {
+    bool dispatched = false;
+    if (func_call_context->is_async()) {
+        if (!node_picked) {
+            func_call_context->set_status(FuncCallContext::kSuccess);
+        } else if (DispatchAsyncFuncCall(func_call, func_call_context->input(), node_id)) {
+            dispatched = true;
+            func_call_context->set_status(FuncCallContext::kSuccess);
+        } else {
+            func_call_context->set_status(FuncCallContext::kNotFound);
+        }
+        FinishFuncCall(std::move(parent_connection), func_call_context);
+    } else if (node_picked && DispatchFuncCall(std::move(parent_connection),
+                                               func_call_context, node_id)) {
+        dispatched = true;
+    }
+    if (dispatched) {
         absl::MutexLock lk(&mu_);
         state.dispatch_timestamp = state.recv_timestamp;
         running_func_calls_[func_call.full_call_id] = std::move(state);
@@ -332,6 +369,17 @@ bool Server::DispatchFuncCall(std::shared_ptr<server::ConnectionBase> parent_con
         node_manager_.FuncCallFinished(func_call, node_id);
         func_call_context->set_status(FuncCallContext::kNotFound);
         FinishFuncCall(std::move(parent_connection), func_call_context);
+    }
+    return success;
+}
+
+bool Server::DispatchAsyncFuncCall(const FuncCall& func_call, std::span<const char> input,
+                                   uint16_t node_id) {
+    GatewayMessage dispatch_message = GatewayMessageHelper::NewDispatchFuncCall(func_call);
+    dispatch_message.payload_size = input.size();
+    bool success = node_manager_.SendMessage(node_id, dispatch_message, input);
+    if (!success) {
+        node_manager_.FuncCallFinished(func_call, node_id);
     }
     return success;
 }
