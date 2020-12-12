@@ -30,10 +30,9 @@ type FuncWorker struct {
 	engineConn           net.Conn
 	newFuncCallChan      chan []byte
 	inputPipe            *os.File
-	outputPipe           *os.File                    // protected by mux
-	outgoingFuncCalls    map[uint64](chan []byte)    // protected by mux
-	outgoingLogOps       map[uint64](chan []byte)    // protected by mux
-	asyncFuncCalls       map[uint64](*ipc.ShmRegion) // protected by mux
+	outputPipe           *os.File                  // protected by mux
+	outgoingFuncCalls    map[uint64](chan []byte)  // protected by mux
+	outgoingLogOps       map[uint64](chan []byte)  // protected by mux
 	handler              types.FuncHandler
 	grpcHandler          types.GrpcFuncHandler
 	nextCallId           uint32
@@ -52,7 +51,6 @@ func NewFuncWorker(funcId uint16, clientId uint16, factory types.FuncHandlerFact
 		newFuncCallChan:      make(chan []byte),
 		outgoingFuncCalls:    make(map[uint64](chan []byte)),
 		outgoingLogOps:       make(map[uint64](chan []byte)),
-		asyncFuncCalls:       make(map[uint64](*ipc.ShmRegion)),
 		nextCallId:           0,
 		nextLogOpId:          0,
 		currentCall:          0,
@@ -83,12 +81,6 @@ func (w *FuncWorker) Run() {
 			if ch, exists := w.outgoingFuncCalls[funcCall.FullCallId()]; exists {
 				ch <- message
 				delete(w.outgoingFuncCalls, funcCall.FullCallId())
-			} else {
-				inputRegion, exists := w.asyncFuncCalls[funcCall.FullCallId()]
-				if exists {
-					w.asyncFuncCallFinished(funcCall, message, inputRegion)
-					delete(w.asyncFuncCalls, funcCall.FullCallId())
-				}
 			}
 			w.mux.Unlock()
 		} else if protocol.IsSharedLogOpMessage(message) {
@@ -347,7 +339,7 @@ func (w *FuncWorker) newFuncCallCommon(funcCall protocol.FuncCall, input []byte,
 		log.Fatalf("[FATAL] Unsupported")
 	}
 
-	message := protocol.NewInvokeFuncCallMessage(funcCall, atomic.LoadUint64(&w.currentCall))
+	message := protocol.NewInvokeFuncCallMessage(funcCall, atomic.LoadUint64(&w.currentCall), async)
 
 	var inputRegion *ipc.ShmRegion
 	var outputFifo *os.File
@@ -361,8 +353,8 @@ func (w *FuncWorker) newFuncCallCommon(funcCall protocol.FuncCall, input []byte,
 			return nil, fmt.Errorf("ShmCreate failed: %v", err)
 		}
 		defer func() {
+			inputRegion.Close()
 			if !async {
-				inputRegion.Close()
 				inputRegion.Remove()
 			}
 		}()
@@ -374,7 +366,6 @@ func (w *FuncWorker) newFuncCallCommon(funcCall protocol.FuncCall, input []byte,
 
 	if async {
 		w.mux.Lock()
-		w.asyncFuncCalls[funcCall.FullCallId()] = inputRegion
 		_, err = w.outputPipe.Write(message)
 		w.mux.Unlock()
 		return nil, nil
@@ -466,28 +457,6 @@ func (w *FuncWorker) newFuncCallCommon(funcCall protocol.FuncCall, input []byte,
 	}
 
 	return output, nil
-}
-
-func (w *FuncWorker) asyncFuncCallFinished(funcCall protocol.FuncCall, message []byte, inputRegion *ipc.ShmRegion) {
-	if inputRegion != nil {
-		inputRegion.Close()
-		inputRegion.Remove()
-	}
-	if protocol.IsFuncCallFailedMessage(message) {
-		funcName := config.FindByFuncId(funcCall.FuncId).FuncName
-		log.Printf("[ERROR] Function call of %s failed", funcName)
-		return
-	}
-	payloadSize := protocol.GetPayloadSizeFromMessage(message)
-	if payloadSize < 0 {
-		outputRegion, err := ipc.ShmOpen(ipc.GetFuncCallOutputShmName(funcCall.FullCallId()), true)
-		if err != nil {
-			log.Printf("[ERROR] ShmOpen failed: %v", err)
-			return
-		}
-		outputRegion.Close()
-		outputRegion.Remove()
-	}
 }
 
 // Implement types.Environment

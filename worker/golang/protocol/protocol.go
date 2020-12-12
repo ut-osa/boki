@@ -80,8 +80,9 @@ const MessageFullByteSize = 1024
 const MessageInlineDataSize = MessageFullByteSize - MessageHeaderByteSize
 
 const (
-	FLAG_FuncWorkerUseEngineSocket uint32 = 1
-	FLAG_UseFifoForNestedCall      uint32 = 2
+	FLAG_FuncWorkerUseEngineSocket uint32 = (1 << 0)
+	FLAG_UseFifoForNestedCall      uint32 = (1 << 1)
+	FLAG_kAsyncInvokeFuncFlag      uint32 = (1 << 2)
 )
 
 func GetFlagsFromMessage(buffer []byte) uint32 {
@@ -155,11 +156,14 @@ func NewFuncWorkerHandshakeMessage(funcId uint16, clientId uint16) []byte {
 	return buffer
 }
 
-func NewInvokeFuncCallMessage(funcCall FuncCall, parentCallId uint64) []byte {
+func NewInvokeFuncCallMessage(funcCall FuncCall, parentCallId uint64, async bool) []byte {
 	buffer := NewEmptyMessage()
 	tmp := (funcCall.FullCallId() << MessageTypeBits) + uint64(MessageType_INVOKE_FUNC)
 	binary.LittleEndian.PutUint64(buffer[0:8], tmp)
 	binary.LittleEndian.PutUint64(buffer[8:16], parentCallId)
+	if async {
+		binary.LittleEndian.PutUint32(buffer[28:32], FLAG_kAsyncInvokeFuncFlag)
+	}
 	return buffer
 }
 
