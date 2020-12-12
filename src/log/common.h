@@ -33,7 +33,7 @@ inline uint64_t BuildLocalId(uint16_t view_id, uint16_t node_id, uint32_t counte
 }
 
 inline std::string SeqNumHexStr(uint64_t seqnum) {
-    return fmt::format("{:08x}", seqnum);
+    return fmt::format("{:016x}", seqnum);
 }
 
 struct LogEntry {
