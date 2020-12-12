@@ -351,6 +351,7 @@ void Server::OnNewFuncCallCommon(std::shared_ptr<server::ConnectionBase> parent_
         dispatched = true;
     }
     if (dispatched) {
+        DCHECK(node_picked);
         absl::MutexLock lk(&mu_);
         state.dispatch_timestamp = state.recv_timestamp;
         running_func_calls_[func_call.full_call_id] = std::move(state);

@@ -115,6 +115,14 @@ private:
         dispatchers_ ABSL_GUARDED_BY(mu_);
     std::vector<protocol::FuncCall> discarded_func_calls_ ABSL_GUARDED_BY(mu_);
 
+    struct AsyncFuncCall {
+        protocol::FuncCall func_call;
+        protocol::FuncCall parent_func_call;
+        std::unique_ptr<ipc::ShmRegion> input_region;
+    };
+    absl::flat_hash_map</* full_call_id */ uint64_t, AsyncFuncCall>
+        async_func_calls_ ABSL_GUARDED_BY(mu_);
+
     int64_t last_external_request_timestamp_ ABSL_GUARDED_BY(mu_);
     stat::Counter incoming_external_requests_stat_ ABSL_GUARDED_BY(mu_);
     stat::Counter incoming_internal_requests_stat_ ABSL_GUARDED_BY(mu_);
@@ -152,14 +160,29 @@ private:
     void ExternalFuncCallCompleted(const protocol::FuncCall& func_call,
                                    std::span<const char> output, int32_t processing_time);
     void ExternalFuncCallFailed(const protocol::FuncCall& func_call, int status_code = 0);
+    void AsyncFuncCallFinished(AsyncFuncCall async_call, bool success,
+                               bool shm_output, std::span<const char> inline_output);
 
     Dispatcher* GetOrCreateDispatcherLocked(uint16_t func_id) ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
-    std::unique_ptr<ipc::ShmRegion> GrabExternalFuncCallShmInput(
-            const protocol::FuncCall& func_call) ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
     void ProcessDiscardedFuncCallIfNecessary();
+
+    template<class ValueT>
+    bool GrabFromMap(absl::flat_hash_map<uint64_t, ValueT>& map,
+                     const protocol::FuncCall& func_call, ValueT* value);
 
     DISALLOW_COPY_AND_ASSIGN(Engine);
 };
+
+template<class ValueT>
+bool Engine::GrabFromMap(absl::flat_hash_map<uint64_t, ValueT>& map,
+                         const protocol::FuncCall& func_call, ValueT* value) {
+    if (!map.contains(func_call.full_call_id)) {
+        return false;
+    }
+    *value = std::move(map[func_call.full_call_id]);
+    map.erase(func_call.full_call_id);
+    return true;
+}
 
 }  // namespace engine
 }  // namespace faas

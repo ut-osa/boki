@@ -281,6 +281,21 @@ void Engine::HandleInvokeFuncMessage(const Message& message) {
     FuncCall func_call = MessageHelper::GetFuncCall(message);
     FuncCall parent_func_call;
     parent_func_call.full_call_id = message.parent_call_id;
+    AsyncFuncCall async_call = {
+        .func_call = func_call,
+        .parent_func_call = parent_func_call,
+        .input_region = nullptr
+    };
+    if ((message.flags & protocol::kAsyncInvokeFuncFlag) != 0 && message.payload_size < 0) {
+        async_call.input_region = ipc::ShmOpen(
+            ipc::GetFuncCallInputShmName(func_call.full_call_id));
+        if (async_call.input_region == nullptr) {
+            HLOG(WARNING) << "Cannot open input shm of new async FuncCall, "
+                             "will not dispatch it";
+            return;
+        }
+        async_call.input_region->EnableRemoveOnDestruction();
+    }
     Dispatcher* dispatcher = nullptr;
     {
         absl::MutexLock lk(&mu_);
@@ -292,6 +307,9 @@ void Engine::HandleInvokeFuncMessage(const Message& message) {
             message_delay_stat_.AddSample(message_delay);
         }
         dispatcher = GetOrCreateDispatcherLocked(func_call.func_id);
+        if (message.flags & protocol::kAsyncInvokeFuncFlag) {
+            async_func_calls_[func_call.full_call_id] = std::move(async_call);
+        }
     }
     bool success = false;
     if (dispatcher != nullptr) {
@@ -310,6 +328,10 @@ void Engine::HandleInvokeFuncMessage(const Message& message) {
     }
     if (!success) {
         HLOG(ERROR) << "Dispatcher failed for func_id " << func_call.func_id;
+        if (message.flags & protocol::kAsyncInvokeFuncFlag) {
+            absl::MutexLock lk(&mu_);
+            async_func_calls_.erase(func_call.full_call_id);
+        }
     }
 }
 
@@ -319,6 +341,8 @@ void Engine::HandleFuncCallCompleteMessage(const Message& message) {
     FuncCall func_call = MessageHelper::GetFuncCall(message);
     Dispatcher* dispatcher = nullptr;
     std::unique_ptr<ipc::ShmRegion> input_region = nullptr;
+    bool is_async_call = false;
+    AsyncFuncCall async_call;
     mu_.AssertNotHeld();
     {
         absl::MutexLock lk(&mu_);
@@ -330,9 +354,10 @@ void Engine::HandleFuncCallCompleteMessage(const Message& message) {
             output_use_shm_stat_.Tick();
         }
         if (func_call.client_id == 0) {
-            input_region = GrabExternalFuncCallShmInput(func_call);
+            GrabFromMap(external_func_call_shm_inputs_, func_call, &input_region);
         }
         dispatcher = GetOrCreateDispatcherLocked(func_call.func_id);
+        is_async_call = GrabFromMap(async_func_calls_, func_call, &async_call);
     }
     DCHECK(dispatcher != nullptr);
     bool ret = dispatcher->OnFuncCallCompleted(
@@ -357,6 +382,14 @@ void Engine::HandleFuncCallCompleteMessage(const Message& message) {
             ExternalFuncCallCompleted(func_call, MessageHelper::GetInlineData(message),
                                       message.processing_time);
         }
+    } else if (is_async_call) {
+        if (message.payload_size < 0) {
+            auto output_region = ipc::ShmOpen(
+                ipc::GetFuncCallOutputShmName(func_call.full_call_id));
+            if (output_region != nullptr) {
+                output_region->EnableRemoveOnDestruction();
+            }
+        }
     } else if (!use_fifo_for_nested_call_) {
         Message message_copy = message;
         SendFuncWorkerMessage(func_call.client_id, &message_copy);
@@ -369,6 +402,8 @@ void Engine::HandleFuncCallFailedMessage(const Message& message) {
     FuncCall func_call = MessageHelper::GetFuncCall(message);
     Dispatcher* dispatcher = nullptr;
     std::unique_ptr<ipc::ShmRegion> input_region = nullptr;
+    bool is_async_call = false;
+    AsyncFuncCall async_call;
     mu_.AssertNotHeld();
     {
         absl::MutexLock lk(&mu_);
@@ -376,9 +411,10 @@ void Engine::HandleFuncCallFailedMessage(const Message& message) {
             message_delay_stat_.AddSample(message_delay);
         }
         if (func_call.client_id == 0) {
-            input_region = GrabExternalFuncCallShmInput(func_call);
+            GrabFromMap(external_func_call_shm_inputs_, func_call, &input_region);
         }
         dispatcher = GetOrCreateDispatcherLocked(func_call.func_id);
+        is_async_call = GrabFromMap(async_func_calls_, func_call, &async_call);
     }
     DCHECK(dispatcher != nullptr);
     bool ret = dispatcher->OnFuncCallFailed(func_call, message.dispatch_delay);
@@ -388,6 +424,9 @@ void Engine::HandleFuncCallFailedMessage(const Message& message) {
     }
     if (func_call.client_id == 0) {
         ExternalFuncCallFailed(func_call);
+    } else if (is_async_call) {
+        HLOG(WARNING) << fmt::format("Async call of func {} failed",
+                                     uint16_t{func_call.func_id});
     } else if (!use_fifo_for_nested_call_) {
         Message message_copy = message;
         SendFuncWorkerMessage(func_call.client_id, &message_copy);
@@ -451,7 +490,7 @@ void Engine::OnExternalFuncCall(const FuncCall& func_call, std::span<const char>
         HLOG(ERROR) << "Dispatcher::OnNewFuncCall failed";
         {
             absl::MutexLock lk(&mu_);
-            input_region = GrabExternalFuncCallShmInput(func_call);
+            GrabFromMap(external_func_call_shm_inputs_, func_call, &input_region);
         }
         ExternalFuncCallFailed(func_call);
     }
@@ -533,15 +572,6 @@ Dispatcher* Engine::GetOrCreateDispatcherLocked(uint16_t func_id) {
     }
 }
 
-std::unique_ptr<ipc::ShmRegion> Engine::GrabExternalFuncCallShmInput(const FuncCall& func_call) {
-    std::unique_ptr<ipc::ShmRegion> ret = nullptr;
-    if (external_func_call_shm_inputs_.contains(func_call.full_call_id)) {
-        ret = std::move(external_func_call_shm_inputs_[func_call.full_call_id]);
-        external_func_call_shm_inputs_.erase(func_call.full_call_id);
-    }
-    return ret;
-}
-
 void Engine::DiscardFuncCall(const FuncCall& func_call) {
     absl::MutexLock lk(&mu_);
     discarded_func_calls_.push_back(func_call);
@@ -556,7 +586,8 @@ void Engine::ProcessDiscardedFuncCallIfNecessary() {
         absl::MutexLock lk(&mu_);
         for (const FuncCall& func_call : discarded_func_calls_) {
             if (func_call.client_id == 0) {
-                auto shm_input = GrabExternalFuncCallShmInput(func_call);
+                std::unique_ptr<ipc::ShmRegion> shm_input = nullptr;
+                GrabFromMap(external_func_call_shm_inputs_, func_call, &shm_input);
                 if (shm_input != nullptr) {
                     discarded_input_regions.push_back(std::move(shm_input));
                 }

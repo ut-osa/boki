@@ -114,8 +114,9 @@ constexpr uint32_t kInvalidLogTag     = std::numeric_limits<uint32_t>::max();
 constexpr uint64_t kInvalidLogLocalId = std::numeric_limits<uint64_t>::max();
 constexpr uint64_t kInvalidLogSeqNum  = std::numeric_limits<uint64_t>::max();
 
-constexpr uint32_t kFuncWorkerUseEngineSocketFlag = 1;
-constexpr uint32_t kUseFifoForNestedCallFlag = 2;
+constexpr uint32_t kFuncWorkerUseEngineSocketFlag = (1 << 0);
+constexpr uint32_t kUseFifoForNestedCallFlag      = (1 << 1);
+constexpr uint32_t kAsyncInvokeFuncFlag           = (1 << 2);
 
 struct Message {
     struct {
@@ -324,11 +325,15 @@ public:
         return message;
     }
 
-    static Message NewInvokeFunc(const FuncCall& func_call, uint64_t parent_call_id) {
+    static Message NewInvokeFunc(const FuncCall& func_call, uint64_t parent_call_id,
+                                 bool async = false) {
         NEW_EMPTY_MESSAGE(message);
         message.message_type = static_cast<uint16_t>(MessageType::INVOKE_FUNC);
         SetFuncCall(&message, func_call);
         message.parent_call_id = parent_call_id;
+        if (async) {
+            message.flags |= kAsyncInvokeFuncFlag;
+        }
         return message;
     }
 
