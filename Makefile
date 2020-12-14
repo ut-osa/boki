@@ -40,6 +40,7 @@ DISABLE_STAT = 1
 USE_NEW_STAT_COLLECTOR = 0
 DEBUG_BUILD = 0
 BUILD_BENCH = 0
+FORCE_DCHECK = 0
 
 ifneq ("$(wildcard config.mk)","")
     include config.mk
@@ -51,6 +52,10 @@ endif
 
 ifeq ($(DISABLE_STAT),1)
     COMPILE_FLAGS += -D__FAAS_DISABLE_STAT
+endif
+
+ifeq ($(FORCE_DCHECK),1)
+    COMPILE_FLAGS += -DDCHECK_ALWAYS_ON
 endif
 
 ifeq ($(USE_NEW_STAT_COLLECTOR),1)
