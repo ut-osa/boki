@@ -375,7 +375,7 @@ void HttpConnection::OnFuncCallFinishedInternal() {
     case FuncCallContext::kSuccess:
         if (func_call_context_.is_async()) {
             uint64_t call_id = func_call_context_.func_call().full_call_id;
-            std::string response = fmt::format("{:016x}", call_id);
+            std::string response = fmt::format("{:016x}\n", call_id);
             SendHttpResponse(HttpStatus::OK,
                              std::span<const char>(response.data(), response.size()));
         } else {

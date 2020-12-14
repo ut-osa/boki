@@ -221,10 +221,12 @@ void Server::HandleFuncCallCompleteOrFailedMessage(uint16_t node_id,
     bool async_call = false;
     FuncCallContext* func_call_context = nullptr;
     std::shared_ptr<server::ConnectionBase> parent_connection;
-    do {
+    {
         absl::MutexLock lk(&mu_);
         if (!running_func_calls_.contains(func_call.full_call_id)) {
-            break;
+            HLOG(ERROR) << "Cannot find running FuncCall: "
+                        << FuncCallHelper::DebugString(func_call);
+            return;
         }
         const FuncCallState& state = running_func_calls_[func_call.full_call_id];
         if (state.connection_id == -1) {
@@ -240,12 +242,24 @@ void Server::HandleFuncCallCompleteOrFailedMessage(uint16_t node_id,
         if (discarded_func_calls_.contains(func_call.full_call_id)) {
             discarded_func_calls_.erase(func_call.full_call_id);
         }
+        int64_t current_timestamp = GetMonotonicMicroTimestamp();
         dispatch_overhead_stat_.AddSample(gsl::narrow_cast<int32_t>(
-            GetMonotonicMicroTimestamp() - state.dispatch_timestamp - message.processing_time));
+            current_timestamp - state.dispatch_timestamp - message.processing_time));
+        if (async_call && GatewayMessageHelper::IsFuncCallComplete(message)) {
+            uint16_t func_id = func_call.func_id;
+            DCHECK(per_func_stats_.contains(func_id));
+            PerFuncStat* per_func_stat = per_func_stats_[func_id].get();
+            per_func_stat->end2end_delay_stat.AddSample(gsl::narrow_cast<int32_t>(
+                current_timestamp - state.recv_timestamp));
+        }
         running_func_calls_.erase(func_call.full_call_id);
-    } while (0);
+    }
     if (async_call) {
-        // TODO: handle this case
+        if (GatewayMessageHelper::IsFuncCallFailed(message)) {
+            auto func_entry = func_config_.find_by_func_id(func_call.func_id);
+            HLOG(WARNING) << fmt::format("Async call of {} failed",
+                                         DCHECK_NOTNULL(func_entry)->func_name);
+        }
     } else if (func_call_context != nullptr) {
         if (GatewayMessageHelper::IsFuncCallComplete(message)) {
             func_call_context->set_status(FuncCallContext::kSuccess);
@@ -275,7 +289,9 @@ Server::PerFuncStat::PerFuncStat(uint16_t func_id)
       incoming_requests_stat(stat::Counter::StandardReportCallback(
           fmt::format("incoming_requests[{}]", func_id))),
       request_interval_stat(stat::StatisticsCollector<int32_t>::StandardReportCallback(
-          fmt::format("request_interval[{}]", func_id))) {}
+          fmt::format("request_interval[{}]", func_id))),
+      end2end_delay_stat(stat::StatisticsCollector<int32_t>::StandardReportCallback(
+          fmt::format("end2end_delay[{}]", func_id))) {}
 
 void Server::TickNewFuncCall(uint16_t func_id, int64_t current_timestamp) {
     if (!per_func_stats_.contains(func_id)) {

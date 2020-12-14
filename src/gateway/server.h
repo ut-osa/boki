@@ -91,6 +91,7 @@ private:
         int64_t last_request_timestamp;
         stat::Counter incoming_requests_stat;
         stat::StatisticsCollector<int32_t> request_interval_stat;
+        stat::StatisticsCollector<int32_t> end2end_delay_stat;
         explicit PerFuncStat(uint16_t func_id);
     };
 
