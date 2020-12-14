@@ -402,7 +402,7 @@ void SLogEngine::ForwardLogOp(LogOp* op, uint16_t dst_node_id, protocol::Message
 void SLogEngine::NewAppendLogOp(LogOp* op, std::span<const char> data) {
     DCHECK(op_type(op) == LogOpType::kAppend);
     DCHECK(!data.empty());
-    const log::Fsm::View* view;
+    const log::Fsm::View* view = nullptr;
     uint16_t primary_node_id;
     uint64_t localid;
     bool success = false;
