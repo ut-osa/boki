@@ -55,7 +55,7 @@ bool NodeManager::PickNodeForNewFuncCall(const protocol::FuncCall& func_call, ui
     if (connected_node_list_.empty()) {
         return false;
     }
-    if (running_requests_.size() > max_running_requests_) {
+    if (max_running_requests_ > 0 && running_requests_.size() > max_running_requests_) {
         return false;
     }
     size_t idx;
