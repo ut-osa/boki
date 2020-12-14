@@ -4,8 +4,8 @@ ABSL_FLAG(size_t, gateway_conn_per_worker, 2, "");
 ABSL_FLAG(size_t, sequencer_conn_per_worker, 2, "");
 ABSL_FLAG(size_t, shared_log_conn_per_worker, 2, "");
 
-ABSL_FLAG(size_t, io_uring_entries, 128, "");
-ABSL_FLAG(size_t, io_uring_fd_slots, 128, "");
+ABSL_FLAG(size_t, io_uring_entries, 2048, "");
+ABSL_FLAG(size_t, io_uring_fd_slots, 1024, "");
 ABSL_FLAG(bool, io_uring_sqpoll, false, "");
 ABSL_FLAG(int, io_uring_sq_thread_idle_ms, 1, "");
 ABSL_FLAG(int, io_uring_cq_nr_wait, 1, "");
