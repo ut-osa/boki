@@ -281,12 +281,13 @@ void Engine::HandleInvokeFuncMessage(const Message& message) {
     FuncCall func_call = MessageHelper::GetFuncCall(message);
     FuncCall parent_func_call;
     parent_func_call.full_call_id = message.parent_call_id;
+    bool is_async = (message.flags & protocol::kAsyncInvokeFuncFlag) != 0;
     AsyncFuncCall async_call = {
         .func_call = func_call,
         .parent_func_call = parent_func_call,
         .input_region = nullptr
     };
-    if ((message.flags & protocol::kAsyncInvokeFuncFlag) != 0 && message.payload_size < 0) {
+    if (is_async && message.payload_size < 0) {
         async_call.input_region = ipc::ShmOpen(
             ipc::GetFuncCallInputShmName(func_call.full_call_id));
         if (async_call.input_region == nullptr) {
@@ -295,6 +296,7 @@ void Engine::HandleInvokeFuncMessage(const Message& message) {
             return;
         }
         async_call.input_region->EnableRemoveOnDestruction();
+        parent_func_call = protocol::kInvalidFuncCall;
     }
     Dispatcher* dispatcher = nullptr;
     {
@@ -307,7 +309,7 @@ void Engine::HandleInvokeFuncMessage(const Message& message) {
             message_delay_stat_.AddSample(message_delay);
         }
         dispatcher = GetOrCreateDispatcherLocked(func_call.func_id);
-        if (message.flags & protocol::kAsyncInvokeFuncFlag) {
+        if (is_async) {
             async_func_calls_[func_call.full_call_id] = std::move(async_call);
         }
     }
@@ -328,7 +330,7 @@ void Engine::HandleInvokeFuncMessage(const Message& message) {
     }
     if (!success) {
         HLOG(ERROR) << "Dispatcher failed for func_id " << func_call.func_id;
-        if (message.flags & protocol::kAsyncInvokeFuncFlag) {
+        if (is_async) {
             absl::MutexLock lk(&mu_);
             async_func_calls_.erase(func_call.full_call_id);
         }
