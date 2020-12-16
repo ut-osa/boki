@@ -2,6 +2,7 @@
 
 #include "utils/io.h"
 #include "utils/fs.h"
+#include "utils/socket.h"
 #include "sequencer/flags.h"
 
 #define log_header_ "Server: "
@@ -65,9 +66,24 @@ void Server::Start() {
     // Setup Raft
     std::string raft_addr(fmt::format("{}:{}", address_, myself->raft_port));
     std::vector<std::pair<uint64_t, std::string>> peers;
-    config_.ForEachPeer([&peers] (const SequencerConfig::Peer* peer) {
-        peers.push_back(std::make_pair(uint64_t{peer->id},
-                                       fmt::format("{}:{}", peer->host_addr, peer->raft_port)));
+    config_.ForEachPeer([this, &peers] (const SequencerConfig::Peer* peer) {
+        std::string addr_str;
+        if (peer->id == my_sequencer_id_) {
+            addr_str = fmt::format("127.0.0.1:{}", peer->raft_port);
+        } else {
+            struct in_addr addr;
+            bool success = utils::NetworkOpWithRetry(
+                /* max_retry= */ 10, /* sleep_sec=*/ 3,
+                [&peer, &addr] {
+                    return utils::ResolveHost(peer->host_addr, &addr);
+                }
+            );
+            if (!success) {
+                HLOG(FATAL) << "Failed to resolve " << peer->host_addr;
+            }
+            addr_str = fmt::format("{}:{}", inet_ntoa(addr), peer->raft_port);
+        }
+        peers.push_back(std::make_pair(uint64_t{peer->id}, addr_str));
     });
     if (fs_utils::IsDirectory(raft_data_dir_)) {
         PCHECK(fs_utils::RemoveDirectoryRecursively(raft_data_dir_));

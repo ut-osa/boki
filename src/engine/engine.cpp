@@ -85,9 +85,18 @@ void Engine::SetupGatewayConnections() {
     CHECK_NE(gateway_port_, -1);
     int total_gateway_conn = num_io_workers_ * absl::GetFlag(FLAGS_gateway_conn_per_worker);
     for (int i = 0; i < total_gateway_conn; i++) {
-        int sockfd = utils::TcpSocketConnect(gateway_addr_, gateway_port_);
-        CHECK(sockfd != -1)
-            << fmt::format("Failed to connect to gateway {}:{}", gateway_addr_, gateway_port_);
+        int sockfd = -1;
+        bool success = utils::NetworkOpWithRetry(
+            /* max_retry= */ 10, /* sleep_sec=*/ 3,
+            [this, &sockfd] {
+                sockfd = utils::TcpSocketConnect(gateway_addr_, gateway_port_);
+                return sockfd != -1;
+            }
+        );
+        if (!success) {
+            HLOG(FATAL) << fmt::format("Failed to connect to gateway {}:{}",
+                                       gateway_addr_, gateway_port_);
+        }
         std::shared_ptr<ConnectionBase> connection(
             new GatewayConnection(this, gsl::narrow_cast<uint16_t>(i), sockfd));
         IOWorker* io_worker = io_workers_[i % num_io_workers_];
@@ -140,10 +149,18 @@ void Engine::SetupSharedLog() {
     int total_sequencer_conn = num_io_workers_ * absl::GetFlag(FLAGS_sequencer_conn_per_worker);
     sequencer_config_.ForEachPeer([this, total_sequencer_conn] (const SequencerConfig::Peer* peer) {
         for (int i = 0; i < total_sequencer_conn; i++) {
-            int sockfd = utils::TcpSocketConnect(peer->host_addr, peer->engine_conn_port);
-            CHECK(sockfd != -1)
-                << fmt::format("Failed to connect to sequencer {}:{}",
-                               peer->host_addr, peer->engine_conn_port);
+            int sockfd = -1;
+            bool success = utils::NetworkOpWithRetry(
+                /* max_retry= */ 10, /* sleep_sec=*/ 3,
+                [peer, &sockfd] {
+                    sockfd = utils::TcpSocketConnect(peer->host_addr, peer->engine_conn_port);
+                    return sockfd != -1;
+                }
+            );
+            if (!success) {
+                HLOG(FATAL) << fmt::format("Failed to connect to sequencer {}:{}",
+                                           peer->host_addr, peer->engine_conn_port);
+            }
             std::shared_ptr<ConnectionBase> connection(
                 new SequencerConnection(this, slog_engine_.get(), peer->id, sockfd));
             IOWorker* io_worker = io_workers_[i % num_io_workers_];

@@ -207,6 +207,7 @@ struct SLogMessageHub::NodeContext {
 
 void SLogMessageHub::SendMessage(uint16_t node_id, const protocol::Message& message) {
     DCHECK(io_worker_->WithinMyEventLoopThread());
+    DCHECK_NE(node_id, slog_engine_->my_node_id());
     if (state_ != kRunning) {
         HLOG(WARNING) << "Not in running state, will not send this message";
         return;
@@ -236,12 +237,14 @@ void SLogMessageHub::SendMessage(uint16_t node_id, const protocol::Message& mess
 
 void SLogMessageHub::SetupConnections(uint16_t node_id) {
     DCHECK(io_worker_->WithinMyEventLoopThread());
+    std::string addr_str = slog_engine_->GetNodeAddr(node_id);
     std::string_view host;
     uint16_t port;
-    CHECK(utils::ParseHostPort(slog_engine_->GetNodeAddr(node_id), &host, &port));
+    CHECK(utils::ParseHostPort(addr_str, &host, &port));
     struct sockaddr_in addr;
     if (!utils::FillTcpSocketAddr(&addr, host, port)) {
-        HLOG(FATAL) << fmt::format("Cannot resolve address for node {}", node_id);
+        HLOG(FATAL) << fmt::format("Cannot resolve address for node {}: {}",
+                                   node_id, addr_str);
     }
     size_t conn_per_worker = absl::GetFlag(FLAGS_shared_log_conn_per_worker);
     for (size_t i = 0; i < conn_per_worker; i++) {

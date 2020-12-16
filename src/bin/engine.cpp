@@ -43,6 +43,7 @@ static std::string GetHostname() {
     if (!faas::fs_utils::ReadContents("/proc/sys/kernel/hostname", &hostname)) {
         LOG(FATAL) << "Failed to read /proc/sys/kernel/hostname";
     }
+    hostname = absl::StripSuffix(hostname, "\n");
     return hostname;
 }
 
@@ -73,10 +74,12 @@ int main(int argc, char* argv[]) {
     engine->set_num_io_workers(absl::GetFlag(FLAGS_num_io_workers));
     int node_id = absl::GetFlag(FLAGS_node_id);
     if (node_id == -1) {
-        engine->set_node_id(GenerateNodeId());
-    } else {
-        engine->set_node_id(gsl::narrow_cast<uint16_t>(node_id));
+        node_id = faas::utils::GetEnvVariableAsInt("FAAS_NODE_ID", -1);
     }
+    if (node_id == -1) {
+        node_id = GenerateNodeId();
+    }
+    engine->set_node_id(gsl::narrow_cast<uint16_t>(node_id));
     engine->set_func_config_file(absl::GetFlag(FLAGS_func_config_file));
 
     if (absl::GetFlag(FLAGS_enable_shared_log)) {

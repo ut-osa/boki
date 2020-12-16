@@ -1,5 +1,6 @@
 #include "base/init.h"
 #include "base/common.h"
+#include "utils/env_variables.h"
 #include "sequencer/server.h"
 
 #include <signal.h>
@@ -22,8 +23,12 @@ int main(int argc, char* argv[]) {
     signal(SIGINT, SignalHandlerToStopServer);
     faas::base::InitMain(argc, argv);
 
+    int sequencer_id = absl::GetFlag(FLAGS_sequencer_id);
+    if (sequencer_id == -1) {
+        sequencer_id = faas::utils::GetEnvVariableAsInt("FAAS_SEQUENCER_ID", -1);
+    }
     auto server = std::make_unique<faas::sequencer::Server>(
-        gsl::narrow_cast<uint16_t>(absl::GetFlag(FLAGS_sequencer_id)));
+        gsl::narrow_cast<uint16_t>(sequencer_id));
     server->set_address(absl::GetFlag(FLAGS_listen_addr));
     server->set_config_path(absl::GetFlag(FLAGS_config_file));
     server->set_raft_data_dir(absl::GetFlag(FLAGS_raft_datadir));

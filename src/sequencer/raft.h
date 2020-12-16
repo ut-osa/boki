@@ -54,6 +54,7 @@ private:
     struct raft_fsm          raft_fsm_;
     struct raft_uv_transport transport_;
     struct raft_transfer     transfer_req_;
+    struct raft_tracer       tracer_;
 
     std::string listen_address_;
     std::string data_dir_;
@@ -73,6 +74,8 @@ private:
     static void ApplyCallbackWrapper(struct raft_apply* req, int status, void* result);
     static void TransferCallbackWrapper(struct raft_transfer* req);
     static void CloseCallbackWrapper(struct raft* raft);
+    static void TraceEmitWrapper(struct raft_tracer* tracer,
+                                 const char* file, int line, const char* msg);
 
     static bool EncodeToRaftBuffer(std::span<const char> data, struct raft_buffer* buf);
     static std::span<const char> DecodeFromRaftBuffer(const struct raft_buffer* buf);

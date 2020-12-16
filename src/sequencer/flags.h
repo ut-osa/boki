@@ -2,6 +2,7 @@
 
 #include "common/flags.h"
 
+ABSL_DECLARE_FLAG(bool, enable_raft_tracer);
 ABSL_DECLARE_FLAG(int, raft_election_timeout_ms);
 ABSL_DECLARE_FLAG(int, raft_heartbeat_timeout_ms);
 ABSL_DECLARE_FLAG(bool, raft_enable_snapshot);

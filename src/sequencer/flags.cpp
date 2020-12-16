@@ -1,5 +1,6 @@
 #include "sequencer/flags.h"
 
+ABSL_FLAG(bool, enable_raft_tracer, false, "");
 ABSL_FLAG(int, raft_election_timeout_ms, 5, "");
 ABSL_FLAG(int, raft_heartbeat_timeout_ms, 2, "");
 ABSL_FLAG(bool, raft_enable_snapshot, false, "");

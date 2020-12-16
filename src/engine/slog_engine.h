@@ -18,6 +18,8 @@ public:
     explicit SLogEngine(Engine* engine);
     ~SLogEngine();
 
+    uint16_t my_node_id() const;
+
     void OnSequencerMessage(const protocol::SequencerMessage& message,
                             std::span<const char> payload);
     void OnMessageFromOtherEngine(const protocol::Message& message);
@@ -61,9 +63,7 @@ private:
         bool persisted;
         LogOp* append_op;
     };
-    absl::InlinedVector<CompletedLogEntry, 8> completed_log_entries_ ABSL_GUARDED_BY(mu_);
-
-    inline uint16_t my_node_id() const;
+    absl::InlinedVector<CompletedLogEntry, 8> completed_log_entries_ ABSL_GUARDED_BY(mu_); 
 
     static inline LogOpType op_type(const LogOp* op) {
         return gsl::narrow_cast<LogOpType>(op->id & 0xff);

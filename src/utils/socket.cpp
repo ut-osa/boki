@@ -186,11 +186,9 @@ bool SetTcpSocketKeepAlive(int sockfd) {
     return true;
 }
 
-bool FillTcpSocketAddr(struct sockaddr_in* addr, std::string_view host_or_ip, uint16_t port) {
-    addr->sin_family = AF_INET; 
-    addr->sin_port = htons(port);
+bool ResolveHost(std::string_view host_or_ip, struct in_addr* addr) {
     // Assume host_or_ip is IP address first
-    if (inet_aton(std::string(host_or_ip).c_str(), &addr->sin_addr) == 1) {
+    if (inet_aton(std::string(host_or_ip).c_str(), addr) == 1) {
         return true;
     }
     // Use getaddrinfo to resolve host
@@ -215,12 +213,18 @@ bool FillTcpSocketAddr(struct sockaddr_in* addr, std::string_view host_or_ip, ui
     while (result) {
         if (result->ai_family == AF_INET) {
             struct sockaddr_in* resolved_addr = (struct sockaddr_in*)result->ai_addr;
-            memcpy(&addr->sin_addr, &resolved_addr->sin_addr, sizeof(addr->sin_addr));
+            *addr = resolved_addr->sin_addr;
             return true;
         }
         result = result->ai_next;
     }
     return false;
+}
+
+bool FillTcpSocketAddr(struct sockaddr_in* addr, std::string_view host_or_ip, uint16_t port) {
+    addr->sin_family = AF_INET; 
+    addr->sin_port = htons(port);
+    return ResolveHost(host_or_ip, &addr->sin_addr);
 }
 
 bool ParseHostPort(std::string_view addr_str, std::string_view* host, uint16_t* port) {
@@ -239,6 +243,17 @@ bool ParseHostPort(std::string_view addr_str, std::string_view* host, uint16_t* 
 #else
     NOT_IMPLEMENTED();
 #endif
+}
+
+bool NetworkOpWithRetry(int max_retry, int sleep_sec, std::function<bool()> fn) {
+    int remaining_retries = max_retry;
+    while (--remaining_retries > 0) {
+        if (fn()) {
+            return true;
+        }
+        sleep(sleep_sec);
+    }
+    return false;
 }
 
 }  // namespace utils

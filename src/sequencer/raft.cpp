@@ -62,6 +62,12 @@ void Raft::Start(uv_loop_t* uv_loop, std::string_view listen_address,
     RAFT_DCHECK_OK(raft_uv_init(&raft_io_, uv_loop, data_dir_.c_str(), &transport_));
     RAFT_DCHECK_OK(raft_init(&raft_, &raft_io_, &raft_fsm_, id_, listen_address_.c_str()));
 
+    if (absl::GetFlag(FLAGS_enable_raft_tracer)) {
+        tracer_.impl = this;
+        tracer_.emit = &Raft::TraceEmitWrapper;
+        raft_.tracer = &tracer_;
+    }
+
     struct raft_configuration configuration;
     raft_configuration_init(&configuration);
     for (const auto& entry : all_nodes) {
@@ -246,6 +252,11 @@ void Raft::TransferCallbackWrapper(struct raft_transfer* req) {
 void Raft::CloseCallbackWrapper(struct raft* raft) {
     Raft* self = reinterpret_cast<Raft*>(raft->data);
     self->OnRaftClosed();
+}
+
+void Raft::TraceEmitWrapper(struct raft_tracer* tracer,
+                            const char* file, int line, const char* msg) {
+    LOG(INFO) << fmt::format("RaftTracer[{}:{}]: {}", file, line, msg);
 }
 
 bool Raft::EncodeToRaftBuffer(std::span<const char> data, struct raft_buffer* buf) {
