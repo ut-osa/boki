@@ -5,6 +5,50 @@
 namespace faas {
 namespace log {
 
+StorageTagIndex::StorageTagIndex() {}
+
+StorageTagIndex::~StorageTagIndex() {}
+
+void StorageTagIndex::Add(uint32_t tag, uint64_t seqnum) {
+    DCHECK(tag != kDefaultLogTag);
+    if (!indices_.contains(tag)) {
+        indices_[tag] = std::make_unique<std::set<uint64_t>>();
+    }
+    indices_[tag]->insert(seqnum);
+}
+
+bool StorageTagIndex::ReadFirst(uint32_t tag, uint64_t start_seqnum, uint64_t end_seqnum,
+                                uint64_t* seqnum) const {
+    DCHECK(tag != kDefaultLogTag);
+    if (!indices_.contains(tag)) {
+        return false;
+    }
+    const std::set<uint64_t>* index = indices_.at(tag).get();
+    auto iter = index->lower_bound(start_seqnum);
+    if (iter != index->end() && *iter < end_seqnum) {
+        *seqnum = *iter;
+        return true;
+    } else {
+        return false;
+    }
+}
+
+bool StorageTagIndex::ReadLast(uint32_t tag, uint64_t start_seqnum, uint64_t end_seqnum,
+                               uint64_t* seqnum) const {
+    DCHECK(tag != kDefaultLogTag);
+    if (!indices_.contains(tag)) {
+        return false;
+    }
+    const std::set<uint64_t>* index = indices_.at(tag).get();
+    auto iter = index->lower_bound(end_seqnum);
+    if (iter != index->begin() && *(--iter) >= start_seqnum) {
+        *seqnum = *iter;
+        return true;
+    } else {
+        return false;
+    }
+}
+
 InMemoryStorage::InMemoryStorage() {}
 
 InMemoryStorage::~InMemoryStorage() {}
@@ -16,10 +60,7 @@ void InMemoryStorage::Add(std::unique_ptr<LogEntry> log_entry) {
     absl::MutexLock lk(&mu_);
     DCHECK(!entries_.contains(seqnum));
     if (log_entry->tag != kDefaultLogTag) {
-        if (!seqnum_indices_.contains(log_entry->tag)) {
-            seqnum_indices_[log_entry->tag] = std::make_unique<std::set<uint64_t>>();
-        }
-        seqnum_indices_[log_entry->tag]->insert(log_entry->seqnum);
+        tag_index_.Add(log_entry->tag, seqnum);
     }
     entries_[seqnum] = std::move(log_entry);
 }
@@ -32,35 +73,19 @@ bool InMemoryStorage::Read(uint64_t seqnum, std::string* data) {
 bool InMemoryStorage::ReadFirst(uint32_t tag, uint64_t start_seqnum, uint64_t end_seqnum,
                                 uint64_t* seqnum, std::string* data) {
     absl::ReaderMutexLock lk(&mu_);
-    if (!seqnum_indices_.contains(tag)) {
+    if (!tag_index_.ReadFirst(tag, start_seqnum, end_seqnum, seqnum)) {
         return false;
     }
-    const std::set<uint64_t>& index = *seqnum_indices_.at(tag).get();
-    auto iter = index.lower_bound(start_seqnum);
-    if (iter != index.end() && *iter < end_seqnum) {
-        *seqnum = *iter;
-        DCHECK(ReadInternal(*iter, data));
-        return true;
-    } else {
-        return false;
-    }
+    return ReadInternal(*seqnum, data);
 }
 
 bool InMemoryStorage::ReadLast(uint32_t tag, uint64_t start_seqnum, uint64_t end_seqnum,
                                uint64_t* seqnum, std::string* data) {
     absl::ReaderMutexLock lk(&mu_);
-    if (!seqnum_indices_.contains(tag)) {
+    if (!tag_index_.ReadLast(tag, start_seqnum, end_seqnum, seqnum)) {
         return false;
     }
-    const std::set<uint64_t>& index = *seqnum_indices_.at(tag).get();
-    auto iter = index.lower_bound(end_seqnum);
-    if (iter != index.begin() && *(--iter) >= start_seqnum) {
-        *seqnum = *iter;
-        DCHECK(ReadInternal(*iter, data));
-        return true;
-    } else {
-        return false;
-    }
+    return ReadInternal(*seqnum, data);
 }
 
 bool InMemoryStorage::ReadInternal(uint64_t seqnum, std::string* data) const {
@@ -93,6 +118,10 @@ void RocksDBStorage::Add(std::unique_ptr<LogEntry> log_entry) {
     if (!status.ok()) {
         LOG(FATAL) << "RocksDB put failed: " << status.ToString();
     }
+    absl::MutexLock lk(&mu_);
+    if (log_entry->tag != kDefaultLogTag) {
+        tag_index_.Add(log_entry->tag, log_entry->seqnum);
+    }
 }
 
 bool RocksDBStorage::Read(uint64_t seqnum, std::string* data) {
@@ -107,12 +136,24 @@ bool RocksDBStorage::Read(uint64_t seqnum, std::string* data) {
 
 bool RocksDBStorage::ReadFirst(uint32_t tag, uint64_t start_seqnum, uint64_t end_seqnum,
                                uint64_t* seqnum, std::string* data) {
-    NOT_IMPLEMENTED();
+    {
+        absl::ReaderMutexLock lk(&mu_);
+        if (!tag_index_.ReadFirst(tag, start_seqnum, end_seqnum, seqnum)) {
+            return false;
+        }
+    }
+    return Read(*seqnum, data);
 }
 
 bool RocksDBStorage::ReadLast(uint32_t tag, uint64_t start_seqnum, uint64_t end_seqnum,
                               uint64_t* seqnum, std::string* data) {
-    NOT_IMPLEMENTED();
+    {
+        absl::ReaderMutexLock lk(&mu_);
+        if (!tag_index_.ReadLast(tag, start_seqnum, end_seqnum, seqnum)) {
+            return false;
+        }
+    }
+    return Read(*seqnum, data);
 }
 
 

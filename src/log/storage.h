@@ -22,6 +22,24 @@ public:
                           uint64_t* seqnum, std::string* data) = 0;
 };
 
+class StorageTagIndex {
+public:
+    StorageTagIndex();
+    ~StorageTagIndex();
+
+    void Add(uint32_t tag, uint64_t seqnum);
+    bool ReadFirst(uint32_t tag, uint64_t start_seqnum, uint64_t end_seqnum,
+                   uint64_t* seqnum) const;
+    bool ReadLast(uint32_t tag, uint64_t start_seqnum, uint64_t end_seqnum,
+                  uint64_t* seqnum) const;
+
+private:
+    absl::flat_hash_map</* tag */ uint32_t,
+                        std::unique_ptr<std::set</* seqnum */ uint64_t>>> indices_;
+
+    DISALLOW_COPY_AND_ASSIGN(StorageTagIndex);
+};
+
 class InMemoryStorage final : public StorageInterface {
 public:
     InMemoryStorage();
@@ -37,8 +55,7 @@ public:
 
 private:
     absl::Mutex mu_;
-    absl::flat_hash_map</* tag */ uint32_t, std::unique_ptr<std::set<uint64_t>>>
-        seqnum_indices_ ABSL_GUARDED_BY(mu_);
+    StorageTagIndex tag_index_ ABSL_GUARDED_BY(mu_);
     absl::flat_hash_map</* seqnum */ uint64_t, std::unique_ptr<LogEntry>>
         entries_ ABSL_GUARDED_BY(mu_);
 
@@ -62,6 +79,9 @@ public:
                   uint64_t* seqnum, std::string* data) override;
 
 private:
+    absl::Mutex mu_;
+    StorageTagIndex tag_index_ ABSL_GUARDED_BY(mu_);
+
     std::unique_ptr<rocksdb::DB> db_;
 
     static std::string seqnum_to_key(uint64_t seqnum);
