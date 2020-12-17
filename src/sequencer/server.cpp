@@ -194,7 +194,7 @@ void Server::SetupFuzzer(uv::Timer* timer, absl::Duration interval, std::functio
         cb();
         timer->StochasticExpireIn(interval);
     });
-    timer->StochasticExpireIn(interval);
+    timer->ExpireIn(absl::Seconds(60));
 }
 
 UV_ASYNC_CB_FOR_CLASS(Server, Stop) {

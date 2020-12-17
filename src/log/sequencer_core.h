@@ -40,7 +40,7 @@ private:
     uint16_t sequencer_id_;
     Fsm fsm_;
     std::vector<FsmRecordProto*> fsm_records_;
-    size_t fsm_apply_progress_;
+    FsmRecordProto* ongoing_record_;
     utils::ProtobufMessagePool<FsmRecordProto> fsm_record_pool_;
 
     RaftLeaderCallback            raft_leader_cb_;
@@ -55,7 +55,7 @@ private:
 
     bool new_view_pending_;
 
-    bool has_ongoing_fsm_record() { return fsm_apply_progress_ < fsm_records_.size(); }
+    bool has_ongoing_fsm_record() { return ongoing_record_ != nullptr; }
     bool is_raft_leader();
 
     void NewView();

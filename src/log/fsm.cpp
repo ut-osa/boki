@@ -46,7 +46,6 @@ void Fsm::OnRecvRecord(const FsmRecordProto& record) {
 
 void Fsm::BuildNewViewRecord(size_t replicas, const NodeVec& nodes, FsmRecordProto* record) {
     record->Clear();
-    record->set_seqnum(next_record_seqnum_);
     record->set_sequencer_id(sequencer_id_);
     record->set_type(FsmRecordType::NEW_VIEW);
     NewViewRecordProto* new_view_record = record->mutable_new_view_record();
@@ -61,7 +60,6 @@ void Fsm::BuildNewViewRecord(size_t replicas, const NodeVec& nodes, FsmRecordPro
 
 void Fsm::BuildGlobalCutRecord(const CutVec& cuts, FsmRecordProto* record) {
     record->Clear();
-    record->set_seqnum(next_record_seqnum_);
     record->set_sequencer_id(sequencer_id_);
     record->set_type(FsmRecordType::GLOBAL_CUT);
     GlobalCutRecordProto* global_cut_record = record->mutable_global_cut_record();

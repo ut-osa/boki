@@ -176,7 +176,11 @@ void Raft::OnApplyFinished(struct raft_apply* req, int status) {
         return;
     }
     if (status != 0) {
-        HLOG(WARNING) << "Apply failed with error: " << raft_strerror(status);
+        if (status == RAFT_LEADERSHIPLOST) {
+            HLOG(INFO) << "Lost leadership while applying new record";
+        } else {
+            HLOG(WARNING) << "Apply failed with error: " << raft_strerror(status);
+        }
     }
     apply_cbs_[req](status == 0);
     apply_cbs_.erase(req);

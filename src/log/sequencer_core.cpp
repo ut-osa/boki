@@ -12,7 +12,7 @@ using google::protobuf::Arena;
 SequencerCore::SequencerCore(uint16_t sequencer_id)
     : sequencer_id_(sequencer_id),
       fsm_(sequencer_id),
-      fsm_apply_progress_(0),
+      ongoing_record_(nullptr),
       new_view_pending_(false) {}
 
 SequencerCore::~SequencerCore() {}
@@ -40,6 +40,9 @@ void SequencerCore::OnNewNodeConnected(uint16_t node_id, std::string_view addr) 
     }
     HLOG(INFO) << fmt::format("Node {} connected with address {}", node_id, addr);
     conencted_nodes_[node_id] = std::string(addr);
+    // This can be problematic, as the new node will not receive new records
+    // before it becomes part of the new view.
+    // TODO: Find some way to trigger it, and fix the problem 
     SendAllFsmRecords(node_id);
     ReconfigViewIfDoable();
 }
@@ -199,8 +202,8 @@ void SequencerCore::BroadcastFsmRecord(const Fsm::View* view, const FsmRecordPro
 }
 
 void SequencerCore::RaftApplyRecord(FsmRecordProto* record) {
-    DCHECK_EQ(fsm_records_.size(), size_t{record->seqnum()});
-    fsm_records_.push_back(record);
+    record->set_seqnum(gsl::narrow_cast<uint32_t>(fsm_records_.size()));
+    ongoing_record_ = record;
     std::string serialized_record;
     record->SerializeToString(&serialized_record);
     std::span<const char> payload(serialized_record.data(), serialized_record.size());
@@ -208,16 +211,12 @@ void SequencerCore::RaftApplyRecord(FsmRecordProto* record) {
 }
 
 void SequencerCore::OnRaftApplyFinished(uint32_t seqnum, bool success) {
-    if (success) {
-        DCHECK_EQ(fsm_apply_progress_, size_t{seqnum + 1});
-    } else {
-        HLOG(WARNING) << "Failed to apply log to Raft, will remove uncommited records";
-        while (fsm_records_.size() > fsm_apply_progress_) {
-            fsm_record_pool_.Return(fsm_records_.back());
-            fsm_records_.pop_back();
-        }
-    }
-    if (is_raft_leader() && !has_ongoing_fsm_record() && new_view_pending_) {
+    DCHECK(ongoing_record_ != nullptr);
+    DCHECK_EQ(ongoing_record_->seqnum(), seqnum);
+    fsm_record_pool_.Return(ongoing_record_);
+    ongoing_record_ = nullptr;
+    DCHECK(!has_ongoing_fsm_record());
+    if (is_raft_leader() && new_view_pending_) {
         NewView();  // will clear new_view_pending_
     }
 }
@@ -253,11 +252,12 @@ bool SequencerCore::RaftFsmApplyCallback(std::span<const char> payload) {
         fsm_record_pool_.Return(record);
         return false;
     }
-    if (record->seqnum() != fsm_apply_progress_) {
+    if (record->seqnum() != fsm_records_.size()) {
         HLOG(ERROR) << "Inconsistent seqnum from the new record";
         fsm_record_pool_.Return(record);
         return false;
     }
+    fsm_records_.push_back(record);
     switch (record->type()) {
     case FsmRecordType::NEW_VIEW:
         ApplyNewViewRecord(record);
@@ -267,13 +267,6 @@ bool SequencerCore::RaftFsmApplyCallback(std::span<const char> payload) {
         break;
     default:
         HLOG(FATAL) << "Unknown record type";
-    }
-    fsm_apply_progress_++;
-    if (record->sequencer_id() == sequencer_id_) {
-        fsm_record_pool_.Return(record);
-    } else {
-        fsm_records_.push_back(record);
-        DCHECK_EQ(fsm_records_.size(), fsm_apply_progress_);
     }
     return true;
 }
