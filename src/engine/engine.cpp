@@ -83,8 +83,8 @@ void Engine::StartInternal() {
 void Engine::SetupGatewayConnections() {
     CHECK(!gateway_addr_.empty());
     CHECK_NE(gateway_port_, -1);
-    int total_gateway_conn = num_io_workers_ * absl::GetFlag(FLAGS_gateway_conn_per_worker);
-    for (int i = 0; i < total_gateway_conn; i++) {
+    int total_conn = num_io_workers_ * absl::GetFlag(FLAGS_gateway_conn_per_worker);
+    for (int i = 0; i < total_conn; i++) {
         int sockfd = -1;
         bool success = utils::NetworkOpWithRetry(
             /* max_retry= */ 10, /* sleep_sec=*/ 3,
@@ -146,9 +146,9 @@ void Engine::SetupSharedLog() {
     ListenForNewConnections(shared_log_sockfd_,
                             absl::bind_front(&Engine::OnNewSLogConnection, this));
     // Connect to sequencer
-    int total_sequencer_conn = num_io_workers_ * absl::GetFlag(FLAGS_sequencer_conn_per_worker);
-    sequencer_config_.ForEachPeer([this, total_sequencer_conn] (const SequencerConfig::Peer* peer) {
-        for (int i = 0; i < total_sequencer_conn; i++) {
+    sequencer_config_.ForEachPeer([this] (const SequencerConfig::Peer* peer) {
+        int total_conn = num_io_workers_ * absl::GetFlag(FLAGS_sequencer_conn_per_worker);
+        for (int i = 0; i < total_conn; i++) {
             int sockfd = -1;
             bool success = utils::NetworkOpWithRetry(
                 /* max_retry= */ 10, /* sleep_sec=*/ 3,

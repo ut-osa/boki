@@ -62,7 +62,6 @@ void Server::Start() {
     if (myself == nullptr) {
         HLOG(FATAL) << "Cannot find myself in the sequencer config";
     }
-    node_manager_.Start(&uv_loop_, address_, myself->engine_conn_port);
     // Setup Raft
     std::string raft_addr(fmt::format("{}:{}", address_, myself->raft_port));
     std::vector<std::pair<uint64_t, std::string>> peers;
@@ -95,6 +94,9 @@ void Server::Start() {
         core_.MarkGlobalCutIfNeeded();
     });
     global_cut_timer_.PeriodicExpire(absl::Microseconds(core_.global_cut_interval_us()));
+    // Start listening for engine connections
+    node_manager_.Start(&uv_loop_, address_, myself->engine_conn_port);
+    // Setup fuzzers
     if (absl::GetFlag(FLAGS_enable_raft_leader_fuzzer)) {
         SetupFuzzer(
             &raft_leader_fuzzer_timer_,
