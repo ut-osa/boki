@@ -3,6 +3,8 @@
 namespace faas {
 namespace engine {
 
+constexpr int kConnectionTypeMask           = 0x7fff0000;
+
 constexpr int kGatewayConnectionTypeId      = 0 << 16;
 constexpr int kMessageConnectionTypeId      = 1 << 16;
 constexpr int kSequencerConnectionTypeId    = 2 << 16;

@@ -196,7 +196,8 @@ Timer* Engine::CreateTimer(int timer_type, IOWorker* io_worker, Timer::Callback 
 
 void Engine::OnConnectionClose(ConnectionBase* connection) {
     DCHECK(WithinMyEventLoopThread());
-    if (connection->type() == kMessageConnectionTypeId) {
+    int conn_type = (connection->type() & kConnectionTypeMask);
+    if (conn_type == kMessageConnectionTypeId) {
         DCHECK(message_connections_.contains(connection->id()));
         MessageConnection* message_connection = connection->as_ptr<MessageConnection>();
         if (message_connection->handshake_done()) {
@@ -208,27 +209,27 @@ void Engine::OnConnectionClose(ConnectionBase* connection) {
         }
         message_connections_.erase(connection->id());
         HLOG(INFO) << "A MessageConnection is returned";
-    } else if (connection->type() == kGatewayConnectionTypeId) {
+    } else if (conn_type == kGatewayConnectionTypeId) {
         DCHECK(gateway_connections_.contains(connection->id()));
         GatewayConnection* gateway_connection = connection->as_ptr<GatewayConnection>();
         HLOG(WARNING) << fmt::format("Gateway connection (conn_id={}) disconencted",
                                      gateway_connection->conn_id());
         gateway_connections_.erase(connection->id());
-    } else if (connection->type() == kSequencerConnectionTypeId) {
+    } else if (conn_type == kSequencerConnectionTypeId) {
         DCHECK(sequencer_connections_.contains(connection->id()));
         HLOG(WARNING) << "Sequencer connection disconencted";
         sequencer_connections_.erase(connection->id());
-    } else if (connection->type() == kIncomingSLogConnectionTypeId) {
+    } else if (conn_type == kIncomingSLogConnectionTypeId) {
         DCHECK(slog_connections_.contains(connection->id()));
         slog_connections_.erase(connection->id());
-    } else if (connection->type() == kSLogMessageHubTypeId) {
+    } else if (conn_type == kSLogMessageHubTypeId) {
         if (state_.load() != kStopping) {
             HLOG(FATAL) << "SLogMessageHub should not be closed";
         }
     } else if (timers_.contains(connection->as_ptr<Timer>())) {
         timers_.erase(connection->as_ptr<Timer>());
     } else {
-        HLOG(FATAL) << "Unknown connection type!";
+        HLOG(FATAL) << "Unknown connection type: " << connection->type();
     }
 }
 
