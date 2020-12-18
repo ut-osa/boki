@@ -199,5 +199,35 @@ void EngineCore::ScheduleLocalCutIfNecessary() {
     local_cut_scheduled_ = true;
 }
 
+void EngineCore::DoStateCheck(std::ostringstream& stream) const {
+    stream << fmt::format("My NodeId: {}", my_node_id_);
+    fsm_.DoStateCheck(stream);
+    if (!pending_entries_.empty()) {
+        stream << fmt::format("There are {} pending log entries\n",
+                              pending_entries_.size());
+        int counter = 0;
+        for (const auto& entry : pending_entries_) {
+            uint64_t localid = entry.first;
+            const LogEntry* log_entry = entry.second.get();
+            counter++;
+            stream << fmt::format("--[{}] LocalId={:#018x} Tag={}",
+                                  counter, localid, log_entry->tag);
+            uint16_t node_id = LocalIdToNodeId(localid);
+            if (node_id == my_node_id_) {
+                stream << " SrcNode=myself";
+            } else {
+                stream << " SrcNode=" << node_id;
+            }
+            stream << "\n";
+        }
+    }
+    stream << "LogProcess:";
+    for (const auto& entry : log_progress_) {
+        stream << fmt::format(" Node[{}]={:#010x}", entry.first, entry.second);
+    }
+    stream << fmt::format(" Myself={:#010x}", next_localid_);
+    stream << "\n";
+}
+
 }  // namespace log
 }  // namespace faas

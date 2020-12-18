@@ -65,6 +65,8 @@ public:
     typedef std::vector<uint32_t> CutVec;
     void BuildGlobalCutRecord(const CutVec& cuts, FsmRecordProto* record);
 
+    void DoStateCheck(std::ostringstream& stream) const;
+
 private:
     uint16_t sequencer_id_;
 

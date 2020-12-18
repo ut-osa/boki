@@ -98,18 +98,24 @@ void SequencerCore::OnRecvLocalCutMessage(const LocalCutMsgProto& message) {
         for (size_t i = 0; i < view->replicas(); i++) {
             local_cuts_[node_idx * view->replicas() + i] = message.localid_cuts(i);
         }
-        HVLOG(1) << "Local cut changed";
+        HVLOG(1) << fmt::format("Local cut of node {} changed", message.my_node_id());
     }
 }
 
 void SequencerCore::ReconfigViewIfDoable() {
-    if (!is_raft_leader() || new_view_pending_) {
+    if (!is_raft_leader()) {
+        HLOG(INFO) << "I am not the current Raft leader";
         return;
     }
-    HLOG(INFO) << "Will reconfigure view";
+    if (new_view_pending_) {
+        HLOG(INFO) << "A previous ReconfigView is pending";
+        return;
+    }
     if (has_ongoing_fsm_record()) {
+        HLOG(INFO) << "Has ongoing record, will delay ReconfigView request";
         new_view_pending_ = true;
     } else {
+        HLOG(INFO) << "Will reconfigure view";
         NewView();
     }
 }
@@ -252,8 +258,11 @@ bool SequencerCore::RaftFsmApplyCallback(std::span<const char> payload) {
         fsm_record_pool_.Return(record);
         return false;
     }
+    HLOG(INFO) << "Apply record with seqnum " << record->seqnum();
     if (record->seqnum() != fsm_records_.size()) {
-        HLOG(ERROR) << "Inconsistent seqnum from the new record";
+        HLOG(ERROR) << fmt::format(
+            "Inconsistent seqnum from the new record: record_seqnum={}, current_seqnum={}",
+            record->seqnum(), fsm_records_.size());
         fsm_record_pool_.Return(record);
         return false;
     }

@@ -32,6 +32,8 @@ public:
     bool StoreLogAsPrimaryNode(uint32_t tag, std::span<const char> data, uint64_t* localid);
     bool StoreLogAsBackupNode(uint32_t tag, std::span<const char> data, uint64_t localid);
 
+    void DoStateCheck(std::ostringstream& stream) const;
+
 private:
     Fsm fsm_;
     uint16_t my_node_id_;

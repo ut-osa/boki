@@ -36,7 +36,21 @@ private:
     log::EngineCore core_ ABSL_GUARDED_BY(mu_);
     std::unique_ptr<log::StorageInterface> storage_;
 
-    enum LogOpType : uint16_t { kAppend, kReadAt, kTrim, kReadNext, kReadPrev };
+    enum LogOpType : uint16_t {
+        kAppend   = 0,
+        kReadAt   = 1,
+        kTrim     = 2,
+        kReadNext = 3,
+        kReadPrev = 4
+    };
+
+    static constexpr const char* kLopOpTypeStr[] = {
+        "Append",
+        "ReadAt",
+        "Trim",
+        "ReadNext",
+        "ReadPrev"
+    };
 
     struct LogOp {
         uint64_t id;  // Lower 8-bit stores type
@@ -63,7 +77,9 @@ private:
         bool persisted;
         LogOp* append_op;
     };
-    absl::InlinedVector<CompletedLogEntry, 8> completed_log_entries_ ABSL_GUARDED_BY(mu_); 
+    absl::InlinedVector<CompletedLogEntry, 8> completed_log_entries_ ABSL_GUARDED_BY(mu_);
+
+    Timer* statecheck_timer_; 
 
     static inline LogOpType op_type(const LogOp* op) {
         return gsl::narrow_cast<LogOpType>(op->id & 0xff);
@@ -73,6 +89,7 @@ private:
 
     void SetupTimers();
     void LocalCutTimerTriggered();
+    void StateCheckTimerTriggered();
 
     void HandleRemoteAppend(const protocol::Message& message);
     void HandleRemoteReplicate(const protocol::Message& message);
@@ -111,6 +128,7 @@ private:
     void SendMessageToEngine(uint16_t src_node_id, uint16_t dst_node_id,
                              protocol::Message* message);
     void ScheduleLocalCut(int duration_us);
+    void DoStateCheck();
 
     template<class KeyT>
     static LogOp* GrabLogOp(absl::flat_hash_map<KeyT, LogOp*>& op_map, KeyT key);

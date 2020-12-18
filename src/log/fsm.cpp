@@ -203,6 +203,28 @@ void Fsm::ApplyGlobalCutRecord(const GlobalCutRecordProto& record) {
     }
 }
 
+void Fsm::DoStateCheck(std::ostringstream& stream) const {
+    const View* view = current_view();
+    if (sequencer_id_ != 0) {
+        stream << fmt::format("FsmState[{}]: ", sequencer_id_);
+    } else {
+        stream << "FsmState: ";
+    }
+    stream << fmt::format("ViewId={} RecordSeqnum={} LogSeqnum={:#018x} NumCuts={}\n",
+                          view == nullptr ? -1 : view->id(), next_record_seqnum_,
+                          next_log_seqnum_, global_cuts_.size());
+    if (view != nullptr) {
+        stream << fmt::format("CurrentView: Replicas={} Nodes=[", view->replicas());
+        for (size_t i = 0; i < view->num_nodes(); i++) {
+            if (i > 0) {
+                stream << ", ";
+            }
+            stream << view->node(i);
+        }
+        stream << "]\n";
+    }
+}
+
 Fsm::View::View(const NewViewRecordProto& proto)
     : id_(proto.view_id()),
       replicas_(proto.replicas()) {

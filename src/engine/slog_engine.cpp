@@ -23,7 +23,8 @@ SLogEngine::SLogEngine(Engine* engine)
     : engine_(engine),
       sequencer_config_(&engine->sequencer_config_),
       core_(engine->node_id()),
-      next_op_id_(1) {
+      next_op_id_(1),
+      statecheck_timer_(nullptr) {
     core_.SetLogPersistedCallback(
         absl::bind_front(&SLogEngine::LogPersisted, this));
     core_.SetLogDiscardedCallback(
@@ -65,8 +66,15 @@ inline void FillReadLogResponse(uint64_t seqnum, const std::string& data,
 void SLogEngine::SetupTimers() {
     for (IOWorker* io_worker : engine_->io_workers_) {
         engine_->CreateTimer(
-            kSLogEngineTimerTypeId, io_worker,
+            kSLogLocalCutTimerTypeId, io_worker,
             absl::bind_front(&SLogEngine::LocalCutTimerTriggered, this));
+    }
+    if (absl::GetFlag(FLAGS_slog_enable_statecheck)) {
+        int interval_us = absl::GetFlag(FLAGS_slog_statecheck_interval_sec) * 1000000;
+        statecheck_timer_ = engine_->CreateTimer(
+            kSLogStateCheckTimerTypeId, engine_->io_workers_.front(),
+            absl::bind_front(&SLogEngine::StateCheckTimerTriggered, this),
+            /* initial_duration_us= */ interval_us);
     }
 }
 
@@ -82,6 +90,14 @@ void SLogEngine::LocalCutTimerTriggered() {
     message.SerializeToString(&serialized_message);
     std::span<const char> data(serialized_message.data(), serialized_message.length());
     SendSequencerMessage(SequencerMessageHelper::NewLocalCut(data), data);
+}
+
+void SLogEngine::StateCheckTimerTriggered() {
+    mu_.AssertNotHeld();
+    HVLOG(1) << "StateCheckTimerTriggered";
+    DoStateCheck();
+    int interval_us = absl::GetFlag(FLAGS_slog_statecheck_interval_sec) * 1000000;
+    statecheck_timer_->TriggerIn(interval_us);
 }
 
 void SLogEngine::OnSequencerMessage(const SequencerMessage& message,
@@ -599,25 +615,9 @@ void SLogEngine::LogEntryCompleted(CompletedLogEntry entry) {
 
 void SLogEngine::RecordLogOpCompletion(LogOp* op) {
     int64_t elapsed_time = GetMonotonicMicroTimestamp() - op->start_timestamp;
-    std::string kind = "";
-    switch (op_type(op)) {
-    case LogOpType::kAppend:
-        kind = "Append";
-        break;
-    case LogOpType::kReadAt:
-        kind = "ReadAt";
-        break;
-    case LogOpType::kReadNext:
-        kind = "ReadNext";
-        break;
-    case LogOpType::kReadPrev:
-        kind = "ReadPrev";
-        break;
-    default:
-        UNREACHABLE();
-    }
     HVLOG(1) << fmt::format("{} op finished: elapsed_time={}, hop={}",
-                            kind, elapsed_time, op->hop_times);
+                            kLopOpTypeStr[op_type(op)],
+                            elapsed_time, op->hop_times);
 }
 
 void SLogEngine::SendFailedResponse(const protocol::Message& request,
@@ -665,7 +665,7 @@ void SLogEngine::ScheduleLocalCut(int duration_us) {
     mu_.AssertHeld();
     IOWorker* io_worker = IOWorker::current();
     DCHECK(io_worker != nullptr);
-    ConnectionBase* timer = io_worker->PickConnection(kSLogEngineTimerTypeId);
+    ConnectionBase* timer = io_worker->PickConnection(kSLogLocalCutTimerTypeId);
     DCHECK(timer != nullptr);
     timer->as_ptr<Timer>()->TriggerIn(duration_us);
 }
@@ -673,6 +673,62 @@ void SLogEngine::ScheduleLocalCut(int duration_us) {
 std::string SLogEngine::GetNodeAddr(uint16_t node_id) {
     absl::ReaderMutexLock lk(&mu_);
     return core_.fsm()->get_addr(node_id);
+}
+
+void SLogEngine::DoStateCheck() {
+    std::ostringstream stream;
+    absl::ReaderMutexLock lk(&mu_);
+    int64_t current_timestamp = GetMonotonicMicroTimestamp();
+    core_.DoStateCheck(stream);
+    if (!append_ops_.empty()) {
+        stream << fmt::format("There are {} local log appends:\n",
+                              append_ops_.size());
+        int counter = 0;
+        for (const auto& entry : append_ops_) {
+            uint64_t localid = entry.first;
+            const LogOp* op = entry.second;
+            counter++;
+            stream << fmt::format("--[{}] LocalId={:#018x} Tag={} ElapsedTime={}us",
+                                  counter, localid, op->log_tag,
+                                  current_timestamp - op->start_timestamp);
+            if (op->src_node_id == my_node_id()) {
+                stream << " SrcNode=myself";
+            } else {
+                stream << " SrcNode=" << op->src_node_id;
+            }
+            stream << "\n";
+        }
+    }
+    if (!remote_ops_.empty()) {
+        stream << fmt::format("There are {} LogOp running remotedly:\n",
+                              remote_ops_.size());
+        int counter = 0;
+        for (const auto& entry : remote_ops_) {
+            counter++;
+            const LogOp* op = entry.second;
+            stream << fmt::format("--[{}] {} ElapsedTime={}us",
+                                  counter, kLopOpTypeStr[op_type(op)],
+                                  current_timestamp - op->start_timestamp);
+            switch (op_type(op)) {
+            case kReadPrev:
+            case kReadNext:
+                stream << " Tag=" << op->log_tag;
+            case kReadAt:
+                stream << fmt::format(" SeqNum={:#018x}", op->log_seqnum);
+            default:
+                break;
+            }
+            stream << "\n";
+        }
+    }
+    std::string output = stream.str();
+    if (output.empty()) {
+        return;
+    }
+    LOG(INFO) << "\n"
+              << "==================BEGIN SLOG STATE CHECK==================\n"
+              << output
+              << "===================END SLOG STATE CHECK===================";
 }
 
 }  // namespace engine

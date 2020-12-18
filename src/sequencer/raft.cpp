@@ -62,10 +62,11 @@ void Raft::Start(uv_loop_t* uv_loop, std::string_view listen_address,
     RAFT_DCHECK_OK(raft_uv_init(&raft_io_, uv_loop, data_dir_.c_str(), &transport_));
     RAFT_DCHECK_OK(raft_init(&raft_, &raft_io_, &raft_fsm_, id_, listen_address_.c_str()));
 
-    if (absl::GetFlag(FLAGS_enable_raft_tracer)) {
+    if (absl::GetFlag(FLAGS_raft_enable_tracer)) {
         tracer_.impl = this;
         tracer_.emit = &Raft::TraceEmitWrapper;
         raft_.tracer = &tracer_;
+        raft_uv_set_tracer(&raft_io_, &tracer_);
     }
 
     struct raft_configuration configuration;

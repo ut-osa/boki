@@ -10,7 +10,9 @@ constexpr int kMessageConnectionTypeId      = 1 << 16;
 constexpr int kSequencerConnectionTypeId    = 2 << 16;
 constexpr int kIncomingSLogConnectionTypeId = 3 << 16;
 constexpr int kSLogMessageHubTypeId         = 4 << 16;
-constexpr int kSLogEngineTimerTypeId        = 5 << 16;
+constexpr int kTimerTypeId                  = 5 << 16;
+constexpr int kSLogLocalCutTimerTypeId      = kTimerTypeId + 1;
+constexpr int kSLogStateCheckTimerTypeId    = kTimerTypeId + 2;
 
 constexpr uint16_t kGatewayConnectionBufGroup      = 1;
 constexpr uint16_t kMessageConnectionBufGroup      = 2;

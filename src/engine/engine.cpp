@@ -187,8 +187,9 @@ void Engine::StopInternal() {
     }
 }
 
-Timer* Engine::CreateTimer(int timer_type, IOWorker* io_worker, Timer::Callback cb) {
-    Timer* timer = new Timer(timer_type, cb);
+Timer* Engine::CreateTimer(int timer_type, IOWorker* io_worker,
+                           Timer::Callback cb, int initial_duration_us) {
+    Timer* timer = new Timer(timer_type, cb, initial_duration_us);
     RegisterConnection(io_worker, timer);
     timers_.insert(std::unique_ptr<Timer>(timer));
     return timer;
@@ -226,8 +227,12 @@ void Engine::OnConnectionClose(ConnectionBase* connection) {
         if (state_.load() != kStopping) {
             HLOG(FATAL) << "SLogMessageHub should not be closed";
         }
-    } else if (timers_.contains(connection->as_ptr<Timer>())) {
-        timers_.erase(connection->as_ptr<Timer>());
+    } else if (conn_type == kTimerTypeId) {
+        if (timers_.contains(connection->as_ptr<Timer>())) {
+            timers_.erase(connection->as_ptr<Timer>());
+        } else {
+            HLOG(FATAL) << "Cannot find timer in timers_";
+        }
     } else {
         HLOG(FATAL) << "Unknown connection type: " << connection->type();
     }

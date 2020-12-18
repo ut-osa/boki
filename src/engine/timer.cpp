@@ -5,9 +5,10 @@
 namespace faas {
 namespace engine {
 
-Timer::Timer(int timer_type, Callback cb)
+Timer::Timer(int timer_type, Callback cb, int initial_duration_us)
     : ConnectionBase(timer_type),
-      cb_(cb), io_worker_(nullptr), state_(kCreated), timerfd_(-1) {}
+      cb_(cb), io_worker_(nullptr), state_(kCreated),
+      timerfd_(-1), initial_duration_us_(initial_duration_us) {}
 
 Timer::~Timer() {
     DCHECK(state_ == kCreated || state_ == kClosed);
@@ -22,14 +23,17 @@ void Timer::Start(IOWorker* io_worker) {
     io_utils::FdUnsetNonblocking(timerfd_);
     URING_DCHECK_OK(current_io_uring()->RegisterFd(timerfd_));
     state_ = kIdle;
+    if (initial_duration_us_ != -1) {
+        TriggerIn(initial_duration_us_);
+    }
     URING_DCHECK_OK(current_io_uring()->StartRead(
         timerfd_, IOWorker::kOctaBufGroup,
         [this] (int status, std::span<const char> data) -> bool {
             if (state_ != kScheduled) {
                 return false;
             }
-            cb_();
             state_ = kIdle;
+            cb_();
             return true;
         }
     ));

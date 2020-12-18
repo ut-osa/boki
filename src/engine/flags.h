@@ -31,3 +31,5 @@ ABSL_DECLARE_FLAG(double, instant_rps_ema_tau_ms);
 
 ABSL_DECLARE_FLAG(std::string, slog_storage_backend);
 ABSL_DECLARE_FLAG(std::string, slog_storage_datadir);
+ABSL_DECLARE_FLAG(bool, slog_enable_statecheck);
+ABSL_DECLARE_FLAG(int, slog_statecheck_interval_sec);
