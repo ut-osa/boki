@@ -697,6 +697,10 @@ void SLogEngine::DoStateCheck() {
                 stream << " SrcNode=" << op->src_node_id;
             }
             stream << "\n";
+            if (counter >= 64) {
+                stream << "...more...\n";
+                break;
+            }
         }
     }
     if (!remote_ops_.empty()) {
@@ -719,6 +723,10 @@ void SLogEngine::DoStateCheck() {
                 break;
             }
             stream << "\n";
+            if (counter >= 64) {
+                stream << "...more...\n";
+                break;
+            }
         }
     }
     std::string output = stream.str();

@@ -223,6 +223,15 @@ void Fsm::DoStateCheck(std::ostringstream& stream) const {
         }
         stream << "]\n";
     }
+    if (!pending_records_.empty()) {
+        stream << fmt::format("There are {} pending FSM records: ",
+                              pending_records_.size());
+        uint32_t min_seqnum = std::numeric_limits<uint32_t>::max();
+        for (const auto& entry : pending_records_) {
+            min_seqnum = std::min(min_seqnum, entry.first);
+        }
+        stream << fmt::format("MinSeqnum={}\n", min_seqnum);
+    }
 }
 
 Fsm::View::View(const NewViewRecordProto& proto)

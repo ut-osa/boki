@@ -200,7 +200,7 @@ void EngineCore::ScheduleLocalCutIfNecessary() {
 }
 
 void EngineCore::DoStateCheck(std::ostringstream& stream) const {
-    stream << fmt::format("My NodeId: {}", my_node_id_);
+    stream << fmt::format("My NodeId: {}\n", my_node_id_);
     fsm_.DoStateCheck(stream);
     if (!pending_entries_.empty()) {
         stream << fmt::format("There are {} pending log entries\n",
@@ -219,6 +219,10 @@ void EngineCore::DoStateCheck(std::ostringstream& stream) const {
                 stream << " SrcNode=" << node_id;
             }
             stream << "\n";
+            if (counter >= 64) {
+                stream << "...more...\n";
+                break;
+            }
         }
     }
     stream << "LogProcess:";
