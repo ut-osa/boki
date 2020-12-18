@@ -40,15 +40,22 @@ void Fsm::OnRecvRecord(const FsmRecordProto& record) {
     if (record.seqnum() == next_record_seqnum_) {
         ApplyRecord(record);
         while (pending_records_.contains(next_record_seqnum_)) {
-            ApplyRecord(pending_records_[next_record_seqnum_]);
+            FsmRecordProto next_record = std::move(pending_records_[next_record_seqnum_]);
             pending_records_.erase(next_record_seqnum_);
+            ApplyRecord(next_record);
         }
     } else if (record.seqnum() > next_record_seqnum_) {
-        pending_records_[record.seqnum()] = record;
-        pending_records_stat_.AddSample(gsl::narrow_cast<uint32_t>(
-            pending_records_.size()));
+        if (!pending_records_.contains(record.seqnum())) {
+            pending_records_[record.seqnum()] = record;
+            pending_records_stat_.AddSample(gsl::narrow_cast<uint32_t>(
+                pending_records_.size()));
+        } else {
+            HLOG(WARNING) << fmt::format("Receive duplicated FsmRecord: seqnum={}",
+                                         record.seqnum());
+        }
     } else {
-        HLOG(WARNING) << fmt::format("Receive outdated FsmRecord: seqnum={}", record.seqnum());
+        HLOG(WARNING) << fmt::format("Receive outdated FsmRecord: seqnum={}",
+                                     record.seqnum());
     }
 }
 

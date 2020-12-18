@@ -287,6 +287,16 @@ bool SequencerCore::RaftFsmApplyCallback(std::span<const char> payload) {
         HLOG(ERROR) << fmt::format(
             "Inconsistent seqnum from the new record: record_seqnum={}, current_seqnum={}",
             record->seqnum(), fsm_records_.size());
+        if (record->seqnum() < fsm_records_.size()) {
+            const FsmRecordProto* existing_record = fsm_records_[record->seqnum()];
+            if (existing_record->sequencer_id() != record->sequencer_id()) {
+                HLOG(ERROR) << fmt::format("Record with seqnum {} exists: "
+                                           "sequencer_id_mine={}, "
+                                           "sequencer_id_theirs={}",
+                                           record->seqnum(), existing_record->sequencer_id(),
+                                           record->sequencer_id());
+            }
+        }
         fsm_record_pool_.Return(record);
         return false;
     }
