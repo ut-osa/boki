@@ -697,7 +697,7 @@ void SLogEngine::DoStateCheck() {
                 stream << " SrcNode=" << op->src_node_id;
             }
             stream << "\n";
-            if (counter >= 64) {
+            if (counter >= 32) {
                 stream << "...more...\n";
                 break;
             }
@@ -723,7 +723,7 @@ void SLogEngine::DoStateCheck() {
                 break;
             }
             stream << "\n";
-            if (counter >= 64) {
+            if (counter >= 32) {
                 stream << "...more...\n";
                 break;
             }

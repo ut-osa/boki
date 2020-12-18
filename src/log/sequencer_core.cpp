@@ -251,14 +251,13 @@ void SequencerCore::ApplyGlobalCutRecord(FsmRecordProto* record) {
 }
 
 bool SequencerCore::RaftFsmApplyCallback(std::span<const char> payload) {
-    HVLOG(1) << "RaftFsmApplyCallback";
     FsmRecordProto* record = fsm_record_pool_.Get();
     if (!record->ParseFromArray(payload.data(), payload.size())) {
         HLOG(ERROR) << "Failed to parse new Fsm record";
         fsm_record_pool_.Return(record);
         return false;
     }
-    HLOG(INFO) << "Apply record with seqnum " << record->seqnum();
+    HVLOG(1) << "Apply record with seqnum " << record->seqnum();
     if (record->seqnum() != fsm_records_.size()) {
         HLOG(ERROR) << fmt::format(
             "Inconsistent seqnum from the new record: record_seqnum={}, current_seqnum={}",

@@ -219,7 +219,7 @@ void EngineCore::DoStateCheck(std::ostringstream& stream) const {
                 stream << " SrcNode=" << node_id;
             }
             stream << "\n";
-            if (counter >= 64) {
+            if (counter >= 32) {
                 stream << "...more...\n";
                 break;
             }
