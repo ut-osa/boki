@@ -14,6 +14,10 @@ Fsm::Fsm(uint16_t sequencer_id)
       new_view_cb_([] (const View*) {}),
       log_replicated_cb_([] (uint64_t, uint64_t, uint32_t) {}),
       next_record_seqnum_(0),
+      record_apply_counter_(stat::Counter::StandardReportCallback(
+          "fsm_record_apply")),
+      pending_records_stat_(stat::StatisticsCollector<uint32_t>::StandardReportCallback(
+          "fsm_pending_records")),
       next_log_seqnum_(0) {}
 
 Fsm::~Fsm() {}
@@ -39,8 +43,12 @@ void Fsm::OnRecvRecord(const FsmRecordProto& record) {
             ApplyRecord(pending_records_[next_record_seqnum_]);
             pending_records_.erase(next_record_seqnum_);
         }
-    } else {
+    } else if (record.seqnum() > next_record_seqnum_) {
         pending_records_[record.seqnum()] = record;
+        pending_records_stat_.AddSample(gsl::narrow_cast<uint32_t>(
+            pending_records_.size()));
+    } else {
+        HLOG(WARNING) << fmt::format("Receive outdated FsmRecord: seqnum={}", record.seqnum());
     }
 }
 
@@ -125,6 +133,7 @@ bool Fsm::CheckTail(uint64_t* seqnum, const View** view, uint16_t* primary_node_
 
 void Fsm::ApplyRecord(const FsmRecordProto& record) {
     DCHECK_EQ(record.seqnum(), next_record_seqnum_);
+    record_apply_counter_.Tick();
     next_record_seqnum_++;
     HVLOG(1) << fmt::format("Fsm::ApplyRecord: seqnum={}", record.seqnum());
     switch (record.type()) {

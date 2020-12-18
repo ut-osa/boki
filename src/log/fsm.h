@@ -1,5 +1,6 @@
 #pragma once
 
+#include "common/stat.h"
 #include "log/common.h"
 
 namespace faas {
@@ -75,6 +76,9 @@ private:
 
     uint32_t next_record_seqnum_;
     absl::flat_hash_map</* seqnum */ uint32_t, FsmRecordProto> pending_records_;
+    stat::Counter record_apply_counter_;
+    stat::StatisticsCollector<uint32_t> pending_records_stat_; 
+
     uint64_t next_log_seqnum_;
 
     std::vector<std::unique_ptr<View>> views_;
