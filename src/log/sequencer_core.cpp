@@ -21,6 +21,10 @@ void SequencerCore::SetRaftLeaderCallback(RaftLeaderCallback cb) {
     raft_leader_cb_ = cb;
 }
 
+void SequencerCore::SetRaftInflightRecordsCallback(RaftInflightRecordsCallback cb) {
+    raft_inflight_records_cb_ = cb;
+}
+
 void SequencerCore::SetRaftApplyCallback(RaftApplyCallback cb) {
     raft_apply_cb_ = cb;
 }
@@ -193,6 +197,10 @@ void SequencerCore::MarkGlobalCutIfNeeded() {
     RaftApplyRecord(record);
 }
 
+bool SequencerCore::has_ongoing_fsm_record() {
+    return ongoing_record_ != nullptr && raft_inflight_records_cb_() == 0;
+}
+
 bool SequencerCore::is_raft_leader() {
     uint16_t leader_id;
     if (!raft_leader_cb_(&leader_id)) {
@@ -243,8 +251,7 @@ void SequencerCore::OnRaftApplyFinished(uint32_t seqnum, bool success) {
     DCHECK_EQ(ongoing_record_->seqnum(), seqnum);
     fsm_record_pool_.Return(ongoing_record_);
     ongoing_record_ = nullptr;
-    DCHECK(!has_ongoing_fsm_record());
-    if (new_view_pending_) {
+    if (!has_ongoing_fsm_record() && new_view_pending_) {
         new_view_pending_ = false;
         if (is_raft_leader()) {
             NewView();

@@ -33,6 +33,8 @@ Server::Server(uint16_t sequencer_id)
         *leader_id = gsl::narrow_cast<uint16_t>(id);
         return true;
     });
+    core_.SetRaftInflightRecordsCallback(
+        absl::bind_front(&Raft::NumLogNotApplied, &raft_));
     core_.SetRaftApplyCallback([this] (uint32_t seqnum, std::span<const char> payload) {
         raft_.Apply(payload, [this, seqnum] (bool success) {
             core_.OnRaftApplyFinished(seqnum, success);

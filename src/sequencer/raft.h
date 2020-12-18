@@ -31,6 +31,7 @@ public:
 
     uint64_t GetLeader();
     bool IsLeader();
+    int NumLogNotApplied();
 
     typedef std::function<void(bool /* success */)> ApplyCallback;
     void Apply(std::span<const char> payload, ApplyCallback cb);

@@ -15,6 +15,9 @@ public:
     typedef std::function<bool(uint16_t* /* leader_id */)> RaftLeaderCallback;
     void SetRaftLeaderCallback(RaftLeaderCallback cb);
 
+    typedef std::function<int()> RaftInflightRecordsCallback;
+    void SetRaftInflightRecordsCallback(RaftInflightRecordsCallback cb);
+
     typedef std::function<void(uint32_t /* seqnum */,
                                std::span<const char> /* payload */)> RaftApplyCallback;
     void SetRaftApplyCallback(RaftApplyCallback cb);
@@ -47,6 +50,7 @@ private:
     utils::ProtobufMessagePool<FsmRecordProto> fsm_record_pool_;
 
     RaftLeaderCallback            raft_leader_cb_;
+    RaftInflightRecordsCallback   raft_inflight_records_cb_;
     RaftApplyCallback             raft_apply_cb_;
     SendFsmRecordsMessageCallback send_fsm_records_message_cb_;
 
@@ -58,7 +62,7 @@ private:
 
     bool new_view_pending_;
 
-    bool has_ongoing_fsm_record() { return ongoing_record_ != nullptr; }
+    bool has_ongoing_fsm_record();
     bool is_raft_leader();
 
     void NewView();

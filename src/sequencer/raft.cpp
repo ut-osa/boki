@@ -115,6 +115,15 @@ bool Raft::IsLeader() {
     return raft_state(&raft_) == RAFT_LEADER;
 }
 
+int Raft::NumLogNotApplied() {
+    if (state_ != kRunning) {
+        HLOG(WARNING) << "Not in running state";
+        return -1;
+    }
+    DCHECK_LE(raft_.last_applied, raft_.commit_index);
+    return gsl::narrow_cast<int>(raft_.commit_index - raft_.last_applied);
+}
+
 void Raft::Apply(std::span<const char> payload, ApplyCallback cb) {
     if (state_ != kRunning) {
         HLOG(WARNING) << "Not in running state";
