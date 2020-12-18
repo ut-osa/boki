@@ -10,6 +10,8 @@ ABSL_DECLARE_FLAG(int, raft_snapshot_threshold);
 ABSL_DECLARE_FLAG(int, raft_snapshot_trailing);
 ABSL_DECLARE_FLAG(bool, raft_pre_vote);
 
+ABSL_DECLARE_FLAG(int, view_checking_interval_ms);
+
 ABSL_DECLARE_FLAG(bool, enable_raft_leader_fuzzer);
 ABSL_DECLARE_FLAG(int, raft_leader_fuzz_interval_ms);
 

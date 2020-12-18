@@ -34,27 +34,25 @@ int SequencerCore::global_cut_interval_us() const {
 }
 
 void SequencerCore::OnNewNodeConnected(uint16_t node_id, std::string_view addr) {
-    if (conencted_nodes_.contains(node_id)) {
+    if (connected_nodes_.contains(node_id)) {
         HLOG(WARNING) << fmt::format("Node {} already in connected node set", node_id);
         return;
     }
     HLOG(INFO) << fmt::format("Node {} connected with address {}", node_id, addr);
-    conencted_nodes_[node_id] = std::string(addr);
+    connected_nodes_[node_id] = std::string(addr);
     // This can be problematic, as the new node will not receive new records
     // before it becomes part of the new view.
     // TODO: Find some way to trigger it, and fix the problem 
     SendAllFsmRecords(node_id);
-    ReconfigViewIfDoable();
 }
 
 void SequencerCore::OnNodeDisconnected(uint16_t node_id) {
-    if (!conencted_nodes_.contains(node_id)) {
+    if (!connected_nodes_.contains(node_id)) {
         HLOG(WARNING) << fmt::format("Node {} not in connected node set", node_id);
         return;
     }
     HLOG(INFO) << fmt::format("Node {} disconnected", node_id);
-    conencted_nodes_.erase(node_id);
-    ReconfigViewIfDoable();
+    connected_nodes_.erase(node_id);
 }
 
 void SequencerCore::OnRecvLocalCutMessage(const LocalCutMsgProto& message) {
@@ -102,11 +100,36 @@ void SequencerCore::OnRecvLocalCutMessage(const LocalCutMsgProto& message) {
     }
 }
 
-void SequencerCore::ReconfigViewIfDoable() {
+void SequencerCore::DoViewChecking() {
     if (!is_raft_leader()) {
-        HLOG(INFO) << "I am not the current Raft leader";
         return;
     }
+    if (connected_nodes_.size() < absl::GetFlag(FLAGS_slog_num_replicas)) {
+        return;
+    }
+    const Fsm::View* view = fsm_.current_view();
+    if (view == nullptr) {
+        ReconfigView();
+        return;
+    }
+    for (const auto& entry : connected_nodes_) {
+        uint16_t node_id = entry.first;
+        if (!view->has_node(node_id)) {
+            ReconfigView();
+            return;
+        }
+    }
+    for (size_t i = 0; i < view->num_nodes(); i++) {
+        uint16_t node_id = view->node(i);
+        if (!connected_nodes_.contains(node_id)) {
+            ReconfigView();
+            return;
+        }
+    }
+}
+
+void SequencerCore::ReconfigView() {
+    DCHECK(is_raft_leader());
     if (new_view_pending_) {
         HLOG(INFO) << "A previous ReconfigView is pending";
         return;
@@ -123,15 +146,14 @@ void SequencerCore::ReconfigViewIfDoable() {
 void SequencerCore::NewView() {
     DCHECK(is_raft_leader());
     DCHECK(!has_ongoing_fsm_record());
-    new_view_pending_ = false;
     size_t replicas = absl::GetFlag(FLAGS_slog_num_replicas);
-    if (conencted_nodes_.size() < replicas) {
+    if (connected_nodes_.size() < replicas) {
         HLOG(WARNING) << fmt::format("Connected nodes less than replicas {}", replicas);
         return;
     }
     HLOG(INFO) << "Create new view";
     FsmRecordProto* record = fsm_record_pool_.Get();
-    Fsm::NodeVec node_vec(conencted_nodes_.begin(), conencted_nodes_.end());
+    Fsm::NodeVec node_vec(connected_nodes_.begin(), connected_nodes_.end());
     std::random_shuffle(node_vec.begin(), node_vec.end());
     fsm_.BuildNewViewRecord(replicas, node_vec, record);
     RaftApplyRecord(record);
@@ -194,8 +216,8 @@ void SequencerCore::SendAllFsmRecords(uint16_t node_id) {
 }
 
 void SequencerCore::BroadcastFsmRecord(const Fsm::View* view, const FsmRecordProto& record) {
-    if (!is_raft_leader()) {
-        // Well, now only the leader is responsible for broadcasting records
+    if (record.sequencer_id() != sequencer_id_) {
+        // Let who made this record to broadcast it
         return;
     }
     FsmRecordsMsgProto message;
@@ -222,8 +244,11 @@ void SequencerCore::OnRaftApplyFinished(uint32_t seqnum, bool success) {
     fsm_record_pool_.Return(ongoing_record_);
     ongoing_record_ = nullptr;
     DCHECK(!has_ongoing_fsm_record());
-    if (is_raft_leader() && new_view_pending_) {
-        NewView();  // will clear new_view_pending_
+    if (new_view_pending_) {
+        new_view_pending_ = false;
+        if (is_raft_leader()) {
+            NewView();
+        }
     }
 }
 
@@ -285,6 +310,38 @@ bool SequencerCore::RaftFsmRestoreCallback(std::span<const char> payload) {
 
 bool SequencerCore::RaftFsmSnapshotCallback(std::string* data) {
     NOT_IMPLEMENTED();
+}
+
+void SequencerCore::DoStateCheck(std::ostringstream& stream) const {
+    fsm_.DoStateCheck(stream);
+    stream << fmt::format("There are {} connected nodes\n",
+                          connected_nodes_.size());
+    for (const auto& entry : connected_nodes_) {
+        uint16_t node_id = entry.first;
+        std::string addr = entry.second;
+        stream << fmt::format("--Node[{}]: Address={}\n", node_id, addr);
+    }
+    const Fsm::View* view = fsm_.current_view();
+    if (view != nullptr) {
+        DCHECK_EQ(global_cuts_.size(), view->num_nodes());
+        stream << fmt::format("GlobalCut:");
+        for (size_t i = 0; i < view->num_nodes(); i++) {
+            stream << fmt::format(" Node[{}]={:#010x}", view->node(i), global_cuts_[i]);
+        }
+        stream << "\n";
+        DCHECK_EQ(local_cuts_.size(), view->num_nodes() * view->replicas());
+        stream << fmt::format("ReceivedLocalCut:\n");
+        for (size_t i = 0; i < view->num_nodes(); i++) {
+            stream << "--";
+            for (size_t j = 0; j < view->replicas(); j++) {
+                size_t node_idx = (i - j + view->num_nodes()) % view->num_nodes();
+                stream << fmt::format("Node[{}]={:#010x} ",
+                                      view->node(node_idx),
+                                      local_cuts_[i * view->replicas() + j]);
+            }
+            stream << "\n";
+        }
+    }
 }
 
 }  // namespace log

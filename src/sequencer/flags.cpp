@@ -8,6 +8,8 @@ ABSL_FLAG(int, raft_snapshot_threshold, 1024, "");
 ABSL_FLAG(int, raft_snapshot_trailing, 128, "");
 ABSL_FLAG(bool, raft_pre_vote, false, "");
 
+ABSL_FLAG(int, view_checking_interval_ms, 200, "");
+
 ABSL_FLAG(bool, enable_raft_leader_fuzzer, false, "");
 ABSL_FLAG(int, raft_leader_fuzz_interval_ms, 2000, "");
 

@@ -50,7 +50,9 @@ private:
     Raft raft_;
     log::SequencerCore core_;
 
+    uv::Timer view_checking_timer_;
     uv::Timer global_cut_timer_;
+    uv::Timer statecheck_timer_;
     uv::Timer raft_leader_fuzzer_timer_;
     uv::Timer view_reconfig_fuzzer_timer_;
 
@@ -58,6 +60,8 @@ private:
 
     void SendFsmRecordsMessage(uint16_t node_id, std::span<const char> data);
     void SetupFuzzer(uv::Timer* timer, absl::Duration interval, std::function<void()> cb);
+
+    void DoStateCheck();
 
     DECLARE_UV_ASYNC_CB_FOR_CLASS(Stop);
 

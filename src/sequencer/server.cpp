@@ -89,11 +89,25 @@ void Server::Start() {
     }
     PCHECK(fs_utils::MakeDirectory(raft_data_dir_));
     raft_.Start(&uv_loop_, raft_addr, raft_data_dir_, peers);
-    // Setup timers
+    // Setup global cut timer
     global_cut_timer_.Init(&uv_loop_, [this] (uv::Timer* timer) {
         core_.MarkGlobalCutIfNeeded();
     });
     global_cut_timer_.PeriodicExpire(absl::Microseconds(core_.global_cut_interval_us()));
+    // Setup view checking timer
+    view_checking_timer_.Init(&uv_loop_, [this] (uv::Timer* timer) {
+        core_.DoViewChecking();
+    });
+    view_checking_timer_.PeriodicExpire(
+        absl::Milliseconds(absl::GetFlag(FLAGS_view_checking_interval_ms)));
+    // Setup state check timer
+    if (absl::GetFlag(FLAGS_slog_enable_statecheck)) {
+        statecheck_timer_.Init(&uv_loop_, [this] (uv::Timer* timer) {
+            DoStateCheck();
+        });
+        statecheck_timer_.PeriodicExpire(
+            absl::Seconds(absl::GetFlag(FLAGS_slog_statecheck_interval_sec)));
+    }
     // Start listening for engine connections
     node_manager_.Start(&uv_loop_, address_, myself->engine_conn_port);
     // Setup fuzzers
@@ -125,10 +139,9 @@ void Server::Start() {
             &view_reconfig_fuzzer_timer_,
             absl::Milliseconds(absl::GetFlag(FLAGS_view_reconfig_fuzz_interval_ms)),
             [this] () {
-                if (!raft_.IsLeader()) {
-                    return;
+                if (raft_.IsLeader()) {
+                    core_.ReconfigView();
                 }
-                core_.ReconfigViewIfDoable();
             }
         );
     }
@@ -197,6 +210,24 @@ void Server::SetupFuzzer(uv::Timer* timer, absl::Duration interval, std::functio
     timer->ExpireIn(absl::Seconds(60));
 }
 
+void Server::DoStateCheck() {
+    std::ostringstream stream;
+    stream << fmt::format("SequencerId={}", my_sequencer_id_);
+    uint64_t raft_leader = raft_.GetLeader();
+    if (raft_leader == 0) {
+        stream << " RaftLeader=unknown\n";
+    } else if (raft_leader == my_sequencer_id_) {
+        stream << " RaftLeader=myself\n";
+    } else {
+        stream << " RaftLeader=" << raft_leader << "\n";
+    }
+    core_.DoStateCheck(stream);
+    LOG(INFO) << "\n"
+              << "==================BEGIN SLOG STATE CHECK==================\n"
+              << stream.str()
+              << "===================END SLOG STATE CHECK===================";
+}
+
 UV_ASYNC_CB_FOR_CLASS(Server, Stop) {
     if (state_.load(std::memory_order_consume) == kStopping) {
         HLOG(WARNING) << "Already in stopping state";
@@ -206,6 +237,10 @@ UV_ASYNC_CB_FOR_CLASS(Server, Stop) {
     node_manager_.ScheduleStop();
     raft_.ScheduleClose();
     global_cut_timer_.Close();
+    view_checking_timer_.Close();
+    if (absl::GetFlag(FLAGS_slog_enable_statecheck)) {
+        statecheck_timer_.Close();
+    }
     if (absl::GetFlag(FLAGS_enable_raft_leader_fuzzer)) {
         raft_leader_fuzzer_timer_.Close();
     }

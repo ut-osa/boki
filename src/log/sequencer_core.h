@@ -25,7 +25,8 @@ public:
 
     int global_cut_interval_us() const;
     void MarkGlobalCutIfNeeded();
-    void ReconfigViewIfDoable();
+    void DoViewChecking();
+    void ReconfigView();
 
     void OnNewNodeConnected(uint16_t node_id, std::string_view addr);
     void OnNodeDisconnected(uint16_t node_id);
@@ -35,6 +36,8 @@ public:
     bool RaftFsmApplyCallback(std::span<const char> payload);
     bool RaftFsmRestoreCallback(std::span<const char> payload);
     bool RaftFsmSnapshotCallback(std::string* data);
+
+    void DoStateCheck(std::ostringstream& stream) const;
 
 private:
     uint16_t sequencer_id_;
@@ -48,7 +51,7 @@ private:
     SendFsmRecordsMessageCallback send_fsm_records_message_cb_;
 
     absl::flat_hash_map</* node_id */ uint16_t, /* addr */ std::string>
-        conencted_nodes_;
+        connected_nodes_;
 
     std::vector<uint32_t> local_cuts_;
     std::vector<uint32_t> global_cuts_;
