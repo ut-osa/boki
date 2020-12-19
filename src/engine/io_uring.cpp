@@ -219,6 +219,7 @@ bool IOUring::Close(int fd, CloseCallback cb) {
         DCHECK_EQ(op_type(last_op), kSendAll);
         DCHECK_EQ(last_op->next_op, kInvalidOpId);
         last_op->next_op = op->id;
+        last_send_op_[fd_idx] = nullptr;
     } else {
         EnqueueOp(op);
     }
@@ -500,6 +501,7 @@ void IOUring::HandleWriteOpComplete(Op* op, int res) {
 void IOUring::HandleSendallOpComplete(Op* op, int res) {
     DCHECK_EQ(op_type(op), kSendAll);
     DCHECK(sendall_cbs_.contains(op->id));
+    size_t fd_idx = op->fd_idx;
     Op* new_op = nullptr;
     if (res >= 0) {
         size_t nwrite = gsl::narrow_cast<size_t>(res);
@@ -507,9 +509,12 @@ void IOUring::HandleSendallOpComplete(Op* op, int res) {
             sendall_cbs_[op->id](0);
         } else {
             std::span<const char> remaining_data(op->buf + nwrite, op->buf_len - nwrite);
-            new_op = AllocSendAllOp(op->fd_idx, remaining_data);
+            new_op = AllocSendAllOp(fd_idx, remaining_data);
             new_op->next_op = op->next_op;
             sendall_cbs_[new_op->id].swap(sendall_cbs_[op->id]);
+            if (last_send_op_[fd_idx] == op) {
+                last_send_op_[fd_idx] = new_op;
+            }
         }
     } else {
         errno = -res;
@@ -520,9 +525,14 @@ void IOUring::HandleSendallOpComplete(Op* op, int res) {
         if (op->next_op != kInvalidOpId) {
             DCHECK(ops_.contains(op->next_op));
             new_op = ops_[op->next_op];
+            if (op_type(new_op) == kClose) {
+                DCHECK(last_send_op_[fd_idx] == nullptr);
+            } else {
+                DCHECK(op_type(new_op) == kSendAll);
+            }
         } else {
-            DCHECK_EQ(last_send_op_[op->fd_idx], op);
-            last_send_op_[op->fd_idx] = nullptr;
+            DCHECK_EQ(last_send_op_[fd_idx], op);
+            last_send_op_[fd_idx] = nullptr;
         }
     }
     if (new_op != nullptr) {
