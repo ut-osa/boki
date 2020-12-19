@@ -13,6 +13,9 @@ SequencerCore::SequencerCore(uint16_t sequencer_id)
     : sequencer_id_(sequencer_id),
       fsm_(sequencer_id),
       ongoing_record_(nullptr),
+      consolidated_raft_term_(0),
+      global_cut_delta_stat_(stat::StatisticsCollector<uint32_t>::StandardReportCallback(
+          "global_cut_delta")),
       new_view_pending_(false) {}
 
 SequencerCore::~SequencerCore() {}
@@ -21,12 +24,16 @@ void SequencerCore::SetRaftLeaderCallback(RaftLeaderCallback cb) {
     raft_leader_cb_ = cb;
 }
 
-void SequencerCore::SetRaftInflightRecordsCallback(RaftInflightRecordsCallback cb) {
-    raft_inflight_records_cb_ = cb;
+void SequencerCore::SetRaftCurrentTermCallback(RaftCurrentTermCallback cb) {
+    raft_current_term_cb_ = cb;
 }
 
 void SequencerCore::SetRaftApplyCallback(RaftApplyCallback cb) {
     raft_apply_cb_ = cb;
+}
+
+void SequencerCore::SetRaftBarrierCallback(RaftBarrierCallback cb) {
+    raft_barrier_cb_ = cb;
 }
 
 void SequencerCore::SetSendFsmRecordsMessageCallback(SendFsmRecordsMessageCallback cb) {
@@ -84,6 +91,7 @@ void SequencerCore::OnRecvLocalCutMessage(const LocalCutMsgProto& message) {
                                    message.my_node_id());
         return;
     }
+    DCHECK_EQ(local_cuts_.size(), view->num_nodes() * view->replicas());
     bool need_update = false;
     for (size_t i = 0; i < view->replicas(); i++) {
         size_t idx = node_idx * view->replicas() + i;
@@ -105,7 +113,7 @@ void SequencerCore::OnRecvLocalCutMessage(const LocalCutMsgProto& message) {
 }
 
 void SequencerCore::DoViewChecking() {
-    if (!is_raft_leader()) {
+    if (!IsRaftLeader()) {
         return;
     }
     if (connected_nodes_.size() < absl::GetFlag(FLAGS_slog_num_replicas)) {
@@ -133,12 +141,12 @@ void SequencerCore::DoViewChecking() {
 }
 
 void SequencerCore::ReconfigView() {
-    DCHECK(is_raft_leader());
+    DCHECK(IsRaftLeader());
     if (new_view_pending_) {
         HLOG(INFO) << "A previous ReconfigView is pending";
         return;
     }
-    if (has_ongoing_fsm_record()) {
+    if (ongoing_record_ != nullptr) {
         HLOG(INFO) << "Has ongoing record, will delay ReconfigView request";
         new_view_pending_ = true;
     } else {
@@ -148,8 +156,8 @@ void SequencerCore::ReconfigView() {
 }
 
 void SequencerCore::NewView() {
-    DCHECK(is_raft_leader());
-    DCHECK(!has_ongoing_fsm_record());
+    DCHECK(IsRaftLeader());
+    DCHECK(ongoing_record_ == nullptr);
     size_t replicas = absl::GetFlag(FLAGS_slog_num_replicas);
     if (connected_nodes_.size() < replicas) {
         HLOG(WARNING) << fmt::format("Connected nodes less than replicas {}", replicas);
@@ -164,14 +172,19 @@ void SequencerCore::NewView() {
 }
 
 void SequencerCore::MarkGlobalCutIfNeeded() {
-    if (!is_raft_leader() || has_ongoing_fsm_record() || new_view_pending_) {
+    if (!(IsRaftLeader() && ConsolidateMyRaftTerm())) {
+        return;
+    }
+    if (ongoing_record_ != nullptr || new_view_pending_) {
         return;
     }
     const Fsm::View* view = fsm_.current_view();
     if (view == nullptr) {
         return;
     }
-    std::vector<uint32_t> cuts(view->num_nodes(), std::numeric_limits<uint32_t>::max());
+    DCHECK_EQ(local_cuts_.size(), view->num_nodes() * view->replicas());
+    absl::FixedArray<uint32_t> cuts(view->num_nodes(),
+                                    std::numeric_limits<uint32_t>::max());
     for (size_t i = 0; i < view->num_nodes(); i++) {
         for (size_t j = 0; j < view->replicas(); j++) {
             size_t node_idx = (i - j + view->num_nodes()) % view->num_nodes();
@@ -180,28 +193,29 @@ void SequencerCore::MarkGlobalCutIfNeeded() {
         }
     }
     DCHECK_EQ(view->num_nodes(), global_cuts_.size());
-    bool changed = false;
+    bool monotonic = true;
+    uint32_t delta = 0;
     for (size_t i = 0; i < view->num_nodes(); i++) {
-        DCHECK_GE(cuts[i], global_cuts_[i]);
-        if (cuts[i] > global_cuts_[i]) {
-            changed = true;
+        if (cuts[i] < global_cuts_[i]) {
+            monotonic = false;
             break;
         }
+        delta += cuts[i] - global_cuts_[i];
     }
-    if (!changed) {
+    if (!monotonic) {
+        HLOG(WARNING) << "New global cut will not be monotonic, "
+                         "this could happen when Raft leadership changes";
         return;
     }
-    HVLOG(1) << "Apply and broadcast new global cut";
+    if (delta == 0) {
+        return;
+    }
     FsmRecordProto* record = fsm_record_pool_.Get();
     fsm_.BuildGlobalCutRecord(cuts, record);
     RaftApplyRecord(record);
 }
 
-bool SequencerCore::has_ongoing_fsm_record() {
-    return ongoing_record_ != nullptr && raft_inflight_records_cb_() == 0;
-}
-
-bool SequencerCore::is_raft_leader() {
+bool SequencerCore::IsRaftLeader() {
     uint16_t leader_id;
     if (!raft_leader_cb_(&leader_id)) {
         return false;
@@ -209,8 +223,20 @@ bool SequencerCore::is_raft_leader() {
     return leader_id == sequencer_id_;
 }
 
+bool SequencerCore::ConsolidateMyRaftTerm() {
+    uint64_t current_term = raft_current_term_cb_();
+    if (current_term == consolidated_raft_term_) {
+        return true;
+    } else if (current_term > consolidated_raft_term_) {
+        raft_barrier_cb_(current_term);
+        return false;
+    } else {
+        HLOG(FATAL) << "current_term is smaller than consolidated_raft_term_";
+    }
+}
+
 void SequencerCore::SendAllFsmRecords(uint16_t node_id) {
-    if (!is_raft_leader()) {
+    if (!IsRaftLeader()) {
         // Well, now only the leader is responsible for broadcasting records
         return;
     }
@@ -251,9 +277,26 @@ void SequencerCore::OnRaftApplyFinished(uint32_t seqnum, bool success) {
     DCHECK_EQ(ongoing_record_->seqnum(), seqnum);
     fsm_record_pool_.Return(ongoing_record_);
     ongoing_record_ = nullptr;
-    if (!has_ongoing_fsm_record() && new_view_pending_) {
+    if (new_view_pending_) {
         new_view_pending_ = false;
-        if (is_raft_leader()) {
+        if (IsRaftLeader() && ConsolidateMyRaftTerm()) {
+            NewView();
+        }
+    }
+}
+
+void SequencerCore::OnRaftBarrierFinished(uint64_t data, bool success) {
+    if (data <= consolidated_raft_term_) {
+        return;
+    }
+    if (!success) {
+        HLOG(WARNING) << fmt::format("Raft barrier failed for term {}", data);
+        return;
+    }
+    consolidated_raft_term_ = data;
+    if (ongoing_record_ == nullptr && new_view_pending_) {
+        new_view_pending_ = false;
+        if (IsRaftLeader() && ConsolidateMyRaftTerm()) {
             NewView();
         }
     }
@@ -276,9 +319,19 @@ void SequencerCore::ApplyGlobalCutRecord(FsmRecordProto* record) {
     DCHECK_EQ(view->id(), SeqNumToViewId(global_cut_record.start_seqnum()));
     DCHECK_EQ(view->num_nodes(), gsl::narrow_cast<size_t>(global_cut_record.localid_cuts_size()));
     DCHECK_EQ(view->num_nodes(), global_cuts_.size());
+    uint32_t delta = 0;
     for (size_t i = 0; i < view->num_nodes(); i++) {
-        global_cuts_[i] = global_cut_record.localid_cuts(i);
+        uint32_t cut = global_cut_record.localid_cuts(i);
+        if (cut < global_cuts_[i]) {
+            HLOG(FATAL) << "Each element of global cut must be monotonic";
+        }
+        delta += cut - global_cuts_[i];
+        global_cuts_[i] = cut;
     }
+    if (delta == 0) {
+        HLOG(FATAL) << "Not new log replicated in this global cut";
+    }
+    global_cut_delta_stat_.AddSample(delta);
     BroadcastFsmRecord(view, *record);
 }
 

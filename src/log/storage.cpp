@@ -156,6 +156,5 @@ bool RocksDBStorage::ReadLast(uint32_t tag, uint64_t start_seqnum, uint64_t end_
     return Read(*seqnum, data);
 }
 
-
 }  // namespace log
 }  // namespace faas

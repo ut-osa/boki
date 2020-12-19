@@ -95,6 +95,14 @@ void Raft::Start(uv_loop_t* uv_loop, std::string_view listen_address,
     state_ = kRunning;
 }
 
+uint64_t Raft::CurrentTerm() {
+    if (state_ != kRunning) {
+        HLOG(WARNING) << "Not in running state";
+        return 0;
+    }
+    return uint64_t{raft_.current_term};
+}
+
 uint64_t Raft::GetLeader() {
     if (state_ != kRunning) {
         HLOG(WARNING) << "Not in running state";
@@ -113,15 +121,6 @@ bool Raft::IsLeader() {
         return false;
     }
     return raft_state(&raft_) == RAFT_LEADER;
-}
-
-int Raft::NumLogNotApplied() {
-    if (state_ != kRunning) {
-        HLOG(WARNING) << "Not in running state";
-        return -1;
-    }
-    DCHECK_LE(raft_.last_applied, raft_.commit_index);
-    return gsl::narrow_cast<int>(raft_.commit_index - raft_.last_applied);
 }
 
 void Raft::Apply(std::span<const char> payload, ApplyCallback cb) {
@@ -149,6 +148,28 @@ void Raft::Apply(std::span<const char> payload, ApplyCallback cb) {
         return;
     }
     apply_cbs_[req] = cb;
+}
+
+void Raft::Barrier(BarrierCallback cb) {
+    if (state_ != kRunning) {
+        HLOG(WARNING) << "Not in running state";
+        cb(false);
+        return;
+    } else if (!IsLeader()) {
+        HLOG(WARNING) << "Only leader should call Barrier";
+        cb(false);
+        return;
+    }
+    struct raft_barrier* req = barrier_req_pool_.Get();
+    req->data = this;
+    int ret = raft_barrier(&raft_, req, Raft::BarrierCallbackWrapper);
+    if (ret != 0) {
+        HLOG(ERROR) << "raft_barrier failed with error: " << raft_strerror(ret);
+        cb(false);
+        barrier_req_pool_.Return(req);
+        return;
+    }
+    barrier_cbs_[req] = cb;
 }
 
 bool Raft::GiveUpLeadership(uint64_t next_leader) {
@@ -187,7 +208,7 @@ void Raft::OnApplyFinished(struct raft_apply* req, int status) {
     }
     if (status != 0) {
         if (status == RAFT_LEADERSHIPLOST) {
-            HLOG(INFO) << "Lost leadership while applying new record";
+            HLOG(WARNING) << "Lost leadership while applying new record";
         } else {
             HLOG(WARNING) << "Apply failed with error: " << raft_strerror(status);
         }
@@ -195,6 +216,23 @@ void Raft::OnApplyFinished(struct raft_apply* req, int status) {
     apply_cbs_[req](status == 0);
     apply_cbs_.erase(req);
     apply_req_pool_.Return(req);
+}
+
+void Raft::OnBarrierFinished(struct raft_barrier* req, int status) {
+    if (!barrier_cbs_.contains(req)) {
+        HLOG(ERROR) << "Cannot find this barrier request!";
+        return;
+    }
+    if (status != 0) {
+        if (status == RAFT_LEADERSHIPLOST) {
+            HLOG(WARNING) << "Lost leadership while applying the barrier";
+        } else {
+            HLOG(WARNING) << "Barrier failed with error: " << raft_strerror(status);
+        }
+    }
+    barrier_cbs_[req](status == 0);
+    barrier_cbs_.erase(req);
+    barrier_req_pool_.Return(req);
 }
 
 void Raft::OnLeadershipTransferred() {
@@ -256,6 +294,11 @@ void Raft::ApplyCallbackWrapper(struct raft_apply* req, int status, void* result
     Raft* self = reinterpret_cast<Raft*>(req->data);
     DCHECK(result == nullptr);
     self->OnApplyFinished(req, status);
+}
+
+void Raft::BarrierCallbackWrapper(struct raft_barrier *req, int status) {
+    Raft* self = reinterpret_cast<Raft*>(req->data);
+    self->OnBarrierFinished(req, status);
 }
 
 void Raft::TransferCallbackWrapper(struct raft_transfer* req) {

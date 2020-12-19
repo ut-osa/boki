@@ -1,5 +1,6 @@
 #pragma once
 
+#include "common/stat.h"
 #include "utils/object_pool.h"
 #include "log/common.h"
 #include "log/fsm.h"
@@ -15,12 +16,15 @@ public:
     typedef std::function<bool(uint16_t* /* leader_id */)> RaftLeaderCallback;
     void SetRaftLeaderCallback(RaftLeaderCallback cb);
 
-    typedef std::function<int()> RaftInflightRecordsCallback;
-    void SetRaftInflightRecordsCallback(RaftInflightRecordsCallback cb);
+    typedef std::function<uint64_t()> RaftCurrentTermCallback;
+    void SetRaftCurrentTermCallback(RaftCurrentTermCallback cb);
 
     typedef std::function<void(uint32_t /* seqnum */,
                                std::span<const char> /* payload */)> RaftApplyCallback;
     void SetRaftApplyCallback(RaftApplyCallback cb);
+
+    typedef std::function<void(uint64_t /* data */)> RaftBarrierCallback;
+    void SetRaftBarrierCallback(RaftBarrierCallback cb);
 
     typedef std::function<void(uint16_t /* node_id */, std::span<const char> /* data */)>
             SendFsmRecordsMessageCallback;
@@ -35,6 +39,7 @@ public:
     void OnNodeDisconnected(uint16_t node_id);
     void OnRecvLocalCutMessage(const LocalCutMsgProto& message);
     void OnRaftApplyFinished(uint32_t seqnum, bool success);
+    void OnRaftBarrierFinished(uint64_t data, bool success);
 
     bool RaftFsmApplyCallback(std::span<const char> payload);
     bool RaftFsmRestoreCallback(std::span<const char> payload);
@@ -48,10 +53,12 @@ private:
     std::vector<FsmRecordProto*> fsm_records_;
     FsmRecordProto* ongoing_record_;
     utils::ProtobufMessagePool<FsmRecordProto> fsm_record_pool_;
+    uint64_t consolidated_raft_term_;
 
     RaftLeaderCallback            raft_leader_cb_;
-    RaftInflightRecordsCallback   raft_inflight_records_cb_;
+    RaftCurrentTermCallback       raft_current_term_cb_;
     RaftApplyCallback             raft_apply_cb_;
+    RaftBarrierCallback           raft_barrier_cb_;
     SendFsmRecordsMessageCallback send_fsm_records_message_cb_;
 
     absl::flat_hash_map</* node_id */ uint16_t, /* addr */ std::string>
@@ -60,10 +67,12 @@ private:
     std::vector<uint32_t> local_cuts_;
     std::vector<uint32_t> global_cuts_;
 
+    stat::StatisticsCollector<uint32_t> global_cut_delta_stat_; 
+
     bool new_view_pending_;
 
-    bool has_ongoing_fsm_record();
-    bool is_raft_leader();
+    bool IsRaftLeader();
+    bool ConsolidateMyRaftTerm();
 
     void NewView();
 

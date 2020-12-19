@@ -33,11 +33,16 @@ Server::Server(uint16_t sequencer_id)
         *leader_id = gsl::narrow_cast<uint16_t>(id);
         return true;
     });
-    core_.SetRaftInflightRecordsCallback(
-        absl::bind_front(&Raft::NumLogNotApplied, &raft_));
+    core_.SetRaftCurrentTermCallback(
+        absl::bind_front(&Raft::CurrentTerm, &raft_));
     core_.SetRaftApplyCallback([this] (uint32_t seqnum, std::span<const char> payload) {
         raft_.Apply(payload, [this, seqnum] (bool success) {
             core_.OnRaftApplyFinished(seqnum, success);
+        });
+    });
+    core_.SetRaftBarrierCallback([this] (uint64_t data) {
+        raft_.Barrier([this, data] (bool success) {
+            core_.OnRaftBarrierFinished(data, success);
         });
     });
     core_.SetSendFsmRecordsMessageCallback(
@@ -217,12 +222,13 @@ void Server::DoStateCheck() {
     stream << fmt::format("SequencerId={}", my_sequencer_id_);
     uint64_t raft_leader = raft_.GetLeader();
     if (raft_leader == 0) {
-        stream << " RaftLeader=unknown\n";
+        stream << " RaftLeader=unknown";
     } else if (raft_leader == my_sequencer_id_) {
-        stream << " RaftLeader=myself\n";
+        stream << " RaftLeader=myself";
     } else {
-        stream << " RaftLeader=" << raft_leader << "\n";
+        stream << " RaftLeader=" << raft_leader;
     }
+    stream << " RaftTerm=" << raft_.CurrentTerm() << "\n";
     core_.DoStateCheck(stream);
     LOG(INFO) << "\n"
               << "==================BEGIN SLOG STATE CHECK==================\n"

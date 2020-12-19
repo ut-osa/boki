@@ -63,7 +63,7 @@ public:
     typedef std::vector<std::pair</* node_id */ uint16_t, /* addr */ std::string>> NodeVec;
     void BuildNewViewRecord(size_t replicas, const NodeVec& nodes, FsmRecordProto* record);
 
-    typedef std::vector<uint32_t> CutVec;
+    typedef absl::FixedArray<uint32_t> CutVec;
     void BuildGlobalCutRecord(const CutVec& cuts, FsmRecordProto* record);
 
     void DoStateCheck(std::ostringstream& stream) const;

@@ -29,12 +29,15 @@ public:
     void Start(uv_loop_t* uv_loop, std::string_view listen_address,
                std::string_view data_dir, const NodeVec& all_nodes);
 
+    uint64_t CurrentTerm();
     uint64_t GetLeader();
     bool IsLeader();
-    int NumLogNotApplied();
 
     typedef std::function<void(bool /* success */)> ApplyCallback;
     void Apply(std::span<const char> payload, ApplyCallback cb);
+
+    typedef std::function<void(bool /* success */)> BarrierCallback;
+    void Barrier(BarrierCallback cb);
 
     bool GiveUpLeadership(uint64_t next_leader = 0);
 
@@ -63,7 +66,11 @@ private:
     utils::SimpleObjectPool<struct raft_apply> apply_req_pool_;
     absl::flat_hash_map<struct raft_apply*, ApplyCallback> apply_cbs_;
 
+    utils::SimpleObjectPool<struct raft_barrier> barrier_req_pool_;
+    absl::flat_hash_map<struct raft_barrier*, BarrierCallback> barrier_cbs_;
+
     void OnApplyFinished(struct raft_apply* req, int status);
+    void OnBarrierFinished(struct raft_barrier* req, int status);
     void OnLeadershipTransferred();
     void OnRaftClosed();
 
@@ -73,6 +80,7 @@ private:
                                           struct raft_buffer* bufs[], unsigned* n_bufs);
     static int FsmRestoreCallbackWrapper(struct raft_fsm* fsm, struct raft_buffer* buf);
     static void ApplyCallbackWrapper(struct raft_apply* req, int status, void* result);
+    static void BarrierCallbackWrapper(struct raft_barrier *req, int status);
     static void TransferCallbackWrapper(struct raft_transfer* req);
     static void CloseCallbackWrapper(struct raft* raft);
     static void TraceEmitWrapper(struct raft_tracer* tracer,
