@@ -166,7 +166,8 @@ struct Message {
         __attribute__ ((aligned (__FAAS_CACHE_LINE_SIZE)));
 };
 
-#define MESSAGE_INLINE_DATA_SIZE (__FAAS_MESSAGE_SIZE - __FAAS_CACHE_LINE_SIZE)
+#define MESSAGE_HEADER_SIZE      __FAAS_CACHE_LINE_SIZE
+#define MESSAGE_INLINE_DATA_SIZE (__FAAS_MESSAGE_SIZE - MESSAGE_HEADER_SIZE)
 static_assert(sizeof(Message) == __FAAS_MESSAGE_SIZE, "Unexpected Message size");
 
 struct GatewayMessage {

@@ -31,6 +31,7 @@ private:
     std::string log_header_;
 
     utils::AppendableBuffer message_buffer_;
+    protocol::Message received_message_;
 
     bool OnRecvData(int status, std::span<const char> data);
 

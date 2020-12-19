@@ -59,11 +59,22 @@ bool IncomingSLogConnection::OnRecvData(int status, std::span<const char> data) 
         ScheduleClose();
         return false;
     } else {
-        utils::ReadMessages<protocol::Message>(
-            &message_buffer_, data.data(), data.size(),
-            [this] (protocol::Message* message) {
-                slog_engine_->OnMessageFromOtherEngine(*message);
-            });
+        message_buffer_.AppendData(data);
+        while (message_buffer_.length() >= MESSAGE_HEADER_SIZE) {
+            protocol::Message* partial_message = reinterpret_cast<protocol::Message*>(
+                message_buffer_.data());
+            size_t full_size = MESSAGE_HEADER_SIZE;
+            if (partial_message->payload_size > 0) {
+                full_size += partial_message->payload_size;
+            }
+            if (message_buffer_.length() >= full_size) {
+                memcpy(&received_message_, partial_message, full_size);
+                slog_engine_->OnMessageFromOtherEngine(received_message_);
+                message_buffer_.ConsumeFront(full_size);
+            } else {
+                break;
+            }
+        }
     }
     return true;
 }
@@ -179,10 +190,15 @@ void SLogMessageHub::Connection::SendMessage(const protocol::Message& message) {
     std::span<char> buf;
     io_worker_->NewWriteBuffer(&buf);
     CHECK_GE(buf.size(), sizeof(protocol::Message));
-    // TODO: consider payload size, instead of copying the entire message struct
-    memcpy(buf.data(), &message, sizeof(protocol::Message));
+    CHECK_GE(message.payload_size, 0);
+    size_t size = MESSAGE_HEADER_SIZE + message.payload_size;
+    memcpy(buf.data(), &message, MESSAGE_HEADER_SIZE);
+    if (message.payload_size > 0) {
+        memcpy(buf.data() + MESSAGE_HEADER_SIZE,
+               message.inline_data, message.payload_size);
+    }
     URING_DCHECK_OK(current_io_uring()->SendAll(
-        sockfd_, std::span<const char>(buf.data(), sizeof(protocol::Message)),
+        sockfd_, std::span<const char>(buf.data(), size),
         [this, buf] (int status) {
             io_worker_->ReturnWriteBuffer(buf);
             if (status != 0) {
