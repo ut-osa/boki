@@ -9,6 +9,8 @@
 
 #define log_header_ "SLogEngine: "
 
+ABSL_FLAG(bool, slog_engine_fast_append, false, "");
+
 namespace faas {
 namespace engine {
 
@@ -351,9 +353,30 @@ void SLogEngine::RemoteAppendFinished(const protocol::Message& message, LogOp* o
     if (result == SharedLogResultType::DISCARDED && --op->remaining_retries > 0) {
         std::span<const char> data(op->log_data.data(), op->log_data.size());
         NewAppendLogOp(op, data);
-    } else {
+    } else if (result == SharedLogResultType::APPEND_OK) {
         Message response = message;
         FinishLogOp(op, &response);
+    } else if (result == SharedLogResultType::LOCALID) {
+        uint64_t localid = message.log_localid;
+        uint64_t seqnum;
+        bool success;
+        {
+            absl::MutexLock lk(&mu_);
+            success = core_.fsm()->ConvertLocalId(localid, &seqnum);
+            if (!success) {
+                core_.AddWaitForReplication(op->log_tag, localid);
+                append_ops_[localid] = op;
+            }
+        }
+        if (success) {
+            Message response = 
+                (seqnum != protocol::kInvalidLogSeqNum) ?
+                MessageHelper::NewSharedLogOpSucceeded(SharedLogResultType::APPEND_OK, seqnum) :
+                MessageHelper::NewSharedLogOpFailed(SharedLogResultType::DISCARDED);
+            FinishLogOp(op, &response);
+        }
+    } else {
+        HLOG(FATAL) << "Unknown response type: " << static_cast<uint16_t>(result);
     }
 }
 
@@ -370,10 +393,7 @@ void SLogEngine::RemoteReadFinished(const protocol::Message& message, LogOp* op)
 
 void SLogEngine::LogPersisted(std::unique_ptr<log::LogEntry> log_entry) {
     mu_.AssertHeld();
-    LogOp* op = nullptr;
-    if (log::LocalIdToNodeId(log_entry->localid) == my_node_id()) {
-        op = GrabLogOp(append_ops_, log_entry->localid);
-    }
+    LogOp* op = GrabLogOp(append_ops_, log_entry->localid);
     completed_log_entries_.push_back({
         .log_entry = std::move(log_entry),
         .persisted = true,
@@ -383,10 +403,7 @@ void SLogEngine::LogPersisted(std::unique_ptr<log::LogEntry> log_entry) {
 
 void SLogEngine::LogDiscarded(std::unique_ptr<log::LogEntry> log_entry) {
     mu_.AssertHeld();
-    LogOp* op = nullptr;
-    if (log::LocalIdToNodeId(log_entry->localid) == my_node_id()) {
-        op = GrabLogOp(append_ops_, log_entry->localid);
-    }
+    LogOp* op = GrabLogOp(append_ops_, log_entry->localid);
     completed_log_entries_.push_back({
         .log_entry = std::move(log_entry),
         .persisted = false,
@@ -422,6 +439,7 @@ void SLogEngine::NewAppendLogOp(LogOp* op, std::span<const char> data) {
     uint16_t primary_node_id;
     uint64_t localid;
     bool success = false;
+    bool fast_append = absl::GetFlag(FLAGS_slog_engine_fast_append);
     do {
         absl::MutexLock lk(&mu_);
         success = core_.LogTagToPrimaryNode(op->log_tag, &primary_node_id);
@@ -434,7 +452,9 @@ void SLogEngine::NewAppendLogOp(LogOp* op, std::span<const char> data) {
                 HVLOG(1) << fmt::format("New log stored (localid {:#018x})", localid);
                 view = core_.fsm()->view_with_id(log::LocalIdToViewId(localid));
                 DCHECK(view != nullptr);
-                append_ops_[localid] = op;
+                if (!fast_append || op->src_node_id == my_node_id()) {
+                    append_ops_[localid] = op;
+                }
             }
         } else {
             HVLOG(1) << fmt::format("Will append the new log to remote node {}", primary_node_id);
@@ -453,6 +473,12 @@ void SLogEngine::NewAppendLogOp(LogOp* op, std::span<const char> data) {
     }
     if (primary_node_id == my_node_id()) {
         ReplicateLog(view, op->log_tag, localid, data);
+        if (fast_append && op->src_node_id != my_node_id()) {
+            Message message = MessageHelper::NewSharedLogOpSucceeded(
+                SharedLogResultType::LOCALID);
+            message.log_localid = localid;
+            FinishLogOp(op, &message);
+        }
     } else {
         if (op->log_data.empty()) {
             op->log_data.assign(data.data(), data.size());
@@ -586,7 +612,9 @@ void SLogEngine::ReadLogFromStorage(uint64_t seqnum, protocol::Message* response
 void SLogEngine::LogEntryCompleted(CompletedLogEntry entry) {
     if (entry.persisted) {
         uint64_t seqnum = entry.log_entry->seqnum;
-        storage_->Add(std::move(entry.log_entry));
+        if (entry.log_entry->data.size() > 0) {
+            storage_->Add(std::move(entry.log_entry));
+        }
         LogOp* op = entry.append_op;
         if (op == nullptr) {
             return;

@@ -44,6 +44,12 @@ public:
         return node_addr_.at(node_id);
     }
 
+    // Convert given localid to seqnum, based on known FSM records.
+    // Return true if can figure out.
+    // `seqnum` will be set to kInvalidLogSeqNum if given localid is known to
+    // be discarded, or is invalid.
+    bool ConvertLocalId(uint64_t localid, uint64_t* seqnum) const;
+
     // Find the first log entry whose `seqnum` >= `start_seqnum`
     // Will return the seqnum, associated view and primary node
     bool FindNextSeqnum(uint64_t start_seqnum, uint64_t* seqnum,
@@ -82,6 +88,7 @@ private:
     uint64_t next_log_seqnum_;
 
     std::vector<std::unique_ptr<View>> views_;
+    std::vector<size_t> first_cut_of_view_;
     absl::flat_hash_map</* node_id */ uint16_t, std::string> node_addr_;
 
     struct GlobalCut {
@@ -96,6 +103,8 @@ private:
     std::vector<std::unique_ptr<GlobalCut>> global_cuts_;
 
     static uint16_t LocatePrimaryNode(const GlobalCut& cut, uint64_t seqnum);
+    static uint64_t BuildSeqNumFromCounter(const GlobalCut& cut, uint16_t node_idx,
+                                           uint32_t counter);
 
     void ApplyNewViewRecord(const NewViewRecordProto& record);
     void ApplyGlobalCutRecord(const GlobalCutRecordProto& record);
@@ -116,6 +125,11 @@ public:
 
     bool has_node(uint16_t node_id) const {
         return node_indices_.contains(node_id);
+    }
+
+    size_t node_idx(uint16_t node_id) const {
+        DCHECK(node_indices_.contains(node_id));
+        return node_indices_.at(node_id);
     }
 
     std::string_view get_addr(uint16_t node_id) const {

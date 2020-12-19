@@ -82,15 +82,12 @@ void SequencerCore::OnRecvLocalCutMessage(const LocalCutMsgProto& message) {
                        "does not match the number of replicas";
         return;
     }
-    size_t node_idx = 0;
-    while (node_idx < view->num_nodes() && view->node(node_idx) != message.my_node_id()) {
-        node_idx++;
-    }
-    if (node_idx == view->num_nodes()) {
+    if (!view->has_node(message.my_node_id())) {
         HLOG(ERROR) << fmt::format("Node {} does not exist in the current view",
                                    message.my_node_id());
         return;
     }
+    size_t node_idx = view->node_idx(message.my_node_id());
     DCHECK_EQ(local_cuts_.size(), view->num_nodes() * view->replicas());
     bool need_update = false;
     for (size_t i = 0; i < view->replicas(); i++) {

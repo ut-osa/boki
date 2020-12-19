@@ -127,6 +127,15 @@ bool EngineCore::StoreLogAsBackupNode(uint32_t tag, std::span<const char> data,
     return true;
 }
 
+void EngineCore::AddWaitForReplication(uint32_t tag, uint64_t localid) {
+    std::unique_ptr<LogEntry> log_entry(new LogEntry);
+    log_entry->localid = localid;
+    log_entry->seqnum = 0;
+    log_entry->tag = tag;
+    log_entry->data.clear();
+    pending_entries_[localid] = std::move(log_entry);
+}
+
 void EngineCore::OnFsmNewView(const Fsm::View* view) {
     auto iter = pending_entries_.begin();
     while (iter != pending_entries_.end()) {

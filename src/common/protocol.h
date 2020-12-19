@@ -102,6 +102,7 @@ enum class SharedLogResultType : uint16_t {
     APPEND_OK   = 0x20,
     READ_OK     = 0x21,
     TRIM_OK     = 0x22,
+    LOCALID     = 0x23,
     // Error results
     BAD_ARGS    = 0x30,
     DISCARDED   = 0x31,  // Log to append is discarded
@@ -133,6 +134,7 @@ struct Message {
             int32_t processing_time;  // [12:16] Used in FUNC_CALL_COMPLETE
         } __attribute__ ((packed));
         uint64_t log_seqnum;          // [8:16]  Used in SHARED_LOG_OP
+        uint64_t log_localid;         // [8:16]  Used in SHARED_LOG_OP
     };
     union {
         int64_t send_timestamp;       // [16:24]
@@ -156,10 +158,7 @@ struct Message {
     } __attribute__ ((packed));
 
     uint32_t log_tag;             // [36:40]
-    union {
-        uint64_t log_localid;     // [40:48]
-        uint64_t log_client_data; // [40:48] will be preserved for response to clients
-    };
+    uint64_t log_client_data;     // [40:48] will be preserved for response to clients
 
     char final_padding[__FAAS_CACHE_LINE_SIZE - 48];
     char inline_data[__FAAS_MESSAGE_SIZE - __FAAS_CACHE_LINE_SIZE]

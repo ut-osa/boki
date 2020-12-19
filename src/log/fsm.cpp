@@ -6,6 +6,11 @@
 
 #define log_header_ "LogFsm: "
 
+/*
+#include <absl/flags/flag.h>
+ABSL_FLAG(bool, slog_fsm_invariant_check, false, "");
+*/
+
 namespace faas {
 namespace log {
 
@@ -98,6 +103,72 @@ uint16_t Fsm::LocatePrimaryNode(const GlobalCut& cut, uint64_t seqnum) {
     UNREACHABLE();
 }
 
+uint64_t Fsm::BuildSeqNumFromCounter(const GlobalCut& cut, uint16_t node_idx, uint32_t counter) {
+    DCHECK(node_idx < cut.deltas.size());
+    DCHECK(cut.deltas.at(node_idx) > 0);
+    DCHECK(counter < cut.localid_cuts.at(node_idx));
+    uint64_t current_seqnum = cut.start_seqnum;
+    for (size_t i = 0; i < node_idx; i++) {
+        current_seqnum += cut.deltas.at(i);
+    }
+    uint32_t prev_localid_cut = cut.localid_cuts.at(node_idx) - cut.deltas.at(node_idx);
+    DCHECK(counter >= prev_localid_cut);
+    current_seqnum += counter - prev_localid_cut;
+    return current_seqnum;
+}
+
+bool Fsm::ConvertLocalId(uint64_t localid, uint64_t* seqnum) const {
+    uint16_t view_id = LocalIdToViewId(localid);
+    if (view_id >= next_view_id()) {
+        // In future view, not clear the result for now
+        return false;
+    }
+    const View* view = view_with_id(view_id);
+    DCHECK(view != nullptr);
+    uint16_t node_id = LocalIdToNodeId(localid);
+    if (!view->has_node(node_id)) {
+        // Invalid localid
+        *seqnum = protocol::kInvalidLogSeqNum;
+        return true;
+    }
+    size_t node_idx = view->node_idx(node_id);
+    uint32_t counter = LocalIdToCounter(localid);
+    if (view == current_view()) {
+        uint32_t localid_cut = 0;
+        if (!global_cuts_.empty()) {
+            localid_cut = global_cuts_.back()->localid_cuts.at(node_idx);
+        }
+        if (counter >= localid_cut) {
+            return false;
+        }
+    }
+    size_t left = first_cut_of_view_.at(view_id);
+    size_t right = global_cuts_.size();
+    if (view_id + 1 < first_cut_of_view_.size()) {
+        right = first_cut_of_view_.at(view_id + 1);
+    }
+    while (left < right) {
+        size_t mid = (left + right) / 2;
+        DCHECK_LT(mid, global_cuts_.size());
+        uint32_t localid_cut = global_cuts_.at(mid)->localid_cuts.at(node_idx);
+        if (counter >= localid_cut) {
+            left = mid + 1;
+        } else {
+            right = mid;
+        }
+    }
+    size_t pos = right;
+    if (pos >= global_cuts_.size() || global_cuts_.at(pos)->view != view) {
+        // This localid is dicarded
+        DCHECK(view != current_view());
+        *seqnum = protocol::kInvalidLogSeqNum;
+        return true;
+    }
+    const GlobalCut* target_cut = global_cuts_.at(pos).get();
+    *seqnum = BuildSeqNumFromCounter(*target_cut, node_idx, counter);
+    return true;
+}
+
 bool Fsm::FindNextSeqnum(uint64_t start_seqnum, uint64_t* seqnum,
                          const View** view, uint16_t* primary_node_id) const {
     if (global_cuts_.empty()) {
@@ -175,6 +246,7 @@ void Fsm::ApplyNewViewRecord(const NewViewRecordProto& record) {
     }
     HLOG(INFO) << "Start new view with id " << view->id();
     views_.emplace_back(view);
+    first_cut_of_view_.push_back(global_cuts_.size());
     next_log_seqnum_ = BuildSeqNum(view->id(), 0);
     new_view_cb_(view);
 }
@@ -209,6 +281,22 @@ void Fsm::ApplyGlobalCutRecord(const GlobalCutRecordProto& record) {
             );
             next_log_seqnum_ += delta;
             new_cut->deltas[i] = delta;
+/*
+            if (delta > 0 && __FAAS_PREDICT_FALSE(absl::GetFlag(FLAGS_slog_fsm_invariant_check))) {
+                uint32_t t = (uint32_t) utils::GetRandomInt(0, (int) delta);
+                uint64_t localid = BuildLocalId(view->id(), node_id, start_localid + t);
+                uint64_t expected_seqnum = next_log_seqnum_ - delta + t;
+                uint64_t seqnum;
+                if (!ConvertLocalId(localid, &seqnum)) {
+                    HLOG(FATAL) << "ConvertLocalId return false";
+                }
+                if (seqnum != expected_seqnum) {
+                    HLOG(FATAL) << fmt::format("Seqnum invariant does not hold: "
+                                               "expected={:#018x}, get={:#018x}",
+                                               expected_seqnum, seqnum);
+                }
+            }
+*/
         } else if (start_localid > end_localid) {
             HLOG(FATAL) << "localid_cuts from GlobalCutRecordProto not increasing";
         }
