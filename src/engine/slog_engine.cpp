@@ -165,10 +165,10 @@ void SLogEngine::OnMessageFromFuncWorker(const Message& message) {
     SharedLogOpType op_type = MessageHelper::GetSharedLogOpType(message);
     if (op_type == SharedLogOpType::APPEND) {
         HandleLocalAppend(message);
-    } else if (op_type == SharedLogOpType::CHECK_TAIL) {
-        HandleLocalCheckTail(message);
     } else if (op_type == SharedLogOpType::READ_NEXT) {
-        HandleLocalReadNext(message);
+        HandleLocalRead(message, /* direction= */ 1);
+    } else if (op_type == SharedLogOpType::READ_PREV) {
+        HandleLocalRead(message, /* direction= */ -1);
     } else if (op_type == SharedLogOpType::TRIM) {
         // TODO
         NOT_IMPLEMENTED();
@@ -255,17 +255,23 @@ void SLogEngine::HandleLocalAppend(const Message& message) {
     NewAppendLogOp(op, data);
 }
 
-void SLogEngine::HandleLocalReadNext(const protocol::Message& message) {
+void SLogEngine::HandleLocalRead(const protocol::Message& message, int direction) {
+    DCHECK(direction != 0);
     if (message.log_tag == log::kDefaultLogTag) {
-        HVLOG(1) << "Local read with default tag";
+        HVLOG(1) << fmt::format("Local read[{}] with default tag", direction);
         const log::Fsm::View* view;
         uint64_t seqnum;
         uint16_t primary_node_id;
         bool success = false;
         {
             absl::ReaderMutexLock lk(&mu_);
-            success = core_.fsm()->FindNextSeqnum(
-                message.log_seqnum, &seqnum, &view, &primary_node_id);
+            if (direction > 0) {
+                success = core_.fsm()->FindNextSeqnum(
+                    message.log_seqnum, &seqnum, &view, &primary_node_id);
+            } else {
+                success = core_.fsm()->FindPrevSeqnum(
+                    message.log_seqnum, &seqnum, &view, &primary_node_id);
+            }
         }
         if (!success) {
             SendFailedResponse(message, SharedLogResultType::EMPTY);
@@ -276,47 +282,10 @@ void SLogEngine::HandleLocalReadNext(const protocol::Message& message) {
         op->log_seqnum = seqnum;
         NewReadAtLogOp(op, view, primary_node_id);
     } else {
-        HVLOG(1) << fmt::format("Local read with tag {}", message.log_tag);
-        LogOp* op = AllocLogOp(LogOpType::kReadNext,
+        HVLOG(1) << fmt::format("Local read[{}] with tag {}", direction, message.log_tag);
+        LogOp* op = AllocLogOp((direction > 0) ? LogOpType::kReadNext : LogOpType::kReadPrev,
                                message.log_client_id, message.log_client_data);
         op->log_seqnum = message.log_seqnum;
-        op->log_tag = message.log_tag;
-        NewReadLogOp(op);
-    }
-}
-
-void SLogEngine::HandleLocalCheckTail(const protocol::Message& message) {
-    if (message.log_tag == log::kDefaultLogTag) {
-        const log::Fsm::View* view;
-        uint64_t seqnum;
-        uint16_t primary_node_id;
-        bool success = false;
-        {
-            absl::ReaderMutexLock lk(&mu_);
-            success = core_.fsm()->CheckTail(&seqnum, &view, &primary_node_id);
-        }
-        if (!success) {
-            SendFailedResponse(message, SharedLogResultType::EMPTY);
-            return;
-        }
-        LogOp* op = AllocLogOp(LogOpType::kReadAt,
-                               message.log_client_id, message.log_client_data);
-        op->log_tag = message.log_tag;
-        op->log_seqnum = seqnum;
-        NewReadAtLogOp(op, view, primary_node_id);
-    } else {
-        const log::Fsm::View* view;
-        {
-            absl::ReaderMutexLock lk(&mu_);
-            view = core_.fsm()->current_view();
-        }
-        if (view == nullptr) {
-            SendFailedResponse(message, SharedLogResultType::EMPTY);
-            return;
-        }
-        LogOp* op = AllocLogOp(LogOpType::kReadPrev,
-                               message.log_client_id, message.log_client_data);
-        op->log_seqnum = log::BuildSeqNum(view->id() + 1, 0) - 1;
         op->log_tag = message.log_tag;
         NewReadLogOp(op);
     }
@@ -513,14 +482,21 @@ void SLogEngine::NewReadAtLogOp(LogOp* op, const log::Fsm::View* view, uint16_t 
 void SLogEngine::NewReadLogOp(LogOp* op) {
     DCHECK(op->log_tag != log::kDefaultLogTag);
     DCHECK(op_type(op) == LogOpType::kReadNext || op_type(op) == LogOpType::kReadPrev);
+    int direction = (op_type(op) == LogOpType::kReadNext) ? 1 : -1;
     do {
         uint16_t view_id = log::SeqNumToViewId(op->log_seqnum);
         const log::Fsm::View* view = nullptr;
         {
             absl::ReaderMutexLock lk(&mu_);
             view = core_.fsm()->view_with_id(view_id);
+            if (direction < 0 && view == nullptr) {
+                view = core_.fsm()->current_view();
+                view_id = view->id();
+                op->log_seqnum = log::BuildSeqNum(view_id + 1, 0) - 1;
+            }
         }
         if (view == nullptr) {
+            DCHECK(direction > 0);
             Message message = MessageHelper::NewSharedLogOpFailed(
                 SharedLogResultType::EMPTY);
             FinishLogOp(op, &message);
@@ -531,16 +507,18 @@ void SLogEngine::NewReadLogOp(LogOp* op) {
             uint64_t seqnum;
             std::string data;
             bool found = false;
-            if (op_type(op) == LogOpType::kReadNext) {
-                found = storage_->ReadFirst(op->log_tag,
-                                            /* start_seqnum= */ op->log_seqnum,
-                                            /* end_seqnum= */ log::BuildSeqNum(view_id + 1, 0),
-                                            &seqnum, &data);
+            if (direction > 0) {
+                found = storage_->ReadFirst(
+                    /* tag=          */ op->log_tag,
+                    /* start_seqnum= */ op->log_seqnum,
+                    /* end_seqnum=   */ log::BuildSeqNum(view_id + 1, 0),
+                    &seqnum, &data);
             } else {
-                found = storage_->ReadLast(op->log_tag,
-                                           /* start_seqnum= */ log::BuildSeqNum(view_id, 0),
-                                           /* end_seqnum= */ op->log_seqnum + 1,
-                                           &seqnum, &data);
+                found = storage_->ReadLast(
+                    /* tag=          */ op->log_tag,
+                    /* start_seqnum= */ log::BuildSeqNum(view_id, 0),
+                    /* end_seqnum=   */ op->log_seqnum + 1,
+                    &seqnum, &data);
             }
             if (found) {
                 Message message;
@@ -551,8 +529,7 @@ void SLogEngine::NewReadLogOp(LogOp* op) {
         } else {
             uint16_t dst_node_id = view->PickOneStorageNode(primary_node_id);
             Message message = MessageHelper::NewSharedLogRead(
-                op->log_tag, op->log_seqnum,
-                /* next= */ op_type(op) == LogOpType::kReadNext,
+                op->log_tag, op->log_seqnum, direction,
                 /* log_client_data= */ op->id);
             message.hop_times = ++op->hop_times;
             if (op->src_node_id == my_node_id()) {
@@ -566,7 +543,7 @@ void SLogEngine::NewReadLogOp(LogOp* op) {
             }
             return;
         }
-        if (op_type(op) == LogOpType::kReadNext) {
+        if (direction > 0) {
             // Consider the next view
             op->log_seqnum = log::BuildSeqNum(view_id + 1, 0);
         } else {
@@ -582,7 +559,7 @@ void SLogEngine::NewReadLogOp(LogOp* op) {
     } while (true);
 }
 
-void SLogEngine::ReplicateLog(const log::Fsm::View* view, int32_t tag,
+void SLogEngine::ReplicateLog(const log::Fsm::View* view, uint64_t tag,
                               uint64_t localid, std::span<const char> data) {
     HVLOG(1) << fmt::format("Will replicate log (view_id={:#018x}, localid={:#018x}) "
                             "to backup nodes", view->id(), localid);

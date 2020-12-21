@@ -15,10 +15,10 @@ public:
     virtual bool Read(uint64_t seqnum, std::string* data) = 0;
 
     // Read the first log with given tag such that seqnum in [start, end)
-    virtual bool ReadFirst(uint32_t tag, uint64_t start_seqnum, uint64_t end_seqnum,
+    virtual bool ReadFirst(uint64_t tag, uint64_t start_seqnum, uint64_t end_seqnum,
                            uint64_t* seqnum, std::string* data) = 0;
     // Read the last log with given tag such that seqnum in [start, end)
-    virtual bool ReadLast(uint32_t tag, uint64_t start_seqnum, uint64_t end_seqnum,
+    virtual bool ReadLast(uint64_t tag, uint64_t start_seqnum, uint64_t end_seqnum,
                           uint64_t* seqnum, std::string* data) = 0;
 };
 
@@ -27,14 +27,14 @@ public:
     StorageTagIndex();
     ~StorageTagIndex();
 
-    void Add(uint32_t tag, uint64_t seqnum);
-    bool ReadFirst(uint32_t tag, uint64_t start_seqnum, uint64_t end_seqnum,
+    void Add(uint64_t tag, uint64_t seqnum);
+    bool ReadFirst(uint64_t tag, uint64_t start_seqnum, uint64_t end_seqnum,
                    uint64_t* seqnum) const;
-    bool ReadLast(uint32_t tag, uint64_t start_seqnum, uint64_t end_seqnum,
+    bool ReadLast(uint64_t tag, uint64_t start_seqnum, uint64_t end_seqnum,
                   uint64_t* seqnum) const;
 
 private:
-    absl::flat_hash_map</* tag */ uint32_t,
+    absl::flat_hash_map</* tag */ uint64_t,
                         std::unique_ptr<std::set</* seqnum */ uint64_t>>> indices_;
 
     DISALLOW_COPY_AND_ASSIGN(StorageTagIndex);
@@ -48,9 +48,9 @@ public:
     void Add(std::unique_ptr<LogEntry> log_entry) override;
     bool Read(uint64_t seqnum, std::string* data) override;
 
-    bool ReadFirst(uint32_t tag, uint64_t start_seqnum, uint64_t end_seqnum,
+    bool ReadFirst(uint64_t tag, uint64_t start_seqnum, uint64_t end_seqnum,
                    uint64_t* seqnum, std::string* data) override;
-    bool ReadLast(uint32_t tag, uint64_t start_seqnum, uint64_t end_seqnum,
+    bool ReadLast(uint64_t tag, uint64_t start_seqnum, uint64_t end_seqnum,
                   uint64_t* seqnum, std::string* data) override;
 
 private:
@@ -73,9 +73,9 @@ public:
     void Add(std::unique_ptr<LogEntry> log_entry) override;
     bool Read(uint64_t seqnum, std::string* data) override;
 
-    bool ReadFirst(uint32_t tag, uint64_t start_seqnum, uint64_t end_seqnum,
+    bool ReadFirst(uint64_t tag, uint64_t start_seqnum, uint64_t end_seqnum,
                    uint64_t* seqnum, std::string* data) override;
-    bool ReadLast(uint32_t tag, uint64_t start_seqnum, uint64_t end_seqnum,
+    bool ReadLast(uint64_t tag, uint64_t start_seqnum, uint64_t end_seqnum,
                   uint64_t* seqnum, std::string* data) override;
 
 private:

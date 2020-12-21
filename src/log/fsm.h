@@ -50,13 +50,15 @@ public:
     // be discarded, or is invalid.
     bool ConvertLocalId(uint64_t localid, uint64_t* seqnum) const;
 
-    // Find the first log entry whose `seqnum` >= `start_seqnum`
+    // Find the first log entry whose `seqnum` >= `target_seqnum`
     // Will return the seqnum, associated view and primary node
-    bool FindNextSeqnum(uint64_t start_seqnum, uint64_t* seqnum,
+    bool FindNextSeqnum(uint64_t target_seqnum, uint64_t* seqnum,
                         const View** view, uint16_t* primary_node_id) const;
 
-    // Find the `seqnum` of the tailing log entry, associated view and primary node
-    bool CheckTail(uint64_t* seqnum, const View** view, uint16_t* primary_node_id) const;
+    // Find the last log entry whose `seqnum` <= `target_seqnum`
+    // Will return the seqnum, associated view and primary node
+    bool FindPrevSeqnum(uint64_t target_seqnum, uint64_t* seqnum,
+                        const View** view, uint16_t* primary_node_id) const;
 
     // ApplyRecord only works if records are applied in strict order
     // Used in sequencers, where Raft guarantees the order 
@@ -146,7 +148,7 @@ public:
     bool IsStorageNodeOf(uint16_t primary_node_id, uint16_t node_id) const;
     uint16_t PickOneStorageNode(uint16_t primary_node_id) const;
 
-    uint16_t LogTagToPrimaryNode(uint32_t log_tag) const;
+    uint16_t LogTagToPrimaryNode(uint64_t log_tag) const;
 
 private:
     uint16_t id_;

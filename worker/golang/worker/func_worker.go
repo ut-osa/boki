@@ -510,10 +510,14 @@ func (w *FuncWorker) GrpcCall(ctx context.Context, service string, method string
 }
 
 // Implement types.Environment
-func (w *FuncWorker) SharedLogAppend(ctx context.Context, tag uint32, data []byte) (uint64, error) {
+func (w *FuncWorker) SharedLogAppend(ctx context.Context, tag uint64, data []byte) (uint64, error) {
+	if len(data) == 0 {
+		return 0, fmt.Errorf("Data cannot be empty")
+	}
 	if len(data) > protocol.MessageInlineDataSize {
 		return 0, fmt.Errorf("Data cannot be more than %d bytes", protocol.MessageInlineDataSize)
 	}
+
 	id := atomic.AddUint64(&w.nextLogOpId, 1)
 	message := protocol.NewSharedLogAppendMessage(w.clientId, tag, id)
 	protocol.FillInlineDataInMessage(message, data)
@@ -536,14 +540,10 @@ func (w *FuncWorker) SharedLogAppend(ctx context.Context, tag uint32, data []byt
 	}
 }
 
-// Implement types.Environment
-func (w *FuncWorker) SharedLogReadNext(ctx context.Context, tag uint32, startSeqNum uint64) (*types.LogEntry, error) {
-	id := atomic.AddUint64(&w.nextLogOpId, 1)
-	message := protocol.NewSharedLogReadNextMessage(w.clientId, tag, id, startSeqNum)
-
+func (w *FuncWorker) sharedLogReadCommon(message []byte, opId uint64) (*types.LogEntry, error) {
 	w.mux.Lock()
 	outputChan := make(chan []byte)
-	w.outgoingLogOps[id] = outputChan
+	w.outgoingLogOps[opId] = outputChan
 	_, err := w.outputPipe.Write(message)
 	w.mux.Unlock()
 	if err != nil {
@@ -566,30 +566,20 @@ func (w *FuncWorker) SharedLogReadNext(ctx context.Context, tag uint32, startSeq
 }
 
 // Implement types.Environment
-func (w *FuncWorker) SharedLogCheckTail(ctx context.Context, tag uint32) (*types.LogEntry, error) {
+func (w *FuncWorker) SharedLogReadNext(ctx context.Context, tag uint64, seqNum uint64) (*types.LogEntry, error) {
 	id := atomic.AddUint64(&w.nextLogOpId, 1)
-	message := protocol.NewSharedLogCheckTail(w.clientId, tag, id)
+	message := protocol.NewSharedLogReadMessage(w.clientId, tag, seqNum, /* direction= */ 1, id)
+	return w.sharedLogReadCommon(message, id)
+}
 
-	w.mux.Lock()
-	outputChan := make(chan []byte)
-	w.outgoingLogOps[id] = outputChan
-	_, err := w.outputPipe.Write(message)
-	w.mux.Unlock()
-	if err != nil {
-		return nil, err
-	}
+// Implement types.Environment
+func (w *FuncWorker) SharedLogReadPrev(ctx context.Context, tag uint64, seqNum uint64) (*types.LogEntry, error) {
+	id := atomic.AddUint64(&w.nextLogOpId, 1)
+	message := protocol.NewSharedLogReadMessage(w.clientId, tag, seqNum, /* direction= */ -1, id)
+	return w.sharedLogReadCommon(message, id)
+}
 
-	response := <-outputChan
-	result := protocol.GetSharedLogResultTypeFromMessage(response)
-	if result == protocol.SharedLogResultType_READ_OK {
-		logEntry := types.LogEntry{
-			SeqNum: protocol.GetLogSeqNumFromMessage(response),
-			Data:   protocol.GetInlineDataFromMessage(response),
-		}
-		return &logEntry, nil
-	} else if result == protocol.SharedLogResultType_EMPTY {
-		return nil, nil
-	} else {
-		return nil, fmt.Errorf("Failed to read log")
-	}
+// Implement types.Environment
+func (w *FuncWorker) SharedLogCheckTail(ctx context.Context, tag uint64) (*types.LogEntry, error) {
+	return w.SharedLogReadPrev(ctx, tag, protocol.MaxLogSeqnum)
 }

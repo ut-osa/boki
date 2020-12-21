@@ -57,7 +57,7 @@ private:
         uint16_t client_id;
         uint16_t src_node_id;
         uint64_t client_data;
-        uint32_t log_tag;
+        uint64_t log_tag;
         uint64_t log_seqnum;
         std::string log_data;
         int remaining_retries;
@@ -97,8 +97,7 @@ private:
     void HandleRemoteRead(const protocol::Message& message);
 
     void HandleLocalAppend(const protocol::Message& message);
-    void HandleLocalReadNext(const protocol::Message& message);
-    void HandleLocalCheckTail(const protocol::Message& message);
+    void HandleLocalRead(const protocol::Message& message, int direction);
 
     void RemoteOpFinished(const protocol::Message& response);
     void RemoteAppendFinished(const protocol::Message& message, LogOp* op);
@@ -114,7 +113,7 @@ private:
     void NewReadAtLogOp(LogOp* op, const log::Fsm::View* view, uint16_t primary_node_id);
     void NewReadLogOp(LogOp* op);
 
-    void ReplicateLog(const log::Fsm::View* view, int32_t tag, uint64_t localid,
+    void ReplicateLog(const log::Fsm::View* view, uint64_t tag, uint64_t localid,
                       std::span<const char> data);
     void ReadLogFromStorage(uint64_t seqnum, protocol::Message* response);
     void LogEntryCompleted(CompletedLogEntry entry);

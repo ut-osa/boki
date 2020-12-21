@@ -87,12 +87,11 @@ enum class MessageType : uint16_t {
 enum class SharedLogOpType : uint16_t {
     INVALID     = 0x00,
     APPEND      = 0x01,
-    CHECK_TAIL  = 0x02,
-    READ_NEXT   = 0x03,
+    READ_NEXT   = 0x02,
+    READ_PREV   = 0x03,
     TRIM        = 0x04,
     READ_AT     = 0x10,
     REPLICATE   = 0x11,
-    READ_PREV   = 0x12,
     RESPONSE    = 0x20
 };
 
@@ -111,7 +110,7 @@ enum class SharedLogResultType : uint16_t {
     TRIM_FAILED = 0x34
 };
 
-constexpr uint32_t kInvalidLogTag     = std::numeric_limits<uint32_t>::max();
+constexpr uint64_t kInvalidLogTag     = std::numeric_limits<uint64_t>::max();
 constexpr uint64_t kInvalidLogLocalId = std::numeric_limits<uint64_t>::max();
 constexpr uint64_t kInvalidLogSeqNum  = std::numeric_limits<uint64_t>::max();
 
@@ -156,11 +155,12 @@ struct Message {
             uint16_t src_node_id;
         };
     } __attribute__ ((packed));
+    uint32_t padding3;            // [36:40]
 
-    uint32_t log_tag;             // [36:40]
-    uint64_t log_client_data;     // [40:48] will be preserved for response to clients
+    uint64_t log_tag;             // [40:48]
+    uint64_t log_client_data;     // [48:56] will be preserved for response to clients
 
-    char final_padding[__FAAS_CACHE_LINE_SIZE - 48];
+    char final_padding[__FAAS_CACHE_LINE_SIZE - 56];
     char inline_data[__FAAS_MESSAGE_SIZE - __FAAS_CACHE_LINE_SIZE]
         __attribute__ ((aligned (__FAAS_CACHE_LINE_SIZE)));
 };
@@ -359,7 +359,7 @@ public:
         return message;
     }
 
-    static Message NewSharedLogAppend(uint32_t log_tag, uint64_t log_client_data) {
+    static Message NewSharedLogAppend(uint64_t log_tag, uint64_t log_client_data) {
         NEW_EMPTY_MESSAGE(message);
         message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
         message.log_op = static_cast<uint16_t>(SharedLogOpType::APPEND);
@@ -377,13 +377,14 @@ public:
         return message;
     }
 
-    static Message NewSharedLogRead(uint32_t log_tag, uint64_t log_seqnum, bool next,
+    static Message NewSharedLogRead(uint64_t log_tag, uint64_t log_seqnum, int direction,
                                     uint64_t log_client_data) {
         NEW_EMPTY_MESSAGE(message);
         message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
-        if (next) {
+        if (direction > 0) {
             message.log_op = static_cast<uint16_t>(SharedLogOpType::READ_NEXT);
         } else {
+            DCHECK(direction < 0);
             message.log_op = static_cast<uint16_t>(SharedLogOpType::READ_PREV);
         }
         message.log_tag = log_tag;
@@ -392,7 +393,7 @@ public:
         return message;
     }
 
-    static Message NewSharedLogReplicate(uint32_t log_tag, uint64_t log_localid) {
+    static Message NewSharedLogReplicate(uint64_t log_tag, uint64_t log_localid) {
         NEW_EMPTY_MESSAGE(message);
         message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
         message.log_op = static_cast<uint16_t>(SharedLogOpType::REPLICATE);

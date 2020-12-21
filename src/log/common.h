@@ -6,7 +6,8 @@
 namespace faas {
 namespace log {
 
-constexpr uint32_t kDefaultLogTag = 0;
+constexpr uint64_t kDefaultLogTag = 0;
+constexpr uint64_t kMaxLogSeqNum  = 0xffff000000000000ULL;
 
 inline uint16_t SeqNumToViewId(uint64_t seqnum) {
     return gsl::narrow_cast<uint16_t>(seqnum >> 48);
@@ -39,7 +40,7 @@ inline std::string SeqNumHexStr(uint64_t seqnum) {
 struct LogEntry {
     uint64_t localid;
     uint64_t seqnum;
-    uint32_t tag;
+    uint64_t tag;
     std::string data;
 };
 

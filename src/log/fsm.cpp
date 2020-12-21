@@ -169,7 +169,7 @@ bool Fsm::ConvertLocalId(uint64_t localid, uint64_t* seqnum) const {
     return true;
 }
 
-bool Fsm::FindNextSeqnum(uint64_t start_seqnum, uint64_t* seqnum,
+bool Fsm::FindNextSeqnum(uint64_t target_seqnum, uint64_t* seqnum,
                          const View** view, uint16_t* primary_node_id) const {
     if (global_cuts_.empty()) {
         return false;
@@ -179,7 +179,7 @@ bool Fsm::FindNextSeqnum(uint64_t start_seqnum, uint64_t* seqnum,
     while (left < right) {
         size_t mid = (left + right) / 2;
         DCHECK_LT(mid, global_cuts_.size());
-        if (start_seqnum >= global_cuts_.at(mid)->end_seqnum) {
+        if (target_seqnum >= global_cuts_.at(mid)->end_seqnum) {
             left = mid + 1;
         } else {
             right = mid;
@@ -189,22 +189,49 @@ bool Fsm::FindNextSeqnum(uint64_t start_seqnum, uint64_t* seqnum,
         return false;
     }
     size_t pos = right;
-    DCHECK(start_seqnum < global_cuts_.at(pos)->end_seqnum);
-    DCHECK(pos == 0 || start_seqnum >= global_cuts_.at(pos-1)->end_seqnum);
+    DCHECK(target_seqnum < global_cuts_.at(pos)->end_seqnum);
+    DCHECK(pos == 0 || target_seqnum >= global_cuts_.at(pos-1)->end_seqnum);
     const GlobalCut* target_cut = global_cuts_.at(pos).get();
     *view = target_cut->view;
-    *seqnum = std::max(target_cut->start_seqnum, start_seqnum);
+    *seqnum = std::max(target_cut->start_seqnum, target_seqnum);
     *primary_node_id = LocatePrimaryNode(*target_cut, *seqnum);
     return true;
 }
 
-bool Fsm::CheckTail(uint64_t* seqnum, const View** view, uint16_t* primary_node_id) const {
+bool Fsm::FindPrevSeqnum(uint64_t target_seqnum, uint64_t* seqnum,
+                         const View** view, uint16_t* primary_node_id) const {
     if (global_cuts_.empty()) {
         return false;
     }
-    const GlobalCut* target_cut = global_cuts_.back().get();
+    if (target_seqnum == kMaxLogSeqNum) {
+        // Fast path for CheckTail
+        const GlobalCut* target_cut = global_cuts_.back().get();
+        *view = target_cut->view;
+        *seqnum = target_cut->end_seqnum - 1;
+        *primary_node_id = LocatePrimaryNode(*target_cut, *seqnum);
+        return true;
+    }
+    size_t left = 0;
+    size_t right = global_cuts_.size();
+    while (left < right) {
+        size_t mid = (left + right) / 2;
+        DCHECK_LT(mid, global_cuts_.size());
+        if (target_seqnum >= global_cuts_.at(mid)->start_seqnum) {
+            left = mid + 1;
+        } else {
+            right = mid;
+        }
+    }
+    if (left == 0) {
+        return false;
+    }
+    size_t pos = left - 1;
+    DCHECK(target_seqnum >= global_cuts_.at(pos)->start_seqnum);
+    DCHECK(pos + 1 == global_cuts_.size()
+             || target_seqnum < global_cuts_.at(pos+1)->start_seqnum);
+    const GlobalCut* target_cut = global_cuts_.at(pos).get();
     *view = target_cut->view;
-    *seqnum = target_cut->end_seqnum - 1;
+    *seqnum = std::min(target_cut->end_seqnum - 1, target_seqnum);
     *primary_node_id = LocatePrimaryNode(*target_cut, *seqnum);
     return true;
 }
@@ -402,7 +429,7 @@ uint16_t Fsm::View::PickOneStorageNode(uint16_t primary_node_id) const {
     return node_ids_[(base + off) % node_ids_.size()];
 }
 
-uint16_t Fsm::View::LogTagToPrimaryNode(uint32_t log_tag) const {
+uint16_t Fsm::View::LogTagToPrimaryNode(uint64_t log_tag) const {
     uint64_t h = hash::xxHash64(log_tag, hash_seed_);
     return node_ids_[h % node_ids_.size()];
 }
