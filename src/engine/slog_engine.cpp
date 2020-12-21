@@ -328,16 +328,16 @@ void SLogEngine::RemoteAppendFinished(const protocol::Message& message, LogOp* o
     } else if (result == SharedLogResultType::LOCALID) {
         uint64_t localid = message.log_localid;
         uint64_t seqnum;
-        bool success;
+        bool known;
         {
             absl::MutexLock lk(&mu_);
-            success = core_.fsm()->ConvertLocalId(localid, &seqnum);
-            if (!success) {
+            known = core_.fsm()->ConvertLocalId(localid, &seqnum);
+            if (!known) {
                 core_.AddWaitForReplication(op->log_tag, localid);
                 append_ops_[localid] = op;
             }
         }
-        if (success) {
+        if (known) {
             Message response = 
                 (seqnum != protocol::kInvalidLogSeqNum) ?
                 MessageHelper::NewSharedLogOpSucceeded(SharedLogResultType::APPEND_OK, seqnum) :

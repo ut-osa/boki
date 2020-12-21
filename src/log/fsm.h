@@ -45,19 +45,19 @@ public:
     }
 
     // Convert given localid to seqnum, based on known FSM records.
-    // Return true if can figure out.
-    // `seqnum` will be set to kInvalidLogSeqNum if given localid is known to
-    // be discarded, or is invalid.
+    // Return true if we can figure out.
+    // `seqnum` will be set to kInvalidLogSeqNum if given localid is invalid,
+    // or known to be discarded.
     bool ConvertLocalId(uint64_t localid, uint64_t* seqnum) const;
 
-    // Find the first log entry whose `seqnum` >= `target_seqnum`
+    // Find the first log entry whose `seqnum` >= `ref_seqnum`
     // Will return the seqnum, associated view and primary node
-    bool FindNextSeqnum(uint64_t target_seqnum, uint64_t* seqnum,
+    bool FindNextSeqnum(uint64_t ref_seqnum, uint64_t* seqnum,
                         const View** view, uint16_t* primary_node_id) const;
 
-    // Find the last log entry whose `seqnum` <= `target_seqnum`
+    // Find the last log entry whose `seqnum` <= `ref_seqnum`
     // Will return the seqnum, associated view and primary node
-    bool FindPrevSeqnum(uint64_t target_seqnum, uint64_t* seqnum,
+    bool FindPrevSeqnum(uint64_t ref_seqnum, uint64_t* seqnum,
                         const View** view, uint16_t* primary_node_id) const;
 
     // ApplyRecord only works if records are applied in strict order

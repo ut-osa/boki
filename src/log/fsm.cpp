@@ -169,7 +169,7 @@ bool Fsm::ConvertLocalId(uint64_t localid, uint64_t* seqnum) const {
     return true;
 }
 
-bool Fsm::FindNextSeqnum(uint64_t target_seqnum, uint64_t* seqnum,
+bool Fsm::FindNextSeqnum(uint64_t ref_seqnum, uint64_t* seqnum,
                          const View** view, uint16_t* primary_node_id) const {
     if (global_cuts_.empty()) {
         return false;
@@ -179,7 +179,7 @@ bool Fsm::FindNextSeqnum(uint64_t target_seqnum, uint64_t* seqnum,
     while (left < right) {
         size_t mid = (left + right) / 2;
         DCHECK_LT(mid, global_cuts_.size());
-        if (target_seqnum >= global_cuts_.at(mid)->end_seqnum) {
+        if (ref_seqnum >= global_cuts_.at(mid)->end_seqnum) {
             left = mid + 1;
         } else {
             right = mid;
@@ -189,21 +189,21 @@ bool Fsm::FindNextSeqnum(uint64_t target_seqnum, uint64_t* seqnum,
         return false;
     }
     size_t pos = right;
-    DCHECK(target_seqnum < global_cuts_.at(pos)->end_seqnum);
-    DCHECK(pos == 0 || target_seqnum >= global_cuts_.at(pos-1)->end_seqnum);
+    DCHECK(ref_seqnum < global_cuts_.at(pos)->end_seqnum);
+    DCHECK(pos == 0 || ref_seqnum >= global_cuts_.at(pos-1)->end_seqnum);
     const GlobalCut* target_cut = global_cuts_.at(pos).get();
     *view = target_cut->view;
-    *seqnum = std::max(target_cut->start_seqnum, target_seqnum);
+    *seqnum = std::max(target_cut->start_seqnum, ref_seqnum);
     *primary_node_id = LocatePrimaryNode(*target_cut, *seqnum);
     return true;
 }
 
-bool Fsm::FindPrevSeqnum(uint64_t target_seqnum, uint64_t* seqnum,
+bool Fsm::FindPrevSeqnum(uint64_t ref_seqnum, uint64_t* seqnum,
                          const View** view, uint16_t* primary_node_id) const {
     if (global_cuts_.empty()) {
         return false;
     }
-    if (target_seqnum == kMaxLogSeqNum) {
+    if (ref_seqnum == kMaxLogSeqNum) {
         // Fast path for CheckTail
         const GlobalCut* target_cut = global_cuts_.back().get();
         *view = target_cut->view;
@@ -216,7 +216,7 @@ bool Fsm::FindPrevSeqnum(uint64_t target_seqnum, uint64_t* seqnum,
     while (left < right) {
         size_t mid = (left + right) / 2;
         DCHECK_LT(mid, global_cuts_.size());
-        if (target_seqnum >= global_cuts_.at(mid)->start_seqnum) {
+        if (ref_seqnum >= global_cuts_.at(mid)->start_seqnum) {
             left = mid + 1;
         } else {
             right = mid;
@@ -226,12 +226,12 @@ bool Fsm::FindPrevSeqnum(uint64_t target_seqnum, uint64_t* seqnum,
         return false;
     }
     size_t pos = left - 1;
-    DCHECK(target_seqnum >= global_cuts_.at(pos)->start_seqnum);
+    DCHECK(ref_seqnum >= global_cuts_.at(pos)->start_seqnum);
     DCHECK(pos + 1 == global_cuts_.size()
-             || target_seqnum < global_cuts_.at(pos+1)->start_seqnum);
+             || ref_seqnum < global_cuts_.at(pos+1)->start_seqnum);
     const GlobalCut* target_cut = global_cuts_.at(pos).get();
     *view = target_cut->view;
-    *seqnum = std::min(target_cut->end_seqnum - 1, target_seqnum);
+    *seqnum = std::min(target_cut->end_seqnum - 1, ref_seqnum);
     *primary_node_id = LocatePrimaryNode(*target_cut, *seqnum);
     return true;
 }
