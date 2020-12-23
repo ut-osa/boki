@@ -21,8 +21,8 @@ if [[ ! -z "${OVERLAY_PATH}" ]]; then
   BASE_DIR=${OVERLAY_PATH}
 fi
 
-export CFLAGS="-fdata-sections -ffunction-sections"
-export CXXFLAGS="-std=c++17 -fdata-sections -ffunction-sections"
+export CFLAGS="${CFLAGS} -fdata-sections -ffunction-sections"
+export CXXFLAGS="${CXXFLAGS} -std=c++17 -fdata-sections -ffunction-sections"
 
 rm -rf ${DEPS_INSTALL_PATH}
 mkdir -p ${DEPS_INSTALL_PATH}
