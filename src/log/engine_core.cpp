@@ -52,7 +52,7 @@ void EngineCore::OnNewFsmRecordsMessage(const FsmRecordsMsgProto& message) {
     }
 }
 
-bool EngineCore::LogTagToPrimaryNode(uint32_t tag, uint16_t* primary_node_id) {
+bool EngineCore::LogTagToPrimaryNode(uint64_t tag, uint16_t* primary_node_id) {
     const Fsm::View* current_view = fsm_.current_view();
     if (current_view == nullptr) {
         HLOG(ERROR) << "No view message from sequencer!";
@@ -72,7 +72,7 @@ bool EngineCore::LogTagToPrimaryNode(uint32_t tag, uint16_t* primary_node_id) {
     return true;
 }
 
-bool EngineCore::StoreLogAsPrimaryNode(uint32_t tag, std::span<const char> data,
+bool EngineCore::StoreLogAsPrimaryNode(uint64_t tag, std::span<const char> data,
                                        uint64_t* localid) {
     const Fsm::View* current_view = fsm_.current_view();
     if (current_view == nullptr) {
@@ -100,7 +100,7 @@ bool EngineCore::StoreLogAsPrimaryNode(uint32_t tag, std::span<const char> data,
     return true;
 }
 
-bool EngineCore::StoreLogAsBackupNode(uint32_t tag, std::span<const char> data,
+bool EngineCore::StoreLogAsBackupNode(uint64_t tag, std::span<const char> data,
                                       uint64_t localid) {
     std::unique_ptr<LogEntry> log_entry(new LogEntry);
     log_entry->localid = localid;
@@ -127,7 +127,7 @@ bool EngineCore::StoreLogAsBackupNode(uint32_t tag, std::span<const char> data,
     return true;
 }
 
-void EngineCore::AddWaitForReplication(uint32_t tag, uint64_t localid) {
+void EngineCore::AddWaitForReplication(uint64_t tag, uint64_t localid) {
     std::unique_ptr<LogEntry> log_entry(new LogEntry);
     log_entry->localid = localid;
     log_entry->seqnum = 0;
