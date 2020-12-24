@@ -11,7 +11,7 @@ namespace engine {
 std::atomic<int> IOUring::next_uring_id_{0};
 
 IOUring::IOUring()
-    : uring_id_(next_uring_id_.fetch_add(1)),
+    : uring_id_(next_uring_id_.fetch_add(1, std::memory_order_relaxed)),
       next_op_id_(1),
       ev_loop_counter_(stat::Counter::StandardReportCallback(
           fmt::format("io_uring[{}] ev_loop", uring_id_))),

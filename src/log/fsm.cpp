@@ -367,12 +367,14 @@ void Fsm::DoStateCheck(std::ostringstream& stream) const {
 
 Fsm::View::View(const NewViewRecordProto& proto)
     : id_(proto.view_id()),
-      replicas_(proto.replicas()) {
-    for (const NodeProto& node : proto.nodes()) {
-        size_t idx = node_ids_.size();
+      replicas_(proto.replicas()),
+      node_ids_(proto.nodes_size(), 0),
+      next_storage_node_(proto.nodes_size()) {
+    for (int i = 0; i < proto.nodes_size(); i++) {
+        const auto& node = proto.nodes(i);
         uint16_t node_id = gsl::narrow_cast<uint16_t>(node.id());
-        node_ids_.push_back(node_id);
-        node_indices_[node_id] = idx;
+        node_ids_[i] = node_id;
+        node_indices_[node_id] = i;
         node_addr_[node_id] = node.addr();
     }
     ComputeHashSeed();
@@ -425,7 +427,7 @@ bool Fsm::View::IsStorageNodeOf(uint16_t primary_node_id, uint16_t node_id) cons
 uint16_t Fsm::View::PickOneStorageNode(uint16_t primary_node_id) const {
     DCHECK(node_indices_.contains(primary_node_id));
     size_t base = node_indices_.at(primary_node_id);
-    size_t off = gsl::narrow_cast<size_t>(utils::GetRandomInt(0, replicas_));
+    size_t off = next_storage_node_[base].fetch_add(1, std::memory_order_relaxed);
     return node_ids_[(base + off) % node_ids_.size()];
 }
 

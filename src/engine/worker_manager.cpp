@@ -124,7 +124,7 @@ std::shared_ptr<FuncWorker> WorkerManager::GetFuncWorker(uint16_t client_id) {
 
 bool WorkerManager::RequestNewFuncWorkerInternal(MessageConnection* launcher_connection,
                                                  uint16_t* out_client_id) {
-    uint16_t client_id = next_client_id_.fetch_add(1);
+    uint16_t client_id = next_client_id_.fetch_add(1, std::memory_order_relaxed);
     CHECK_LE(client_id, protocol::kMaxClientId) << "Reach maximum number of clients!";
     HLOG(INFO) << fmt::format("Request new FuncWorker for func_id {} with client_id {}",
                               launcher_connection->func_id(), client_id);

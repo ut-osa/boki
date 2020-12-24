@@ -176,9 +176,10 @@ bool FuncWorker::InvokeFunc(const char* func_name, const char* input_data, size_
         LOG(ERROR) << "Function " << func_name << " does not exist";
         return false;
     }
+    uint32_t call_id = next_call_id_.fetch_add(1, std::memory_order_relaxed);
     FuncCall func_call = FuncCallHelper::New(
         gsl::narrow_cast<uint16_t>(func_entry->func_id),
-        client_id_, next_call_id_.fetch_add(1));
+        client_id_, call_id);
     VLOG(1) << "Invoke func_call " << FuncCallHelper::DebugString(func_call);
     Message invoke_func_message;
     std::unique_ptr<ipc::ShmRegion> input_region;

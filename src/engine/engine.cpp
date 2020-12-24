@@ -470,7 +470,7 @@ void Engine::HandleFuncCallFailedMessage(const Message& message) {
 }
 
 void Engine::OnExternalFuncCall(const FuncCall& func_call, std::span<const char> input) {
-    inflight_external_requests_.fetch_add(1);
+    inflight_external_requests_.fetch_add(1, std::memory_order_relaxed);
     std::unique_ptr<ipc::ShmRegion> input_region = nullptr;
     if (input.size() > MESSAGE_INLINE_DATA_SIZE) {
         input_region = ipc::ShmCreate(
@@ -585,14 +585,14 @@ bool Engine::SendFuncWorkerMessage(uint16_t client_id, Message* message) {
 
 void Engine::ExternalFuncCallCompleted(const FuncCall& func_call,
                                        std::span<const char> output, int32_t processing_time) {
-    inflight_external_requests_.fetch_add(-1);
+    inflight_external_requests_.fetch_add(-1, std::memory_order_relaxed);
     GatewayMessage message = GatewayMessageHelper::NewFuncCallComplete(func_call, processing_time);
     message.payload_size = output.size();
     SendGatewayMessage(message, output);
 }
 
 void Engine::ExternalFuncCallFailed(const FuncCall& func_call, int status_code) {
-    inflight_external_requests_.fetch_add(-1);
+    inflight_external_requests_.fetch_add(-1, std::memory_order_relaxed);
     GatewayMessage message = GatewayMessageHelper::NewFuncCallFailed(func_call, status_code);
     SendGatewayMessage(message);
 }

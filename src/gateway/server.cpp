@@ -130,8 +130,9 @@ void Server::OnNewHttpFuncCall(HttpConnection* connection, FuncCallContext* func
         connection->OnFuncCallFinished(func_call_context);
         return;
     }
+    uint32_t call_id = next_call_id_.fetch_add(1, std::memory_order_relaxed);
     FuncCall func_call = FuncCallHelper::New(gsl::narrow_cast<uint16_t>(func_entry->func_id),
-                                             /* client_id= */ 0, next_call_id_.fetch_add(1));
+                                             /* client_id= */ 0, call_id);
     VLOG(1) << "OnNewHttpFuncCall: " << FuncCallHelper::DebugString(func_call);
     func_call_context->set_func_call(func_call);
     OnNewFuncCallCommon(connection->ref_self(), func_call_context);
@@ -146,10 +147,11 @@ void Server::OnNewGrpcFuncCall(GrpcConnection* connection, FuncCallContext* func
         connection->OnFuncCallFinished(func_call_context);
         return;
     }
+    uint32_t call_id = next_call_id_.fetch_add(1, std::memory_order_relaxed);
     FuncCall func_call = FuncCallHelper::NewWithMethod(
         gsl::narrow_cast<uint16_t>(func_entry->func_id),
         gsl::narrow_cast<uint16_t>(func_entry->grpc_method_ids.at(method_name)),
-        /* client_id= */ 0, next_call_id_.fetch_add(1));
+        /* client_id= */ 0, call_id);
     VLOG(1) << "OnNewGrpcFuncCall: " << FuncCallHelper::DebugString(func_call);
     func_call_context->set_func_call(func_call);
     OnNewFuncCallCommon(connection->ref_self(), func_call_context);

@@ -153,10 +153,12 @@ public:
 private:
     uint16_t id_;
     size_t replicas_;
-    std::vector<uint16_t> node_ids_;
+    absl::FixedArray<uint16_t> node_ids_;
     absl::flat_hash_map</* node_id */ uint16_t, size_t> node_indices_;
     absl::flat_hash_map</* node_id */ uint16_t, std::string> node_addr_;
     uint64_t hash_seed_;
+
+    mutable absl::FixedArray<std::atomic<size_t>> next_storage_node_;
 
     void ComputeHashSeed();
 

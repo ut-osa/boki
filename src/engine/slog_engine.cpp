@@ -182,7 +182,8 @@ SLogEngine::LogOp* SLogEngine::AllocLogOp(LogOpType type, uint32_t log_space,
                                           uint32_t min_fsm_progress,
                                           uint16_t client_id, uint64_t client_data) {
     LogOp* op = log_op_pool_.Get();
-    op->id = (next_op_id_.fetch_add(1) << 8) + uint16_t{type};
+    op->id = next_op_id_.fetch_add(1, std::memory_order_relaxed);
+    op->id = (op->id << 8) + uint16_t{type};
     op->log_space = log_space;
     op->min_fsm_progress = min_fsm_progress;
     op->client_id = client_id;
