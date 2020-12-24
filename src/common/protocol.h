@@ -27,6 +27,7 @@ union FuncCall {
 static_assert(sizeof(FuncCall) == 8, "Unexpected FuncCall size");
 
 constexpr FuncCall kInvalidFuncCall = { .full_call_id = 0 };
+constexpr uint64_t kInvalidFuncCallId = 0;
 
 #define NEW_EMPTY_FUNC_CALL(FC_VAR) \
     FuncCall FC_VAR; FC_VAR.full_call_id = 0
@@ -124,7 +125,10 @@ struct Message {
         uint16_t func_id      : 8;
         uint16_t method_id    : 6;
         uint16_t client_id    : 14;
-        uint32_t call_id;
+        union {
+            uint32_t call_id;
+            uint32_t log_space;       // Will only be used for inter-engine message
+        };
     } __attribute__ ((packed));
     union {
         uint64_t parent_call_id;      // [8:16]  Used in INVOKE_FUNC, saved as full_call_id
@@ -155,7 +159,8 @@ struct Message {
             uint16_t src_node_id;
         };
     } __attribute__ ((packed));
-    uint32_t padding3;            // [36:40]
+
+    uint32_t log_fsm_progress;    // [36:40]
 
     uint64_t log_tag;             // [40:48]
     uint64_t log_client_data;     // [48:56] will be preserved for response to clients

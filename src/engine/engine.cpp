@@ -319,7 +319,6 @@ void Engine::HandleInvokeFuncMessage(const Message& message) {
             return;
         }
         async_call.input_region->EnableRemoveOnDestruction();
-        parent_func_call = protocol::kInvalidFuncCall;
     }
     Dispatcher* dispatcher = nullptr;
     {
@@ -336,23 +335,29 @@ void Engine::HandleInvokeFuncMessage(const Message& message) {
             async_func_calls_[func_call.full_call_id] = std::move(async_call);
         }
     }
+    if (slog_engine_ != nullptr) {
+        slog_engine_->OnNewInternalFuncCall(func_call, parent_func_call);
+    }
     bool success = false;
     if (dispatcher != nullptr) {
         if (message.payload_size < 0) {
             success = dispatcher->OnNewFuncCall(
-                func_call, parent_func_call,
+                func_call, is_async ? protocol::kInvalidFuncCall : parent_func_call,
                 /* input_size= */ gsl::narrow_cast<size_t>(-message.payload_size),
                 std::span<const char>(), /* shm_input= */ true);
             
         } else {
             success = dispatcher->OnNewFuncCall(
-                func_call, parent_func_call,
+                func_call, is_async ? protocol::kInvalidFuncCall : parent_func_call,
                 /* input_size= */ gsl::narrow_cast<size_t>(message.payload_size),
                 MessageHelper::GetInlineData(message), /* shm_input= */ false);
         }
     }
     if (!success) {
         HLOG(ERROR) << "Dispatcher failed for func_id " << func_call.func_id;
+        if (slog_engine_ != nullptr) {
+            slog_engine_->OnFuncCallCompleted(func_call);
+        }
         if (is_async) {
             absl::MutexLock lk(&mu_);
             async_func_calls_.erase(func_call.full_call_id);
@@ -383,6 +388,9 @@ void Engine::HandleFuncCallCompleteMessage(const Message& message) {
         }
         dispatcher = GetOrCreateDispatcherLocked(func_call.func_id);
         is_async_call = GrabFromMap(async_func_calls_, func_call, &async_call);
+    }
+    if (slog_engine_ != nullptr) {
+        slog_engine_->OnFuncCallCompleted(func_call);
     }
     DCHECK(dispatcher != nullptr);
     bool ret = dispatcher->OnFuncCallCompleted(
@@ -440,6 +448,9 @@ void Engine::HandleFuncCallFailedMessage(const Message& message) {
         }
         dispatcher = GetOrCreateDispatcherLocked(func_call.func_id);
         is_async_call = GrabFromMap(async_func_calls_, func_call, &async_call);
+    }
+    if (slog_engine_ != nullptr) {
+        slog_engine_->OnFuncCallCompleted(func_call);
     }
     DCHECK(dispatcher != nullptr);
     bool ret = dispatcher->OnFuncCallFailed(func_call, message.dispatch_delay);
@@ -501,6 +512,10 @@ void Engine::OnExternalFuncCall(const FuncCall& func_call, std::span<const char>
         ExternalFuncCallFailed(func_call);
         return;
     }
+    if (slog_engine_ != nullptr) {
+        // TODO: Implement log space
+        slog_engine_->OnNewExternalFuncCall(func_call, /* log_space= */ 0);
+    }
     bool ret = false;
     if (input.size() <= MESSAGE_INLINE_DATA_SIZE) {
         ret = dispatcher->OnNewFuncCall(
@@ -513,6 +528,9 @@ void Engine::OnExternalFuncCall(const FuncCall& func_call, std::span<const char>
     }
     if (!ret) {
         HLOG(ERROR) << "Dispatcher::OnNewFuncCall failed";
+        if (slog_engine_ != nullptr) {
+            slog_engine_->OnFuncCallCompleted(func_call);
+        }
         {
             absl::MutexLock lk(&mu_);
             GrabFromMap(external_func_call_shm_inputs_, func_call, &input_region);
@@ -524,7 +542,7 @@ void Engine::OnExternalFuncCall(const FuncCall& func_call, std::span<const char>
 void Engine::HandleSharedLogOpMessage(const Message& message) {
     DCHECK(MessageHelper::IsSharedLogOp(message));
     if (slog_engine_ == nullptr) {
-        HLOG(ERROR) << "Shared log disabled!";
+        HLOG(FATAL) << "Shared log disabled!";
         return;
     }
     slog_engine_->OnMessageFromFuncWorker(message);

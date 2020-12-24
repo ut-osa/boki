@@ -20,6 +20,11 @@ public:
 
     uint16_t my_node_id() const;
 
+    void OnNewExternalFuncCall(const protocol::FuncCall& func_call, uint32_t log_space);
+    void OnNewInternalFuncCall(const protocol::FuncCall& func_call,
+                               const protocol::FuncCall& parent_func_call);
+    void OnFuncCallCompleted(const protocol::FuncCall& func_call);
+
     void OnSequencerMessage(const protocol::SequencerMessage& message,
                             std::span<const char> payload);
     void OnMessageFromOtherEngine(const protocol::Message& message);
@@ -30,6 +35,15 @@ public:
 private:
     Engine* engine_;
     const SequencerConfig* sequencer_config_;
+
+    struct FuncCallContext {
+        uint32_t log_space;
+        uint32_t fsm_progress;
+        uint64_t parent_call_id;
+    };
+    absl::Mutex func_ctx_mu_;
+    absl::flat_hash_map</* full_call_id */ uint64_t, FuncCallContext>
+        func_call_ctx_ ABSL_GUARDED_BY(func_ctx_mu_);
 
     absl::Mutex mu_;
 
@@ -54,12 +68,15 @@ private:
 
     struct LogOp {
         uint64_t id;  // Lower 8-bit stores type
+        uint32_t log_space;
+        uint32_t min_fsm_progress;
         uint16_t client_id;
         uint16_t src_node_id;
         uint64_t client_data;
         uint64_t log_tag;
         uint64_t log_seqnum;
         std::string log_data;
+        protocol::FuncCall func_call;
         int remaining_retries;
         int64_t start_timestamp;
         uint16_t hop_times;
@@ -79,13 +96,18 @@ private:
     };
     absl::InlinedVector<CompletedLogEntry, 8> completed_log_entries_ ABSL_GUARDED_BY(mu_);
 
-    Timer* statecheck_timer_; 
+    Timer* statecheck_timer_;
+
+    FuncCallContext GetFuncContext(const protocol::FuncCall& func_call);
+    void UpdateFuncFsmProgress(const protocol::FuncCall& func_call,
+                               uint32_t fsm_progress);
 
     static inline LogOpType op_type(const LogOp* op) {
         return gsl::narrow_cast<LogOpType>(op->id & 0xff);
     }
 
-    LogOp* AllocLogOp(LogOpType type, uint16_t client_id, uint64_t client_data);
+    LogOp* AllocLogOp(LogOpType type, uint32_t log_space, uint32_t min_fsm_progress,
+                      uint16_t client_id, uint64_t client_data);
 
     void SetupTimers();
     void LocalCutTimerTriggered();

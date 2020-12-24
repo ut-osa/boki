@@ -52,6 +52,60 @@ uint16_t SLogEngine::my_node_id() const {
     return engine_->node_id();
 }
 
+void SLogEngine::OnNewExternalFuncCall(const protocol::FuncCall& func_call,
+                                       uint32_t log_space) {
+    absl::MutexLock lk(&func_ctx_mu_);
+    uint64_t call_id = func_call.full_call_id;
+    DCHECK(!func_call_ctx_.contains(call_id));
+    FuncCallContext ctx = {
+        .log_space = log_space,
+        .fsm_progress = 0,
+        .parent_call_id = protocol::kInvalidFuncCallId,
+    };
+    func_call_ctx_[call_id] = std::move(ctx);
+}
+
+void SLogEngine::OnNewInternalFuncCall(const protocol::FuncCall& func_call,
+                                       const protocol::FuncCall& parent_func_call) {
+    absl::MutexLock lk(&func_ctx_mu_);
+    uint64_t parent_call_id = parent_func_call.full_call_id;
+    DCHECK(func_call_ctx_.contains(parent_call_id));
+    uint64_t call_id = func_call.call_id;
+    DCHECK(!func_call_ctx_.contains(call_id));
+    func_call_ctx_[call_id] = func_call_ctx_[parent_call_id];
+    func_call_ctx_[call_id].parent_call_id = parent_call_id;
+}
+
+void SLogEngine::OnFuncCallCompleted(const protocol::FuncCall& func_call) {
+    absl::MutexLock lk(&func_ctx_mu_);
+    uint64_t call_id = func_call.full_call_id;
+    DCHECK(func_call_ctx_.contains(call_id));
+    const FuncCallContext& ctx = func_call_ctx_[call_id];
+    if (ctx.parent_call_id != protocol::kInvalidFuncCallId
+            && func_call_ctx_.contains(ctx.parent_call_id)) {
+        FuncCallContext& parent_ctx = func_call_ctx_[ctx.parent_call_id];
+        DCHECK_EQ(ctx.log_space, parent_ctx.log_space);
+        parent_ctx.fsm_progress = std::max(parent_ctx.fsm_progress, ctx.fsm_progress);
+    }
+    func_call_ctx_.erase(call_id);
+}
+
+SLogEngine::FuncCallContext SLogEngine::GetFuncContext(const protocol::FuncCall& func_call) {
+    absl::ReaderMutexLock lk(&func_ctx_mu_);
+    uint64_t call_id = func_call.full_call_id;
+    DCHECK(func_call_ctx_.contains(call_id));
+    return func_call_ctx_[call_id];
+}
+
+void SLogEngine::UpdateFuncFsmProgress(const protocol::FuncCall& func_call,
+                                       uint32_t fsm_progress) {
+    absl::MutexLock lk(&func_ctx_mu_);
+    uint64_t call_id = func_call.full_call_id;
+    DCHECK(func_call_ctx_.contains(call_id));
+    FuncCallContext& ctx = func_call_ctx_[call_id];
+    ctx.fsm_progress = std::max(ctx.fsm_progress, fsm_progress);
+}
+
 namespace {
 inline void FillReadLogResponse(uint64_t seqnum, const std::string& data,
                                 protocol::Message* response) {
@@ -124,16 +178,20 @@ void SLogEngine::OnSequencerMessage(const SequencerMessage& message,
     }
 }
 
-SLogEngine::LogOp* SLogEngine::AllocLogOp(LogOpType type, uint16_t client_id,
-                                          uint64_t client_data) {
+SLogEngine::LogOp* SLogEngine::AllocLogOp(LogOpType type, uint32_t log_space,
+                                          uint32_t min_fsm_progress,
+                                          uint16_t client_id, uint64_t client_data) {
     LogOp* op = log_op_pool_.Get();
     op->id = (next_op_id_.fetch_add(1) << 8) + uint16_t{type};
+    op->log_space = log_space;
+    op->min_fsm_progress = min_fsm_progress;
     op->client_id = client_id;
     op->src_node_id = my_node_id();
     op->client_data = client_data;
     op->log_tag = protocol::kInvalidLogTag;
     op->log_seqnum = protocol::kInvalidLogSeqNum;
     op->log_data.clear();
+    op->func_call = protocol::kInvalidFuncCall;
     op->remaining_retries = kMaxRetires;
     op->start_timestamp = GetMonotonicMicroTimestamp();
     op->hop_times = 0;
@@ -182,7 +240,8 @@ void SLogEngine::HandleRemoteAppend(const protocol::Message& message) {
     DCHECK(MessageHelper::GetSharedLogOpType(message) == SharedLogOpType::APPEND);
     DCHECK(message.src_node_id != my_node_id());
     std::span<const char> data = MessageHelper::GetInlineData(message);
-    LogOp* op = AllocLogOp(LogOpType::kAppend, /* client_id= */ 0, message.log_client_data);
+    LogOp* op = AllocLogOp(LogOpType::kAppend, message.log_space, message.log_fsm_progress,
+                           /* client_id= */ 0, message.log_client_data);
     op->log_tag = message.log_tag;
     op->src_node_id = message.src_node_id;
     op->hop_times = message.hop_times;
@@ -230,7 +289,8 @@ void SLogEngine::HandleRemoteRead(const protocol::Message& message) {
         op->log_seqnum = message.log_seqnum;
         op->hop_times = message.hop_times;
     } else {
-        op = AllocLogOp(type, /* client_id= */ 0, message.log_client_data);
+        op = AllocLogOp(type, message.log_space, message.log_fsm_progress,
+                        /* client_id= */ 0, message.log_client_data);
         op->log_tag = message.log_tag;
         op->log_seqnum = message.log_seqnum;
         op->src_node_id = message.src_node_id;
@@ -245,7 +305,11 @@ void SLogEngine::HandleLocalAppend(const Message& message) {
         SendFailedResponse(message, SharedLogResultType::BAD_ARGS);
         return;
     }
-    LogOp* op = AllocLogOp(LogOpType::kAppend, message.log_client_id, message.log_client_data);
+    protocol::FuncCall func_call = MessageHelper::GetFuncCall(message);
+    FuncCallContext ctx = GetFuncContext(func_call);
+    LogOp* op = AllocLogOp(LogOpType::kAppend, ctx.log_space, ctx.fsm_progress,
+                           message.log_client_id, message.log_client_data);
+    op->func_call = func_call;
     op->log_tag = message.log_tag;
     if (op->log_tag == log::kDefaultLogTag) {
         HVLOG(1) << "Local append with default tag";
@@ -257,6 +321,8 @@ void SLogEngine::HandleLocalAppend(const Message& message) {
 
 void SLogEngine::HandleLocalRead(const protocol::Message& message, int direction) {
     DCHECK(direction != 0);
+    protocol::FuncCall func_call = MessageHelper::GetFuncCall(message);
+    FuncCallContext ctx = GetFuncContext(func_call);
     if (message.log_tag == log::kDefaultLogTag) {
         HVLOG(1) << fmt::format("Local read[{}] with default tag", direction);
         const log::Fsm::View* view;
@@ -277,14 +343,17 @@ void SLogEngine::HandleLocalRead(const protocol::Message& message, int direction
             SendFailedResponse(message, SharedLogResultType::EMPTY);
             return;
         }
-        LogOp* op = AllocLogOp(LogOpType::kReadAt,
+        LogOp* op = AllocLogOp(LogOpType::kReadAt, ctx.log_space, ctx.fsm_progress,
                                message.log_client_id, message.log_client_data);
+        op->func_call = func_call;
         op->log_seqnum = seqnum;
         NewReadAtLogOp(op, view, primary_node_id);
     } else {
         HVLOG(1) << fmt::format("Local read[{}] with tag {}", direction, message.log_tag);
         LogOp* op = AllocLogOp((direction > 0) ? LogOpType::kReadNext : LogOpType::kReadPrev,
+                               ctx.log_space, ctx.fsm_progress,
                                message.log_client_id, message.log_client_data);
+        op->func_call = func_call;
         op->log_seqnum = message.log_seqnum;
         op->log_tag = message.log_tag;
         NewReadLogOp(op);
@@ -323,6 +392,7 @@ void SLogEngine::RemoteAppendFinished(const protocol::Message& message, LogOp* o
         std::span<const char> data(op->log_data.data(), op->log_data.size());
         NewAppendLogOp(op, data);
     } else if (result == SharedLogResultType::APPEND_OK) {
+        UpdateFuncFsmProgress(op->func_call, message.log_fsm_progress);
         Message response = message;
         FinishLogOp(op, &response);
     } else if (result == SharedLogResultType::LOCALID) {
@@ -350,12 +420,14 @@ void SLogEngine::RemoteAppendFinished(const protocol::Message& message, LogOp* o
 }
 
 void SLogEngine::RemoteReadAtFinished(const protocol::Message& message, LogOp* op) {
+    UpdateFuncFsmProgress(op->func_call, message.log_fsm_progress);
     Message response = message;
     response.log_seqnum = op->log_seqnum;
     FinishLogOp(op, &response);
 }
 
 void SLogEngine::RemoteReadFinished(const protocol::Message& message, LogOp* op) {
+    UpdateFuncFsmProgress(op->func_call, message.log_fsm_progress);
     Message response = message;
     FinishLogOp(op, &response);
 }
@@ -489,21 +561,23 @@ void SLogEngine::NewReadLogOp(LogOp* op) {
         {
             absl::ReaderMutexLock lk(&mu_);
             view = core_.fsm()->view_with_id(view_id);
-            if (direction < 0 && view == nullptr) {
+            if (view == nullptr && direction < 0) {
                 view = core_.fsm()->current_view();
-                view_id = view->id();
-                op->log_seqnum = log::BuildSeqNum(view_id + 1, 0) - 1;
+                if (view != nullptr) {
+                    view_id = view->id();
+                    op->log_seqnum = log::BuildSeqNum(view_id + 1, 0) - 1;
+                }
             }
         }
         if (view == nullptr) {
-            DCHECK(direction > 0);
             Message message = MessageHelper::NewSharedLogOpFailed(
                 SharedLogResultType::EMPTY);
             FinishLogOp(op, &message);
             return;
         }
         uint16_t primary_node_id = view->LogTagToPrimaryNode(op->log_tag);
-        if (view->IsStorageNodeOf(primary_node_id, my_node_id())) {
+        // if (view->IsStorageNodeOf(primary_node_id, my_node_id())) {
+        if (primary_node_id == my_node_id()) {
             uint64_t seqnum;
             std::string data;
             bool found = false;
@@ -527,7 +601,8 @@ void SLogEngine::NewReadLogOp(LogOp* op) {
                 return;
             }
         } else {
-            uint16_t dst_node_id = view->PickOneStorageNode(primary_node_id);
+            // uint16_t dst_node_id = view->PickOneStorageNode(primary_node_id);
+            uint16_t dst_node_id = primary_node_id;
             Message message = MessageHelper::NewSharedLogRead(
                 op->log_tag, op->log_seqnum, direction,
                 /* log_client_data= */ op->id);
@@ -709,7 +784,7 @@ void SLogEngine::DoStateCheck() {
         }
     }
     if (!remote_ops_.empty()) {
-        stream << fmt::format("There are {} LogOp running remotedly:\n",
+        stream << fmt::format("There are {} LogOp running remotely:\n",
                               remote_ops_.size());
         int counter = 0;
         for (const auto& entry : remote_ops_) {
