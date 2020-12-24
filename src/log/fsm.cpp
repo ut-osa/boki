@@ -376,6 +376,7 @@ Fsm::View::View(const NewViewRecordProto& proto)
         node_ids_[i] = node_id;
         node_indices_[node_id] = i;
         node_addr_[node_id] = node.addr();
+        next_storage_node_[i].store(0);
     }
     ComputeHashSeed();
 }
@@ -428,6 +429,7 @@ uint16_t Fsm::View::PickOneStorageNode(uint16_t primary_node_id) const {
     DCHECK(node_indices_.contains(primary_node_id));
     size_t base = node_indices_.at(primary_node_id);
     size_t off = next_storage_node_[base].fetch_add(1, std::memory_order_relaxed);
+    off = off % replicas_;
     return node_ids_[(base + off) % node_ids_.size()];
 }
 
