@@ -144,8 +144,8 @@ bool Fsm::ConvertLocalId(uint64_t localid, uint64_t* seqnum) const {
     }
     size_t left = first_cut_of_view_.at(view_id);
     size_t right = global_cuts_.size();
-    if (view_id + 1 < first_cut_of_view_.size()) {
-        right = first_cut_of_view_.at(view_id + 1);
+    if (view_id + 1U < first_cut_of_view_.size()) {
+        right = first_cut_of_view_.at(view_id + 1U);
     }
     while (left < right) {
         size_t mid = (left + right) / 2;

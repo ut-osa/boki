@@ -797,8 +797,10 @@ void SLogEngine::DoStateCheck() {
             case kReadPrev:
             case kReadNext:
                 stream << " Tag=" << op->log_tag;
+                ABSL_FALLTHROUGH_INTENDED;
             case kReadAt:
                 stream << fmt::format(" SeqNum={:#018x}", op->log_seqnum);
+                ABSL_FALLTHROUGH_INTENDED;
             default:
                 break;
             }
