@@ -149,7 +149,6 @@ private:
     void SendMessageToEngine(uint16_t node_id, protocol::Message* message);
     void SendMessageToEngine(uint16_t src_node_id, uint16_t dst_node_id,
                              protocol::Message* message);
-    void ScheduleLocalCut(int duration_us);
     void DoStateCheck();
 
     template<class KeyT>

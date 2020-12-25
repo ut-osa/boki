@@ -11,9 +11,6 @@ void FdSetNonblocking(int fd);
 void FdUnsetNonblocking(int fd);
 bool FdPollForRead(int fd, int timeout_ms);
 
-int CreateTimerFd();
-bool SetupTimerFd(int fd, int initial_us, int interval_us = 0);
-
 template<class T>
 bool SendMessage(int fd, const T& message) {
     const char* buffer = reinterpret_cast<const char*>(&message);

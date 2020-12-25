@@ -142,8 +142,10 @@ private:
     void SetupLocalIpc();
     void SetupSharedLog();
 
-    Timer* CreateTimer(int timer_type, IOWorker* io_worker,
-                       Timer::Callback cb, int initial_duration_us = -1);
+    Timer* CreateTimer(int timer_type, IOWorker* io_worker, Timer::Callback cb);
+    Timer* CreatePeriodicTimer(int timer_type, IOWorker* io_worker,
+                               absl::Time initial, absl::Duration duration,
+                               Timer::Callback cb);
 
     void OnNewMessageConnection(int sockfd);
     void OnNewSLogConnection(int sockfd);

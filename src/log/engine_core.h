@@ -14,6 +14,8 @@ public:
     explicit EngineCore(uint16_t my_node_id);
     ~EngineCore();
 
+    static absl::Duration local_cut_interval();
+
     const Fsm* fsm() const { return &fsm_; }
     uint32_t fsm_progress() const { return fsm_.progress(); }
 
@@ -25,10 +27,7 @@ public:
             LogDiscardedCallback;
     void SetLogDiscardedCallback(LogDiscardedCallback cb);
 
-    typedef std::function<void(int /* duration_us */)> ScheduleLocalCutCallback;
-    void SetScheduleLocalCutCallback(ScheduleLocalCutCallback cb);
-
-    void BuildLocalCutMessage(LocalCutMsgProto* message);
+    bool BuildLocalCutMessage(LocalCutMsgProto* message);
     void OnNewFsmRecordsMessage(const FsmRecordsMsgProto& message);
 
     bool LogTagToPrimaryNode(uint64_t tag, uint16_t* primary_node_id);
@@ -43,9 +42,8 @@ private:
     uint16_t my_node_id_;
     int local_cut_interval_us_;
 
-    LogPersistedCallback      log_persisted_cb_;
-    LogDiscardedCallback      log_discarded_cb_;
-    ScheduleLocalCutCallback  schedule_local_cut_cb_;
+    LogPersistedCallback  log_persisted_cb_;
+    LogDiscardedCallback  log_discarded_cb_;
 
     uint32_t next_localid_;
 
@@ -61,8 +59,7 @@ private:
 
     absl::flat_hash_map</* node_id */ uint16_t, uint32_t> log_progress_;
 
-    bool local_cut_scheduled_;
-    int64_t last_local_cut_timestamp_;
+    bool log_progress_dirty_;
 
     LogEntry* AllocLogEntry(uint64_t tag, uint64_t localid, std::span<const char> data);
 

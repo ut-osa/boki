@@ -187,9 +187,18 @@ void Engine::StopInternal() {
     }
 }
 
-Timer* Engine::CreateTimer(int timer_type, IOWorker* io_worker,
-                           Timer::Callback cb, int initial_duration_us) {
-    Timer* timer = new Timer(timer_type, cb, initial_duration_us);
+Timer* Engine::CreateTimer(int timer_type, IOWorker* io_worker, Timer::Callback cb) {
+    Timer* timer = new Timer(timer_type, cb);
+    RegisterConnection(io_worker, timer);
+    timers_.insert(std::unique_ptr<Timer>(timer));
+    return timer;
+}
+
+Timer* Engine::CreatePeriodicTimer(int timer_type, IOWorker* io_worker,
+                                   absl::Time initial, absl::Duration duration,
+                                   Timer::Callback cb) {
+    Timer* timer = new Timer(timer_type, cb);
+    timer->SetPeriodic(initial, duration);
     RegisterConnection(io_worker, timer);
     timers_.insert(std::unique_ptr<Timer>(timer));
     return timer;

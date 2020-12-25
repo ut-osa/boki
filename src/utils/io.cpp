@@ -3,7 +3,6 @@
 #include <sys/types.h>
 #include <poll.h>
 #include <fcntl.h>
-#include <sys/timerfd.h>
 
 namespace faas {
 namespace io_utils {
@@ -37,35 +36,6 @@ bool FdPollForRead(int fd, int timeout_ms) {
     }
     if ((pfd.revents & POLLIN) == 0) {
         LOG(ERROR) << "Error happens on given fifo: revents=" << pfd.revents;
-        return false;
-    }
-    return true;
-}
-
-int CreateTimerFd() {
-    int fd = timerfd_create(CLOCK_MONOTONIC, 0);
-    if (fd == -1) {
-        PLOG(ERROR) << "Failed to create timerfd";
-        return -1;
-    }
-    return fd;
-}
-
-bool SetupTimerFd(int fd, int initial_us, int interval_us) {
-    VLOG(2) << fmt::format("SetupTimerFd: initial_us={}, interval_us={}",
-                           initial_us, interval_us);
-    struct itimerspec spec;
-    memset(&spec, 0, sizeof(spec));
-    if (initial_us == 0) {
-        spec.it_value.tv_nsec = 1;
-    } else {
-        spec.it_value.tv_sec = initial_us / 1000000;
-        spec.it_value.tv_nsec = initial_us % 1000000 * 1000;
-    }
-    spec.it_interval.tv_sec = interval_us / 1000000;
-    spec.it_interval.tv_nsec = interval_us % 1000000 * 1000;
-    if (timerfd_settime(fd, 0, &spec, nullptr) != 0) {
-        PLOG(ERROR) << "timerfd_settime failed";
         return false;
     }
     return true;

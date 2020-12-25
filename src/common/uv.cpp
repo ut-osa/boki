@@ -1,6 +1,7 @@
 #include "common/uv.h"
 
 #include "utils/io.h"
+#include "utils/timerfd.h"
 #include "utils/random.h"
 
 namespace faas {
@@ -66,19 +67,19 @@ void Timer::Close() {
 
 void Timer::ExpireIn(absl::Duration duration) {
     CHECK(timerfd_ != -1);
-    CHECK(io_utils::SetupTimerFd(timerfd_, absl::ToInt64Microseconds(duration)));
+    CHECK(io_utils::SetupTimerFdOneTime(timerfd_, duration));
 }
 
 void Timer::StochasticExpireIn(absl::Duration duration) {
     CHECK(timerfd_ != -1);
     double x = 1.0 - utils::GetRandomDouble(0.0, 1.0);  // x ends in (0, 1]
     double timeout_us = absl::ToDoubleMicroseconds(duration) * (-log(x));
-    CHECK(io_utils::SetupTimerFd(timerfd_, gsl::narrow_cast<int>(timeout_us)));
+    CHECK(io_utils::SetupTimerFdOneTime(timerfd_, absl::Microseconds(timeout_us)));
 }
 
 void Timer::PeriodicExpire(absl::Duration interval) {
     CHECK(timerfd_ != -1);
-    CHECK(io_utils::SetupTimerFd(timerfd_, 0, absl::ToInt64Microseconds(interval)));
+    CHECK(io_utils::SetupTimerFdPeriodic(timerfd_, absl::Microseconds(1), interval));
 }
 
 UV_POLL_CB_FOR_CLASS(Timer, Expired) {

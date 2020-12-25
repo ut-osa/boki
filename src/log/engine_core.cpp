@@ -13,13 +13,16 @@ EngineCore::EngineCore(uint16_t my_node_id)
     : my_node_id_(my_node_id),
       local_cut_interval_us_(absl::GetFlag(FLAGS_slog_local_cut_interval_us)),
       next_localid_(0),
-      local_cut_scheduled_(false),
-      last_local_cut_timestamp_(0) {
+      log_progress_dirty_(false) {
     fsm_.SetNewViewCallback(absl::bind_front(&EngineCore::OnFsmNewView, this));
     fsm_.SetLogReplicatedCallback(absl::bind_front(&EngineCore::OnFsmLogReplicated, this));
 }
 
 EngineCore::~EngineCore() {}
+
+absl::Duration EngineCore::local_cut_interval() {
+    return absl::Microseconds(absl::GetFlag(FLAGS_slog_local_cut_interval_us));
+}
 
 void EngineCore::SetLogPersistedCallback(LogPersistedCallback cb) {
     log_persisted_cb_ = cb;
@@ -29,13 +32,11 @@ void EngineCore::SetLogDiscardedCallback(LogDiscardedCallback cb) {
     log_discarded_cb_ = cb;
 }
 
-void EngineCore::SetScheduleLocalCutCallback(ScheduleLocalCutCallback cb) {
-    schedule_local_cut_cb_ = cb;
-}
-
-void EngineCore::BuildLocalCutMessage(LocalCutMsgProto* message) {
-    local_cut_scheduled_ = false;
-    last_local_cut_timestamp_ = GetMonotonicMicroTimestamp();
+bool EngineCore::BuildLocalCutMessage(LocalCutMsgProto* message) {
+    if (!log_progress_dirty_) {
+        return false;
+    }
+    log_progress_dirty_ = true;
     const Fsm::View* view = fsm_.current_view();
     message->Clear();
     message->set_view_id(view->id());
@@ -44,6 +45,7 @@ void EngineCore::BuildLocalCutMessage(LocalCutMsgProto* message) {
     view->ForEachPrimaryNode(my_node_id_, [this, message] (uint16_t node_id) {
         message->add_localid_cuts(log_progress_[node_id]);
     });
+    return true;
 }
 
 void EngineCore::OnNewFsmRecordsMessage(const FsmRecordsMsgProto& message) {
@@ -107,7 +109,7 @@ bool EngineCore::StoreLogAsPrimaryNode(uint64_t tag, std::span<const char> data,
         /* localid= */ BuildLocalId(current_view->id(), my_node_id_, next_localid_++),
         data);
     pending_entries_[log_entry->localid] = log_entry;
-    ScheduleLocalCutIfNecessary();
+    log_progress_dirty_ = true;
     *localid = log_entry->localid;
     return true;
 }
@@ -191,25 +193,8 @@ void EngineCore::AdvanceLogProgress(const Fsm::View* view, uint16_t node_id) {
     }
     if (counter > initial_counter) {
         log_progress_[node_id] = counter;
-        ScheduleLocalCutIfNecessary();
+        log_progress_dirty_ = true;
     }
-}
-
-void EngineCore::ScheduleLocalCutIfNecessary() {
-    if (local_cut_scheduled_) {
-        return;
-    }
-    if (last_local_cut_timestamp_ == 0) {
-        last_local_cut_timestamp_ = GetMonotonicMicroTimestamp();
-    }
-    int64_t next_local_cut_timestamp = last_local_cut_timestamp_ + local_cut_interval_us_;
-    int64_t duration = next_local_cut_timestamp - GetMonotonicMicroTimestamp();
-    if (duration < 0) {
-        schedule_local_cut_cb_(0);
-    } else {
-        schedule_local_cut_cb_(gsl::narrow_cast<int>(duration));
-    }
-    local_cut_scheduled_ = true;
 }
 
 void EngineCore::DoStateCheck(std::ostringstream& stream) const {

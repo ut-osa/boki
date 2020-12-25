@@ -31,8 +31,6 @@ SLogEngine::SLogEngine(Engine* engine)
         absl::bind_front(&SLogEngine::LogPersisted, this));
     core_.SetLogDiscardedCallback(
         absl::bind_front(&SLogEngine::LogDiscarded, this));
-    core_.SetScheduleLocalCutCallback(
-        absl::bind_front(&SLogEngine::ScheduleLocalCut, this));
     // std::string storage_backend = absl::GetFlag(FLAGS_slog_storage_backend);
     // if (storage_backend == "inmem") {
     //     storage_.reset(new log::InMemoryStorage());
@@ -120,17 +118,22 @@ inline void FillReadLogResponse(uint64_t seqnum, const std::string& data,
 }
 
 void SLogEngine::SetupTimers() {
+    size_t n_workers = engine_->io_workers_.size();
+    absl::Duration duration = log::EngineCore::local_cut_interval();
+    absl::Time initial = absl::Now() + absl::Milliseconds(200);
     for (IOWorker* io_worker : engine_->io_workers_) {
-        engine_->CreateTimer(
+        engine_->CreatePeriodicTimer(
             kSLogLocalCutTimerTypeId, io_worker,
+            initial, duration * n_workers,
             absl::bind_front(&SLogEngine::LocalCutTimerTriggered, this));
+        initial += duration;
     }
     if (absl::GetFlag(FLAGS_slog_enable_statecheck)) {
-        int interval_us = absl::GetFlag(FLAGS_slog_statecheck_interval_sec) * 1000000;
-        statecheck_timer_ = engine_->CreateTimer(
+        statecheck_timer_ = engine_->CreatePeriodicTimer(
             kSLogStateCheckTimerTypeId, engine_->io_workers_.front(),
-            absl::bind_front(&SLogEngine::StateCheckTimerTriggered, this),
-            /* initial_duration_us= */ interval_us);
+            absl::Now() + absl::Milliseconds(200),
+            absl::Seconds(absl::GetFlag(FLAGS_slog_statecheck_interval_sec)),
+            absl::bind_front(&SLogEngine::StateCheckTimerTriggered, this));
     }
 }
 
@@ -140,7 +143,9 @@ void SLogEngine::LocalCutTimerTriggered() {
     log::LocalCutMsgProto message;
     {
         absl::MutexLock lk(&mu_);
-        core_.BuildLocalCutMessage(&message);
+        if (!core_.BuildLocalCutMessage(&message)) {
+            return;
+        }
     }
     std::string serialized_message;
     message.SerializeToString(&serialized_message);
@@ -152,8 +157,6 @@ void SLogEngine::StateCheckTimerTriggered() {
     mu_.AssertNotHeld();
     HVLOG(1) << "StateCheckTimerTriggered";
     DoStateCheck();
-    int interval_us = absl::GetFlag(FLAGS_slog_statecheck_interval_sec) * 1000000;
-    statecheck_timer_->TriggerIn(interval_us);
 }
 
 void SLogEngine::OnSequencerMessage(const SequencerMessage& message,
@@ -756,15 +759,6 @@ void SLogEngine::SendMessageToEngine(uint16_t src_node_id, uint16_t dst_node_id,
         message->src_node_id = src_node_id;
     }
     hub->SendMessage(dst_node_id, *message);
-}
-
-void SLogEngine::ScheduleLocalCut(int duration_us) {
-    mu_.AssertHeld();
-    IOWorker* io_worker = IOWorker::current();
-    DCHECK(io_worker != nullptr);
-    ConnectionBase* timer = io_worker->PickConnection(kSLogLocalCutTimerTypeId);
-    DCHECK(timer != nullptr);
-    timer->as_ptr<Timer>()->TriggerIn(duration_us);
 }
 
 std::string SLogEngine::GetNodeAddr(uint16_t node_id) {

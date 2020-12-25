@@ -9,22 +9,27 @@ namespace engine {
 class Timer final : public ConnectionBase {
 public:
     typedef std::function<void()> Callback;
-    Timer(int timer_type, Callback cb, int initial_duration_us);
+    Timer(int timer_type, Callback cb);
     ~Timer();
+
+    void SetPeriodic(absl::Time initial, absl::Duration duration);
 
     void Start(IOWorker* io_worker) override;
     void ScheduleClose() override;
 
-    bool TriggerIn(int duration_us);
+    bool TriggerIn(absl::Duration d);
 
 private:
     enum State { kCreated, kIdle, kScheduled, kClosing, kClosed };
+
+    bool periodic_;
+    absl::Time initial_;
+    absl::Duration duration_;
 
     Callback cb_;
     IOWorker* io_worker_;
     State state_;
     int timerfd_;
-    int initial_duration_us_;
 
     DISALLOW_COPY_AND_ASSIGN(Timer);
 };
