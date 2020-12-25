@@ -3,8 +3,8 @@
 #include "base/common.h"
 
 #ifdef __FAAS_HAVE_ABSL
-#include <absl/container/flat_hash_map.h>
 #include <absl/container/inlined_vector.h>
+#include <absl/synchronization/mutex.h>
 #endif
 
 #ifdef __FAAS_SRC
@@ -93,18 +93,31 @@ public:
 
     ~ThreadSafeObjectPool() {}
 
-    // TODO: implement a real object pool that is thread-safe
-
     T* Get() {
-        return object_constructor_();
+        absl::MutexLock lk(&mu_);
+        if (free_objs_.empty()) {
+            T* new_obj = object_constructor_();
+            free_objs_.push_back(new_obj);
+            objs_.emplace_back(new_obj);
+        }
+        DCHECK(!free_objs_.empty());
+        T* obj = free_objs_.back();
+        free_objs_.pop_back();
+        return obj;
     }
 
     void Return(T* obj) {
-        delete obj;
+        absl::MutexLock lk(&mu_);
+        free_objs_.push_back(obj);
     }
 
 private:
     std::function<T*()> object_constructor_;
+
+    absl::Mutex mu_;
+    absl::InlinedVector<std::unique_ptr<T>, 16> objs_ ABSL_GUARDED_BY(mu_);
+    absl::InlinedVector<T*, 16> free_objs_ ABSL_GUARDED_BY(mu_);
+
     DISALLOW_COPY_AND_ASSIGN(ThreadSafeObjectPool);
 };
 
