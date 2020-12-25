@@ -181,9 +181,8 @@ $(BUILD_PATH)/%.o: $(SRC_PATH)/%.$(SRC_EXT)
 	$(CMD_PREFIX)$(CXX) $(CXXFLAGS) $(COMPILE_FLAGS) -MP -MMD -c $< -o $@
 
 # Protobuf-related rules
-$(SRC_PATH)/proto/%.pb.cc $(SRC_PATH)/proto/%.pb.h: $(SRC_PATH)/proto/%.proto
+$(SRC_PATH)/proto/%.pb.cpp $(SRC_PATH)/proto/%.pb.h: $(SRC_PATH)/proto/%.proto
 	@echo "Compiling proto file $<"
 	$(CMD_PREFIX)$(PROTOC) --proto_path=$(SRC_PATH)/proto --cpp_out=$(SRC_PATH)/proto $<
-$(SRC_PATH)/proto/%.pb.h: $(SRC_PATH)/proto/%.pb.cc
-$(SRC_PATH)/proto/%.pb.cpp: $(SRC_PATH)/proto/%.pb.cc
-	@cp $(realpath $<) $@
+	@mv $(patsubst %.proto,%.pb.cc,$<) $(patsubst %.proto,%.pb.cpp,$<)
+$(SRC_PATH)/proto/%.pb.h: $(SRC_PATH)/proto/%.pb.cpp
