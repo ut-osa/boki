@@ -72,6 +72,19 @@ bool EngineCore::LogTagToPrimaryNode(uint64_t tag, uint16_t* primary_node_id) {
     return true;
 }
 
+EngineCore::LogEntry* EngineCore::AllocLogEntry(uint64_t tag, uint64_t localid,
+                                                std::span<const char> data) {
+    LogEntry* log_entry = log_entry_pool_.Get();
+    log_entry->localid = localid;
+    log_entry->seqnum = 0;
+    log_entry->tag = tag;
+    log_entry->data.Reset();
+    if (data.size() > 0) {
+        log_entry->data.AppendData(data);
+    }
+    return log_entry;
+}
+
 bool EngineCore::StoreLogAsPrimaryNode(uint64_t tag, std::span<const char> data,
                                        uint64_t* localid) {
     const Fsm::View* current_view = fsm_.current_view();
@@ -89,12 +102,11 @@ bool EngineCore::StoreLogAsPrimaryNode(uint64_t tag, std::span<const char> data,
         return false;
     }
     HVLOG(1) << fmt::format("NewLocalLog: tag={}, data_size={}", tag, data.size());
-    LogEntry* log_entry = new LogEntry;
-    log_entry->seqnum = 0;
-    log_entry->tag = tag;
-    log_entry->data = std::string(data.data(), data.size());
-    log_entry->localid = BuildLocalId(current_view->id(), my_node_id_, next_localid_++);
-    pending_entries_[log_entry->localid] = std::unique_ptr<LogEntry>(log_entry);
+    LogEntry* log_entry = AllocLogEntry(
+        tag,
+        /* localid= */ BuildLocalId(current_view->id(), my_node_id_, next_localid_++),
+        data);
+    pending_entries_[log_entry->localid] = log_entry;
     ScheduleLocalCutIfNecessary();
     *localid = log_entry->localid;
     return true;
@@ -102,11 +114,6 @@ bool EngineCore::StoreLogAsPrimaryNode(uint64_t tag, std::span<const char> data,
 
 bool EngineCore::StoreLogAsBackupNode(uint64_t tag, std::span<const char> data,
                                       uint64_t localid) {
-    std::unique_ptr<LogEntry> log_entry(new LogEntry);
-    log_entry->localid = localid;
-    log_entry->seqnum = 0;
-    log_entry->tag = tag;
-    log_entry->data = std::string(data.data(), data.size());
     uint16_t view_id = LocalIdToViewId(localid);
     uint16_t primary_node_id = LocalIdToNodeId(localid);
     if (primary_node_id == my_node_id_) {
@@ -120,7 +127,7 @@ bool EngineCore::StoreLogAsBackupNode(uint64_t tag, std::span<const char> data,
         HLOG(WARNING) << "Receive outdated log";
         return false;
     }
-    pending_entries_[localid] = std::move(log_entry);
+    pending_entries_[localid] = AllocLogEntry(tag, localid, data);
     if (current_view != nullptr && current_view->id() == view_id) {
         AdvanceLogProgress(current_view, primary_node_id);
     }
@@ -128,12 +135,7 @@ bool EngineCore::StoreLogAsBackupNode(uint64_t tag, std::span<const char> data,
 }
 
 void EngineCore::AddWaitForReplication(uint64_t tag, uint64_t localid) {
-    std::unique_ptr<LogEntry> log_entry(new LogEntry);
-    log_entry->localid = localid;
-    log_entry->seqnum = 0;
-    log_entry->tag = tag;
-    log_entry->data.clear();
-    pending_entries_[localid] = std::move(log_entry);
+    pending_entries_[localid] = AllocLogEntry(tag, localid, std::span<const char>());
 }
 
 void EngineCore::OnFsmNewView(const Fsm::View* view) {
@@ -142,9 +144,10 @@ void EngineCore::OnFsmNewView(const Fsm::View* view) {
         if (LocalIdToViewId(iter->first) >= view->id()) {
             break;
         }
-        std::unique_ptr<LogEntry> log_entry = std::move(iter->second);
+        LogEntry* log_entry = iter->second;
         iter = pending_entries_.erase(iter);
-        log_discarded_cb_(std::move(log_entry));
+        log_discarded_cb_(log_entry->localid);
+        log_entry_pool_.Return(log_entry);
     }
     next_localid_ = 0;
     log_progress_.clear();
@@ -166,10 +169,11 @@ void EngineCore::OnFsmLogReplicated(uint64_t start_localid, uint64_t start_seqnu
         }
         HVLOG(1) << fmt::format("Log (localid {:#018x}) replicated with seqnum {:#018x}",
                                 localid, start_seqnum + i);
-        std::unique_ptr<LogEntry> log_entry = std::move(iter->second);
+        LogEntry* log_entry = iter->second;
         pending_entries_.erase(iter);
         log_entry->seqnum = start_seqnum + i;
-        log_persisted_cb_(std::move(log_entry));
+        log_persisted_cb_(log_entry->localid, log_entry->seqnum);
+        persisted_entries_[log_entry->seqnum] = log_entry;
     }
 }
 
@@ -217,7 +221,7 @@ void EngineCore::DoStateCheck(std::ostringstream& stream) const {
         int counter = 0;
         for (const auto& entry : pending_entries_) {
             uint64_t localid = entry.first;
-            const LogEntry* log_entry = entry.second.get();
+            const LogEntry* log_entry = entry.second;
             counter++;
             stream << fmt::format("--[{}] LocalId={:#018x} Tag={}",
                                   counter, localid, log_entry->tag);

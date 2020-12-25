@@ -422,6 +422,7 @@ public:
         message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
         message.log_op = static_cast<uint16_t>(SharedLogOpType::RESPONSE);
         message.log_result = static_cast<uint16_t>(result);
+        message.log_fsm_progress = 0;
         return message;
     }
 

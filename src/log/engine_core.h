@@ -1,8 +1,10 @@
 #pragma once
 
+#include "utils/object_pool.h"
 #include "log/common.h"
 #include "log/fsm.h"
 #include "log/storage.h"
+#include "log/tag_index.h"
 
 namespace faas {
 namespace log {
@@ -13,12 +15,13 @@ public:
     ~EngineCore();
 
     const Fsm* fsm() const { return &fsm_; }
+    uint32_t fsm_progress() const { return fsm_.progress(); }
 
-    typedef std::function<void(std::unique_ptr<LogEntry> /* log_entry */)>
+    typedef std::function<void(uint64_t /* localid */, uint64_t /* seqnum */)>
             LogPersistedCallback;
     void SetLogPersistedCallback(LogPersistedCallback cb);
 
-    typedef std::function<void(std::unique_ptr<LogEntry> /* log_entry */)>
+    typedef std::function<void(uint64_t /* localid */)>
             LogDiscardedCallback;
     void SetLogDiscardedCallback(LogDiscardedCallback cb);
 
@@ -45,11 +48,23 @@ private:
     ScheduleLocalCutCallback  schedule_local_cut_cb_;
 
     uint32_t next_localid_;
-    std::map</* localid */ uint64_t, std::unique_ptr<LogEntry>> pending_entries_;
+
+    struct LogEntry {
+        uint64_t localid;
+        uint64_t seqnum;
+        uint64_t tag;
+        utils::AppendableBuffer data;
+    };
+    utils::SimpleObjectPool<LogEntry> log_entry_pool_;
+    std::map</* localid */ uint64_t, LogEntry*> pending_entries_;
+    std::map</* seqnum */ uint64_t, LogEntry*> persisted_entries_;
+
     absl::flat_hash_map</* node_id */ uint16_t, uint32_t> log_progress_;
 
     bool local_cut_scheduled_;
     int64_t last_local_cut_timestamp_;
+
+    LogEntry* AllocLogEntry(uint64_t tag, uint64_t localid, std::span<const char> data);
 
     void OnFsmNewView(const Fsm::View* view);
     void OnFsmLogReplicated(uint64_t start_localid, uint64_t start_seqnum, uint32_t delta);

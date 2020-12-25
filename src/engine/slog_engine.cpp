@@ -33,16 +33,16 @@ SLogEngine::SLogEngine(Engine* engine)
         absl::bind_front(&SLogEngine::LogDiscarded, this));
     core_.SetScheduleLocalCutCallback(
         absl::bind_front(&SLogEngine::ScheduleLocalCut, this));
-    std::string storage_backend = absl::GetFlag(FLAGS_slog_storage_backend);
-    if (storage_backend == "inmem") {
-        storage_.reset(new log::InMemoryStorage());
-    } else if (storage_backend == "rocksdb") {
-        std::string db_path = absl::GetFlag(FLAGS_slog_storage_datadir);
-        CHECK(!db_path.empty()) << "Empty slog_storage_datadir";
-        storage_.reset(new log::RocksDBStorage(db_path));
-    } else {
-        HLOG(FATAL) << "Unknown storage backend: " << storage_backend;
-    }
+    // std::string storage_backend = absl::GetFlag(FLAGS_slog_storage_backend);
+    // if (storage_backend == "inmem") {
+    //     storage_.reset(new log::InMemoryStorage());
+    // } else if (storage_backend == "rocksdb") {
+    //     std::string db_path = absl::GetFlag(FLAGS_slog_storage_datadir);
+    //     CHECK(!db_path.empty()) << "Empty slog_storage_datadir";
+    //     storage_.reset(new log::RocksDBStorage(db_path));
+    // } else {
+    //     HLOG(FATAL) << "Unknown storage backend: " << storage_backend;
+    // }
     SetupTimers();
 }
 
@@ -165,13 +165,15 @@ void SLogEngine::OnSequencerMessage(const SequencerMessage& message,
             return;
         }
         absl::InlinedVector<CompletedLogEntry, 8> completed_log_entries;
+        uint32_t fsm_progress;
         {
             absl::MutexLock lk(&mu_);
             core_.OnNewFsmRecordsMessage(message_proto);
+            fsm_progress = core_.fsm_progress();
             completed_log_entries_.swap(completed_log_entries);
         }
         for (CompletedLogEntry& entry : completed_log_entries) {
-            LogEntryCompleted(std::move(entry));
+            LogEntryCompleted(std::move(entry), fsm_progress);
         }
     } else {
         HLOG(ERROR) << fmt::format("Unknown message type: {}!", message.message_type);
@@ -317,6 +319,7 @@ void SLogEngine::HandleLocalAppend(const Message& message) {
     } else {
         HVLOG(1) << fmt::format("Local append with tag {}", op->log_tag);
     }
+    op->log_data.assign(data.data(), data.size());
     NewAppendLogOp(op, data);
 }
 
@@ -329,9 +332,11 @@ void SLogEngine::HandleLocalRead(const protocol::Message& message, int direction
         const log::Fsm::View* view;
         uint64_t seqnum;
         uint16_t primary_node_id;
+        uint32_t fsm_progress;
         bool success = false;
         {
             absl::ReaderMutexLock lk(&mu_);
+            fsm_progress = core_.fsm_progress();
             if (direction > 0) {
                 success = core_.fsm()->FindNextSeqnum(
                     message.log_seqnum, &seqnum, &view, &primary_node_id);
@@ -344,7 +349,7 @@ void SLogEngine::HandleLocalRead(const protocol::Message& message, int direction
             SendFailedResponse(message, SharedLogResultType::EMPTY);
             return;
         }
-        LogOp* op = AllocLogOp(LogOpType::kReadAt, ctx.log_space, ctx.fsm_progress,
+        LogOp* op = AllocLogOp(LogOpType::kReadAt, ctx.log_space, fsm_progress,
                                message.log_client_id, message.log_client_data);
         op->func_call = func_call;
         op->log_seqnum = seqnum;
@@ -370,6 +375,7 @@ void SLogEngine::RemoteOpFinished(const protocol::Message& response) {
     if (op == nullptr) {
         return;
     }
+    DCHECK_EQ(op->src_node_id, my_node_id());
     op->hop_times = response.hop_times;
     switch (op_type(op)) {
     case LogOpType::kAppend:
@@ -389,19 +395,17 @@ void SLogEngine::RemoteOpFinished(const protocol::Message& response) {
 
 void SLogEngine::RemoteAppendFinished(const protocol::Message& message, LogOp* op) {
     SharedLogResultType result = MessageHelper::GetSharedLogResultType(message);
-    if (result == SharedLogResultType::DISCARDED && --op->remaining_retries > 0) {
-        std::span<const char> data(op->log_data.data(), op->log_data.size());
-        NewAppendLogOp(op, data);
-    } else if (result == SharedLogResultType::APPEND_OK) {
-        UpdateFuncFsmProgress(op->func_call, message.log_fsm_progress);
+    if (result == SharedLogResultType::APPEND_OK) {
         Message response = message;
         FinishLogOp(op, &response);
     } else if (result == SharedLogResultType::LOCALID) {
         uint64_t localid = message.log_localid;
         uint64_t seqnum;
+        uint32_t fsm_progress;
         bool known;
         {
             absl::MutexLock lk(&mu_);
+            fsm_progress = core_.fsm_progress();
             known = core_.fsm()->ConvertLocalId(localid, &seqnum);
             if (!known) {
                 core_.AddWaitForReplication(op->log_tag, localid);
@@ -409,12 +413,17 @@ void SLogEngine::RemoteAppendFinished(const protocol::Message& message, LogOp* o
             }
         }
         if (known) {
-            Message response = 
-                (seqnum != protocol::kInvalidLogSeqNum) ?
-                MessageHelper::NewSharedLogOpSucceeded(SharedLogResultType::APPEND_OK, seqnum) :
-                MessageHelper::NewSharedLogOpFailed(SharedLogResultType::DISCARDED);
-            FinishLogOp(op, &response);
+            if (seqnum != protocol::kInvalidLogSeqNum) {
+                Message response = MessageHelper::NewSharedLogOpSucceeded(
+                    SharedLogResultType::APPEND_OK, seqnum);
+                response.log_fsm_progress = fsm_progress;
+                FinishLogOp(op, &response);
+            } else {
+                RetryAppendOpIfDoable(op);
+            }
         }
+    } else if (result == SharedLogResultType::DISCARDED) {
+        RetryAppendOpIfDoable(op);
     } else {
         HLOG(FATAL) << "Unknown response type: " << static_cast<uint16_t>(result);
     }
@@ -433,22 +442,22 @@ void SLogEngine::RemoteReadFinished(const protocol::Message& message, LogOp* op)
     FinishLogOp(op, &response);
 }
 
-void SLogEngine::LogPersisted(std::unique_ptr<log::LogEntry> log_entry) {
+void SLogEngine::LogPersisted(uint64_t localid, uint64_t seqnum) {
     mu_.AssertHeld();
-    LogOp* op = GrabLogOp(append_ops_, log_entry->localid);
+    LogOp* op = GrabLogOp(append_ops_, localid);
     completed_log_entries_.push_back({
-        .log_entry = std::move(log_entry),
-        .persisted = true,
+        .localid = localid,
+        .seqnum = seqnum,
         .append_op = op
     });
 }
 
-void SLogEngine::LogDiscarded(std::unique_ptr<log::LogEntry> log_entry) {
+void SLogEngine::LogDiscarded(uint64_t localid) {
     mu_.AssertHeld();
-    LogOp* op = GrabLogOp(append_ops_, log_entry->localid);
+    LogOp* op = GrabLogOp(append_ops_, localid);
     completed_log_entries_.push_back({
-        .log_entry = std::move(log_entry),
-        .persisted = false,
+        .localid = localid,
+        .seqnum = protocol::kInvalidLogSeqNum,
         .append_op = op
     });
 }
@@ -457,6 +466,9 @@ void SLogEngine::FinishLogOp(LogOp* op, protocol::Message* response) {
     if (response != nullptr) {
         response->log_client_data = op->client_data;
         if (op->src_node_id == my_node_id()) {
+            if (response->log_fsm_progress > 0) {
+                UpdateFuncFsmProgress(op->func_call, response->log_fsm_progress);
+            }
             RecordLogOpCompletion(op);
             engine_->SendFuncWorkerMessage(op->client_id, response);
         } else {
@@ -522,9 +534,6 @@ void SLogEngine::NewAppendLogOp(LogOp* op, std::span<const char> data) {
             FinishLogOp(op, &message);
         }
     } else {
-        if (op->log_data.empty()) {
-            op->log_data.assign(data.data(), data.size());
-        }
         Message message = MessageHelper::NewSharedLogAppend(op->log_tag, op->id);
         MessageHelper::SetInlineData(&message, data);
         message.hop_times = ++op->hop_times;
@@ -662,35 +671,42 @@ void SLogEngine::ReadLogFromStorage(uint64_t seqnum, protocol::Message* response
     }
 }
 
-void SLogEngine::LogEntryCompleted(CompletedLogEntry entry) {
-    if (entry.persisted) {
-        uint64_t seqnum = entry.log_entry->seqnum;
-        if (entry.log_entry->data.size() > 0) {
-            storage_->Add(std::move(entry.log_entry));
-        }
+void SLogEngine::LogEntryCompleted(CompletedLogEntry entry, uint32_t fsm_progress) {
+    if (entry.seqnum != protocol::kInvalidLogSeqNum) {
+        uint64_t seqnum = entry.seqnum;
+        // if (entry.log_entry->data.size() > 0) {
+        //     storage_->Add(std::move(entry.log_entry), fsm_progress);
+        // }
         LogOp* op = entry.append_op;
         if (op == nullptr) {
             return;
         }
         Message response = MessageHelper::NewSharedLogOpSucceeded(
             SharedLogResultType::APPEND_OK, seqnum);
+        response.log_fsm_progress = fsm_progress;
         FinishLogOp(op, &response);
     } else {
         HLOG(WARNING) << fmt::format("Log with localid {:#018x} discarded",
-                                     entry.log_entry->localid);
+                                     entry.localid);
         LogOp* op = entry.append_op;
         if (op == nullptr) {
             return;
         }
-        if (op->src_node_id == my_node_id() && --op->remaining_retries > 0) {
-            std::span<const char> data(entry.log_entry->data.data(),
-                                       entry.log_entry->data.size());
-            NewAppendLogOp(op, data);
-        } else {
-            Message response = MessageHelper::NewSharedLogOpFailed(
-                SharedLogResultType::DISCARDED);
-            FinishLogOp(op, &response);
-        }
+        RetryAppendOpIfDoable(op);
+    }
+}
+
+void SLogEngine::RetryAppendOpIfDoable(LogOp* op) {
+    DCHECK(op_type(op) == LogOpType::kAppend);
+    DCHECK_EQ(op->src_node_id, my_node_id());
+    if (op->src_node_id == my_node_id() && --op->remaining_retries > 0) {
+        std::span<const char> data(op->log_data.data(), op->log_data.size());
+        DCHECK(data.size() > 0);
+        NewAppendLogOp(op, data);
+    } else {
+        Message response = MessageHelper::NewSharedLogOpFailed(
+            SharedLogResultType::DISCARDED);
+        FinishLogOp(op, &response);
     }
 }
 

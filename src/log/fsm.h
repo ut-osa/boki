@@ -37,6 +37,8 @@ public:
         return gsl::narrow_cast<uint16_t>(views_.size());
     }
 
+    uint32_t progress() const { return next_record_seqnum_; }
+
     std::string get_addr(uint16_t node_id) const {
         if (!node_addr_.contains(node_id)) {
             return "";

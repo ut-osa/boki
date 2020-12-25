@@ -90,8 +90,8 @@ private:
     absl::flat_hash_map</* op_id */ uint64_t, LogOp*> remote_ops_ ABSL_GUARDED_BY(mu_);
 
     struct CompletedLogEntry {
-        std::unique_ptr<log::LogEntry> log_entry;
-        bool persisted;
+        uint64_t localid;
+        uint64_t seqnum;
         LogOp* append_op;
     };
     absl::InlinedVector<CompletedLogEntry, 8> completed_log_entries_ ABSL_GUARDED_BY(mu_);
@@ -126,8 +126,8 @@ private:
     void RemoteReadAtFinished(const protocol::Message& message, LogOp* op);
     void RemoteReadFinished(const protocol::Message& message, LogOp* op);
 
-    void LogPersisted(std::unique_ptr<log::LogEntry> log_entry);
-    void LogDiscarded(std::unique_ptr<log::LogEntry> log_entry);
+    void LogPersisted(uint64_t localid, uint64_t seqnum);
+    void LogDiscarded(uint64_t localid);
 
     void FinishLogOp(LogOp* op, protocol::Message* response);
     void ForwardLogOp(LogOp* op, uint16_t dst_node_id, protocol::Message* message);
@@ -138,7 +138,8 @@ private:
     void ReplicateLog(const log::Fsm::View* view, uint64_t tag, uint64_t localid,
                       std::span<const char> data);
     void ReadLogFromStorage(uint64_t seqnum, protocol::Message* response);
-    void LogEntryCompleted(CompletedLogEntry entry);
+    void LogEntryCompleted(CompletedLogEntry entry, uint32_t fsm_progress);
+    void RetryAppendOpIfDoable(LogOp* op);
     void RecordLogOpCompletion(LogOp* op);
 
     void SendFailedResponse(const protocol::Message& request,
