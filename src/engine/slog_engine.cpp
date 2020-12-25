@@ -272,7 +272,7 @@ void SLogEngine::HandleRemoteReadAt(const protocol::Message& message) {
 void SLogEngine::HandleRemoteRead(const protocol::Message& message) {
     SharedLogOpType msg_type = MessageHelper::GetSharedLogOpType(message);
     DCHECK(msg_type == SharedLogOpType::READ_NEXT || msg_type == SharedLogOpType::READ_PREV);
-    DCHECK(message.log_tag != log::kDefaultLogTag);
+    DCHECK(message.log_tag != log::kEmptyLogTag);
     LogOp* op = nullptr;
     LogOpType type = (msg_type == SharedLogOpType::READ_NEXT) ? LogOpType::kReadNext
                                                               : LogOpType::kReadPrev;
@@ -314,7 +314,7 @@ void SLogEngine::HandleLocalAppend(const Message& message) {
                            message.log_client_id, message.log_client_data);
     op->func_call = func_call;
     op->log_tag = message.log_tag;
-    if (op->log_tag == log::kDefaultLogTag) {
+    if (op->log_tag == log::kEmptyLogTag) {
         HVLOG(1) << "Local append with default tag";
     } else {
         HVLOG(1) << fmt::format("Local append with tag {}", op->log_tag);
@@ -327,7 +327,7 @@ void SLogEngine::HandleLocalRead(const protocol::Message& message, int direction
     DCHECK(direction != 0);
     protocol::FuncCall func_call = MessageHelper::GetFuncCall(message);
     FuncCallContext ctx = GetFuncContext(func_call);
-    if (message.log_tag == log::kDefaultLogTag) {
+    if (message.log_tag == log::kEmptyLogTag) {
         HVLOG(1) << fmt::format("Local read[{}] with default tag", direction);
         const log::Fsm::View* view;
         uint64_t seqnum;
@@ -562,7 +562,7 @@ void SLogEngine::NewReadAtLogOp(LogOp* op, const log::Fsm::View* view, uint16_t 
 }
 
 void SLogEngine::NewReadLogOp(LogOp* op) {
-    DCHECK(op->log_tag != log::kDefaultLogTag);
+    DCHECK(op->log_tag != log::kEmptyLogTag);
     DCHECK(op_type(op) == LogOpType::kReadNext || op_type(op) == LogOpType::kReadPrev);
     int direction = (op_type(op) == LogOpType::kReadNext) ? 1 : -1;
     do {

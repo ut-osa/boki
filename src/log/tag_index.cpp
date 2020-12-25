@@ -8,7 +8,7 @@ TagIndex::TagIndex() {}
 TagIndex::~TagIndex() {}
 
 void TagIndex::Add(uint64_t tag, uint64_t seqnum) {
-    DCHECK(tag != kDefaultLogTag);
+    DCHECK(tag != kEmptyLogTag);
     if (!per_tag_indices_.contains(tag)) {
         per_tag_indices_[tag].reset(new PerTagIndex(tag));
     }
@@ -16,7 +16,7 @@ void TagIndex::Add(uint64_t tag, uint64_t seqnum) {
 }
 
 uint64_t TagIndex::ReadFirst(uint64_t tag, uint64_t start_seqnum, uint64_t end_seqnum) const {
-    DCHECK(tag != kDefaultLogTag);
+    DCHECK(tag != kEmptyLogTag);
     if (!per_tag_indices_.contains(tag)) {
         return kInvalidLogSeqNum;
     }
@@ -24,7 +24,7 @@ uint64_t TagIndex::ReadFirst(uint64_t tag, uint64_t start_seqnum, uint64_t end_s
 }
 
 uint64_t TagIndex::ReadLast(uint64_t tag, uint64_t start_seqnum, uint64_t end_seqnum) const {
-    DCHECK(tag != kDefaultLogTag);
+    DCHECK(tag != kEmptyLogTag);
     if (!per_tag_indices_.contains(tag)) {
         return kInvalidLogSeqNum;
     }

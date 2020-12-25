@@ -8,7 +8,7 @@
 namespace faas {
 namespace log {
 
-constexpr uint64_t kDefaultLogTag    = 0;
+constexpr uint64_t kEmptyLogTag      = 0;
 constexpr uint64_t kMaxLogSeqNum     = 0xffff000000000000ULL;
 constexpr uint64_t kInvalidLogSeqNum = protocol::kInvalidLogSeqNum;
 

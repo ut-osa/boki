@@ -58,7 +58,7 @@ bool EngineCore::LogTagToPrimaryNode(uint64_t tag, uint16_t* primary_node_id) {
         HLOG(ERROR) << "No view message from sequencer!";
         return false;
     }
-    if (tag == kDefaultLogTag) {
+    if (tag == kEmptyLogTag) {
         if (current_view->has_node(my_node_id_)) {
             *primary_node_id = my_node_id_;
         } else {
@@ -96,7 +96,7 @@ bool EngineCore::StoreLogAsPrimaryNode(uint64_t tag, std::span<const char> data,
         HLOG(ERROR) << "Current view does not contain myself!";
         return false;
     }
-    if (tag != kDefaultLogTag && my_node_id_ != current_view->LogTagToPrimaryNode(tag)) {
+    if (tag != kEmptyLogTag && my_node_id_ != current_view->LogTagToPrimaryNode(tag)) {
         HLOG(ERROR) << fmt::format("This node is not the primary node of log tag {} "
                                    "in the current view", tag, current_view->id());
         return false;
