@@ -1,7 +1,18 @@
 #include "gateway/server.h"
 
+#include "ipc/base.h"
+#include "ipc/shm_region.h"
 #include "common/time.h"
 #include "utils/fs.h"
+#include "utils/io.h"
+#include "utils/docker.h"
+#include "worker/worker_lib.h"
+
+#include <absl/flags/flag.h>
+
+ABSL_FLAG(size_t, max_running_requests, 0, "");
+ABSL_FLAG(bool, lb_per_fn_round_robin, false, "");
+ABSL_FLAG(bool, lb_pick_least_load, false, "");
 
 #define HLOG(l) LOG(l) << "Server: "
 #define HVLOG(l) VLOG(l) << "Server: "
@@ -9,544 +20,405 @@
 namespace faas {
 namespace gateway {
 
-using protocol::Status;
-using protocol::Role;
-using protocol::HandshakeMessage;
-using protocol::HandshakeResponse;
 using protocol::FuncCall;
-using protocol::MessageType;
-using protocol::Message;
-
-constexpr int Server::kDefaultListenBackLog;
-constexpr int Server::kDefaultNumHttpWorkers;
-constexpr int Server::kDefaultNumIpcWorkers;
-constexpr size_t Server::kHttpConnectionBufferSize;
-constexpr size_t Server::kMessageConnectionBufferSize;
-
-constexpr int Server::kMaxClientId;
+using protocol::FuncCallDebugString;
+using protocol::NewFuncCall;
+using protocol::NewFuncCallWithMethod;
+using protocol::GatewayMessage;
+using protocol::GetFuncCallFromMessage;
+using protocol::IsEngineHandshakeMessage;
+using protocol::IsFuncCallCompleteMessage;
+using protocol::IsFuncCallFailedMessage;
+using protocol::NewDispatchFuncCallGatewayMessage;
 
 Server::Server()
-    : state_(kCreated), port_(-1), grpc_port_(-1), listen_backlog_(kDefaultListenBackLog),
-      num_http_workers_(kDefaultNumHttpWorkers), num_ipc_workers_(kDefaultNumIpcWorkers), num_io_workers_(-1),
-      event_loop_thread_("Server/EL", absl::bind_front(&Server::EventLoopThreadMain, this)),
-      next_http_connection_id_(0), next_grpc_connection_id_(0),
-      next_http_worker_id_(0), next_ipc_worker_id_(0), next_client_id_(1), next_call_id_(0),
-      message_delay_stat_(
-          stat::StatisticsCollector<int32_t>::StandardReportCallback("message_delay")) {
-    UV_DCHECK_OK(uv_loop_init(&uv_loop_));
-    uv_loop_.data = &event_loop_thread_;
-    UV_DCHECK_OK(uv_tcp_init(&uv_loop_, &uv_http_handle_));
+    : engine_conn_port_(-1),
+      http_port_(-1),
+      grpc_port_(-1),
+      listen_backlog_(kDefaultListenBackLog),
+      num_io_workers_(kDefaultNumIOWorkers),
+      max_running_requests_(0),
+      next_http_conn_worker_id_(0),
+      next_grpc_conn_worker_id_(0),
+      next_http_connection_id_(0),
+      next_grpc_connection_id_(0),
+      read_buffer_pool_("HandshakeRead", 128),
+      next_call_id_(1),
+      last_request_timestamp_(-1),
+      incoming_requests_stat_(
+          stat::Counter::StandardReportCallback("incoming_requests")),
+      request_interval_stat_(
+          stat::StatisticsCollector<int32_t>::StandardReportCallback("request_interval")),
+      requests_instant_rps_stat_(
+          stat::StatisticsCollector<float>::StandardReportCallback("requests_instant_rps")),
+      inflight_requests_stat_(
+          stat::StatisticsCollector<uint16_t>::StandardReportCallback("inflight_requests")),
+      running_requests_stat_(
+          stat::StatisticsCollector<uint16_t>::StandardReportCallback("running_requests")),
+      queueing_delay_stat_(
+          stat::StatisticsCollector<int32_t>::StandardReportCallback("queueing_delay")),
+      dispatch_overhead_stat_(
+          stat::StatisticsCollector<int32_t>::StandardReportCallback("dispatch_overhead")) {
+    UV_CHECK_OK(uv_tcp_init(uv_loop(), &uv_engine_conn_handle_));
+    uv_engine_conn_handle_.data = this;
+    UV_CHECK_OK(uv_tcp_init(uv_loop(), &uv_http_handle_));
     uv_http_handle_.data = this;
-    UV_DCHECK_OK(uv_tcp_init(&uv_loop_, &uv_grpc_handle_));
+    UV_CHECK_OK(uv_tcp_init(uv_loop(), &uv_grpc_handle_));
     uv_grpc_handle_.data = this;
-    UV_DCHECK_OK(uv_pipe_init(&uv_loop_, &uv_ipc_handle_, 0));
-    uv_ipc_handle_.data = this;
-    UV_DCHECK_OK(uv_async_init(&uv_loop_, &stop_event_, &Server::StopCallback));
-    stop_event_.data = this;
 }
 
-Server::~Server() {
-    State state = state_.load();
-    DCHECK(state == kCreated || state == kStopped);
-    UV_DCHECK_OK(uv_loop_close(&uv_loop_));
-}
+Server::~Server() {}
 
-void Server::RegisterInternalRequestHandlers() {
-    // POST /shutdown
-    RegisterSyncRequestHandler([] (std::string_view method, std::string_view path) -> bool {
-        return method == "POST" && path == "/shutdown";
-    }, [this] (HttpSyncRequestContext* context) {
-        context->AppendToResponseBody("Server is shutting down\n");
-        ScheduleStop();
-    });
-    // GET /hello
-    RegisterSyncRequestHandler([] (std::string_view method, std::string_view path) -> bool {
-        return method == "GET" && path == "/hello";
-    }, [] (HttpSyncRequestContext* context) {
-        context->AppendToResponseBody("Hello world\n");
-    });
-    // POST /function/[:name]
-    RegisterAsyncRequestHandler([this] (std::string_view method, std::string_view path) -> bool {
-        if (method != "POST" || !absl::StartsWith(path, "/function/")) {
-            return false;
-        }
-        std::string_view func_name = absl::StripPrefix(path, "/function/");
-        const FuncConfig::Entry* func_entry = func_config_.find_by_func_name(func_name);
-        return func_entry != nullptr;
-    }, [this] (std::shared_ptr<HttpAsyncRequestContext> context) {
-        const FuncConfig::Entry* func_entry = func_config_.find_by_func_name(
-            absl::StripPrefix(context->path(), "/function/"));
-        DCHECK(func_entry != nullptr);
-        OnExternalFuncCall(gsl::narrow_cast<uint16_t>(func_entry->func_id), std::move(context));
-    });
-}
-
-void Server::Start() {
-    DCHECK(state_.load() == kCreated);
-    RegisterInternalRequestHandlers();
+void Server::StartInternal() {
     // Load function config file
     CHECK(!func_config_file_.empty());
-    CHECK(func_config_.Load(func_config_file_));
-    // Create shared memory pool
-    CHECK(!shared_mem_path_.empty());
-    if (fs_utils::IsDirectory(shared_mem_path_)) {
-        PCHECK(fs_utils::RemoveDirectoryRecursively(shared_mem_path_));
-    } else if (fs_utils::Exists(shared_mem_path_)) {
-        PCHECK(fs_utils::Remove(shared_mem_path_));
-    }
-    PCHECK(fs_utils::MakeDirectory(shared_mem_path_));
-    shared_memory_ = std::make_unique<utils::SharedMemory>(shared_mem_path_);
+    CHECK(fs_utils::ReadContents(func_config_file_, &func_config_json_))
+        << "Failed to read from file " << func_config_file_;
+    CHECK(func_config_.Load(func_config_json_));
     // Start IO workers
-    if (num_io_workers_ == -1) {
-        CHECK_GT(num_http_workers_, 0);
-        CHECK_GT(num_ipc_workers_, 0);
-        HLOG(INFO) << "Start " << num_http_workers_ << " IO workers for HTTP connections";
-        for (int i = 0; i < num_http_workers_; i++) {
-            auto io_worker = std::make_unique<IOWorker>(this, absl::StrFormat("Http-%d", i),
-                                                        kHttpConnectionBufferSize);
-            InitAndStartIOWorker(io_worker.get());
-            http_workers_.push_back(io_worker.get());
-            io_workers_.push_back(std::move(io_worker));
-        }
-        HLOG(INFO) << "Start " << num_ipc_workers_ << " IO workers for IPC connections";
-        for (int i = 0; i < num_ipc_workers_; i++) {
-            auto io_worker = std::make_unique<IOWorker>(this, absl::StrFormat("Ipc-%d", i),
-                                                        kMessageConnectionBufferSize,
-                                                        kMessageConnectionBufferSize);
-            InitAndStartIOWorker(io_worker.get());
-            ipc_workers_.push_back(io_worker.get());
-            io_workers_.push_back(std::move(io_worker));
-        }
-    } else {
-        CHECK_GT(num_io_workers_, 0);
-        HLOG(INFO) << "Start " << num_io_workers_ << " IO workers for both HTTP and IPC connections";
-        for (int i = 0; i < num_io_workers_; i++) {
-            auto io_worker = std::make_unique<IOWorker>(this, absl::StrFormat("IO-%d", i));
-            InitAndStartIOWorker(io_worker.get());
-            http_workers_.push_back(io_worker.get());
-            ipc_workers_.push_back(io_worker.get());
-            io_workers_.push_back(std::move(io_worker));
-        }
+    CHECK_GT(num_io_workers_, 0);
+    HLOG(INFO) << fmt::format("Start {} IO workers", num_io_workers_);
+    for (int i = 0; i < num_io_workers_; i++) {
+        auto io_worker = CreateIOWorker(fmt::format("IO-{}", i));
+        io_workers_.push_back(io_worker);
     }
-    // Listen on address:port for HTTP requests
     struct sockaddr_in bind_addr;
     CHECK(!address_.empty());
-    CHECK_NE(port_, -1);
-    UV_CHECK_OK(uv_ip4_addr(address_.c_str(), port_, &bind_addr));
+    CHECK_NE(engine_conn_port_, -1);
+    CHECK_NE(http_port_, -1);
+    // Listen on address:engine_conn_port for engine connections
+    UV_CHECK_OK(uv_ip4_addr(address_.c_str(), engine_conn_port_, &bind_addr));
+    UV_CHECK_OK(uv_tcp_bind(&uv_engine_conn_handle_, (const struct sockaddr *)&bind_addr, 0));
+    HLOG(INFO) << fmt::format("Listen on {}:{} for engine connections",
+                              address_, engine_conn_port_);
+    UV_CHECK_OK(uv_listen(
+        UV_AS_STREAM(&uv_engine_conn_handle_), listen_backlog_,
+        &Server::EngineConnectionCallback));
+    // Listen on address:http_port for HTTP requests
+    UV_CHECK_OK(uv_ip4_addr(address_.c_str(), http_port_, &bind_addr));
     UV_CHECK_OK(uv_tcp_bind(&uv_http_handle_, (const struct sockaddr *)&bind_addr, 0));
-    HLOG(INFO) << "Listen on " << address_ << ":" << port_ << " for HTTP requests";
-    UV_DCHECK_OK(uv_listen(
+    HLOG(INFO) << fmt::format("Listen on {}:{} for HTTP requests", address_, http_port_);
+    UV_CHECK_OK(uv_listen(
         UV_AS_STREAM(&uv_http_handle_), listen_backlog_,
         &Server::HttpConnectionCallback));
-    // Listen on address:grpc_port for gRPC requests
-    CHECK_NE(grpc_port_, -1);
+    // Listen on address:grpc_port for HTTP requests
     UV_CHECK_OK(uv_ip4_addr(address_.c_str(), grpc_port_, &bind_addr));
     UV_CHECK_OK(uv_tcp_bind(&uv_grpc_handle_, (const struct sockaddr *)&bind_addr, 0));
-    HLOG(INFO) << "Listen on " << address_ << ":" << grpc_port_ << " for gRPC requests";
+    HLOG(INFO) << fmt::format("Listen on {}:{} for gRPC requests", address_, grpc_port_);
     UV_CHECK_OK(uv_listen(
         UV_AS_STREAM(&uv_grpc_handle_), listen_backlog_,
         &Server::GrpcConnectionCallback));
-    // Listen on ipc_path
-    if (fs_utils::Exists(ipc_path_)) {
-        PCHECK(fs_utils::Remove(ipc_path_));
+}
+
+void Server::StopInternal() {
+    uv_close(UV_AS_HANDLE(&uv_engine_conn_handle_), nullptr);
+    uv_close(UV_AS_HANDLE(&uv_http_handle_), nullptr);
+    uv_close(UV_AS_HANDLE(&uv_grpc_handle_), nullptr);
+}
+
+void Server::OnConnectionClose(server::ConnectionBase* connection) {
+    DCHECK_IN_EVENT_LOOP_THREAD(uv_loop());
+    if (connection->type() == HttpConnection::kTypeId
+          || connection->type() == GrpcConnection::kTypeId) {
+        absl::MutexLock lk(&mu_);
+        DCHECK(connections_.contains(connection->id()));
+        connections_.erase(connection->id());
+    } else if (connection->type() >= EngineConnection::kBaseTypeId) {
+        EngineConnection* engine_connection = connection->as_ptr<EngineConnection>();
+        HLOG(WARNING) << fmt::format("EngineConnection (node_id={}, conn_id={}) disconnected",
+                                     engine_connection->node_id(), engine_connection->conn_id());
+        absl::MutexLock lk(&mu_);
+        DCHECK(engine_connections_.contains(connection->id()));
+        engine_connections_.erase(connection->id());
+    } else {
+        HLOG(FATAL) << "Unreachable";
     }
-    UV_CHECK_OK(uv_pipe_bind(&uv_ipc_handle_, ipc_path_.c_str()));
-    HLOG(INFO) << "Listen on " << ipc_path_ << " for IPC connections";
-    UV_CHECK_OK(uv_listen(
-        UV_AS_STREAM(&uv_ipc_handle_), listen_backlog_,
-        &Server::MessageConnectionCallback));
-    // Start thread for running event loop
-    event_loop_thread_.Start();
-    state_.store(kRunning);
 }
 
-void Server::ScheduleStop() {
-    HLOG(INFO) << "Scheduled to stop";
-    UV_DCHECK_OK(uv_async_send(&stop_event_));
-}
-
-void Server::WaitForFinish() {
-    DCHECK(state_.load() != kCreated);
-    for (const auto& io_worker : io_workers_) {
-        io_worker->WaitForFinish();
+void Server::OnNewHttpFuncCall(HttpConnection* connection, FuncCallContext* func_call_context) {
+    auto func_entry = func_config_.find_by_func_name(func_call_context->func_name());
+    if (func_entry == nullptr) {
+        func_call_context->set_status(FuncCallContext::kNotFound);
+        connection->OnFuncCallFinished(func_call_context);
+        return;
     }
-    event_loop_thread_.Join();
-    DCHECK(state_.load() == kStopped);
-    HLOG(INFO) << "Stopped";
+    FuncCall func_call = NewFuncCall(gsl::narrow_cast<uint16_t>(func_entry->func_id),
+                                     /* client_id= */ 0, next_call_id_.fetch_add(1));
+    VLOG(1) << "OnNewHttpFuncCall: " << FuncCallDebugString(func_call);
+    func_call_context->set_func_call(func_call);
+    OnNewFuncCallCommon(connection->ref_self(), func_call_context);
 }
 
-void Server::RegisterSyncRequestHandler(RequestMatcher matcher, SyncRequestHandler handler) {
-    DCHECK(state_.load() == kCreated);
-    request_handlers_.emplace_back(new RequestHandler(std::move(matcher), std::move(handler)));
-}
-
-void Server::RegisterAsyncRequestHandler(RequestMatcher matcher, AsyncRequestHandler handler) {
-    DCHECK(state_.load() == kCreated);
-    request_handlers_.emplace_back(new RequestHandler(std::move(matcher), std::move(handler)));
-}
-
-bool Server::MatchRequest(std::string_view method, std::string_view path,
-                          const RequestHandler** request_handler) const {
-    for (const std::unique_ptr<RequestHandler>& entry : request_handlers_) {
-        if (entry->matcher_(method, path)) {
-            *request_handler = entry.get();
-            return true;
-        }
+void Server::OnNewGrpcFuncCall(GrpcConnection* connection, FuncCallContext* func_call_context) {
+    auto func_entry = func_config_.find_by_func_name(func_call_context->func_name());
+    std::string method_name(func_call_context->method_name());
+    if (func_entry == nullptr || !func_entry->is_grpc_service
+          || func_entry->grpc_method_ids.count(method_name) == 0) {
+        func_call_context->set_status(FuncCallContext::kNotFound);
+        connection->OnFuncCallFinished(func_call_context);
+        return;
     }
-    return false;
+    FuncCall func_call = NewFuncCallWithMethod(
+        gsl::narrow_cast<uint16_t>(func_entry->func_id),
+        gsl::narrow_cast<uint16_t>(func_entry->grpc_method_ids.at(method_name)),
+        /* client_id= */ 0, next_call_id_.fetch_add(1));
+    VLOG(1) << "OnNewGrpcFuncCall: " << FuncCallDebugString(func_call);
+    func_call_context->set_func_call(func_call);
+    OnNewFuncCallCommon(connection->ref_self(), func_call_context);
 }
 
-void Server::EventLoopThreadMain() {
-    base::Thread::current()->MarkThreadCategory("IO");
-    HLOG(INFO) << "Event loop starts";
-    int ret = uv_run(&uv_loop_, UV_RUN_DEFAULT);
-    if (ret != 0) {
-        HLOG(WARNING) << "uv_run returns non-zero value: " << ret;
-    }
-    HLOG(INFO) << "Event loop finishes";
-    state_.store(kStopped);
+void Server::DiscardFuncCall(FuncCallContext* func_call_context) {
+    absl::MutexLock lk(&mu_);
+    discarded_func_calls_.insert(func_call_context->func_call().full_call_id);
 }
 
-IOWorker* Server::PickHttpWorker() {
-    IOWorker* io_worker = http_workers_[next_http_worker_id_];
-    next_http_worker_id_ = (next_http_worker_id_ + 1) % http_workers_.size();
-    return io_worker;
-}
-
-IOWorker* Server::PickIpcWorker() {
-    IOWorker* io_worker = ipc_workers_[next_ipc_worker_id_];
-    next_ipc_worker_id_ = (next_ipc_worker_id_ + 1) % ipc_workers_.size();
-    return io_worker;
-}
-
-namespace {
-void PipeReadBufferAllocCallback(uv_handle_t* handle, size_t suggested_size, uv_buf_t* buf) {
-    size_t buf_size = 256;
-    buf->base = reinterpret_cast<char*>(malloc(buf_size));
-    buf->len = buf_size;
-}
-}
-
-void Server::InitAndStartIOWorker(IOWorker* io_worker) {
-    int pipe_fd_for_worker;
-    pipes_to_io_worker_[io_worker] = CreatePipeToWorker(&pipe_fd_for_worker);
-    uv_pipe_t* pipe_to_worker = pipes_to_io_worker_[io_worker].get();
-    UV_CHECK_OK(uv_read_start(UV_AS_STREAM(pipe_to_worker),
-                              &PipeReadBufferAllocCallback,
-                              &Server::ReturnConnectionCallback));
-    io_worker->Start(pipe_fd_for_worker);
-}
-
-std::unique_ptr<uv_pipe_t> Server::CreatePipeToWorker(int* pipe_fd_for_worker) {
-    int pipe_fds[2] = { -1, -1 };
-    CHECK_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, pipe_fds), 0);
-    std::unique_ptr<uv_pipe_t> pipe_to_worker = std::make_unique<uv_pipe_t>();
-    UV_CHECK_OK(uv_pipe_init(&uv_loop_, pipe_to_worker.get(), 1));
-    pipe_to_worker->data = this;
-    UV_CHECK_OK(uv_pipe_open(pipe_to_worker.get(), pipe_fds[0]));
-    *pipe_fd_for_worker = pipe_fds[1];
-    return pipe_to_worker;
-}
-
-void Server::TransferConnectionToWorker(IOWorker* io_worker, Connection* connection,
-                                        uv_stream_t* send_handle) {
-    DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
-    uv_write_t* write_req = connection->uv_write_req_for_transfer();
-    size_t buf_len = sizeof(void*);
-    char* buf = connection->pipe_write_buf_for_transfer();
-    memcpy(buf, &connection, buf_len);
-    uv_buf_t uv_buf = uv_buf_init(buf, buf_len);
-    uv_pipe_t* pipe_to_worker = pipes_to_io_worker_[io_worker].get();
-    write_req->data = send_handle;
-    UV_DCHECK_OK(uv_write2(write_req, UV_AS_STREAM(pipe_to_worker),
-                           &uv_buf, 1, UV_AS_STREAM(send_handle),
-                           &PipeWrite2Callback));
-}
-
-void Server::ReturnConnection(Connection* connection) {
-    DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
-    if (connection->type() == Connection::Type::Http) {
-        HttpConnection* http_connection = static_cast<HttpConnection*>(connection);
-        DCHECK(http_connections_.contains(http_connection));
-        http_connections_.erase(http_connection);
-    } else if (connection->type() == Connection::Type::Grpc) {
-        GrpcConnection* grpc_connection = static_cast<GrpcConnection*>(connection);
-        DCHECK(grpc_connections_.contains(grpc_connection));
-        grpc_connections_.erase(grpc_connection);
-    } else if (connection->type() == Connection::Type::Message) {
-        MessageConnection* message_connection = static_cast<MessageConnection*>(connection);
+void Server::OnRecvEngineMessage(EngineConnection* src_connection, const GatewayMessage& message,
+                                 std::span<const char> payload) {
+    int64_t current_timestamp = GetMonotonicMicroTimestamp();
+    if (IsFuncCallCompleteMessage(message)
+            || IsFuncCallFailedMessage(message)) {
+        FuncCall func_call = GetFuncCallFromMessage(message);
+        FuncCallContext* func_call_context = nullptr;
+        std::shared_ptr<server::ConnectionBase> connection;
+        FuncCallContext* next_func_call = nullptr;
+        std::shared_ptr<server::ConnectionBase> next_connection;
+        uint16_t node_id = 0;
         {
-            absl::MutexLock lk(&message_connection_mu_);
-            if (message_connection->client_id() > 0) {
-                // Non-zero client_id indicates handshake has done
-                DCHECK(message_connections_by_client_id_.contains(message_connection->client_id()));
-                message_connections_by_client_id_.erase(message_connection->client_id());
-                if (message_connection->role() == Role::WATCHDOG) {
-                    uint16_t func_id = message_connection->func_id();
-                    if (watchdog_connections_by_func_id_.contains(func_id)) {
-                        if (watchdog_connections_by_func_id_[func_id] == connection) {
-                            watchdog_connections_by_func_id_.erase(func_id);
+            absl::MutexLock lk(&mu_);
+            if (running_func_calls_.contains(func_call.full_call_id)) {
+                const FuncCallState& full_call_state = running_func_calls_[func_call.full_call_id];
+                // Check if corresponding connection is still active
+                if (connections_.contains(full_call_state.connection_id)
+                      && !discarded_func_calls_.contains(func_call.full_call_id)) {
+                    connection = connections_[full_call_state.connection_id];
+                    func_call_context = full_call_state.context;
+                }
+                if (discarded_func_calls_.contains(func_call.full_call_id)) {
+                    discarded_func_calls_.erase(func_call.full_call_id);
+                }
+                dispatch_overhead_stat_.AddSample(gsl::narrow_cast<int32_t>(
+                    current_timestamp - full_call_state.dispatch_timestamp - message.processing_time));
+                running_func_calls_.erase(func_call.full_call_id);
+                FuncCallState state;
+                if (max_running_requests_ == 0 || running_func_calls_.size() < max_running_requests_) {
+                    while (!pending_func_calls_.empty()) {
+                        state = std::move(pending_func_calls_.front());
+                        pending_func_calls_.pop();
+                        if (discarded_func_calls_.contains(state.func_call.full_call_id)) {
+                            discarded_func_calls_.erase(state.func_call.full_call_id);
+                            continue;
                         }
-                    } else {
-                        HLOG(WARNING) << "Cannot find watchdog connection of func_id " << func_id;
+                        if (connections_.contains(state.connection_id)) {
+                            next_connection = connections_[state.connection_id];
+                            next_func_call = state.context;
+                            break;
+                        }
                     }
                 }
-            }
-            message_connections_.erase(message_connection);
-        }
-        HLOG(INFO) << "A MessageConnection is returned";
-    } else {
-        LOG(FATAL) << "Unknown connection type!";
-    }
-}
-
-void Server::OnNewHandshake(MessageConnection* connection,
-                            const HandshakeMessage& message, HandshakeResponse* response) {
-    HLOG(INFO) << "Receive new handshake message from message connection";
-    uint16_t client_id = next_client_id_.fetch_add(1);
-    if (client_id > kMaxClientId) {
-        HLOG(FATAL) << "Reach max client_id " << kMaxClientId;
-    }
-    response->status = gsl::narrow_cast<uint16_t>(Status::OK);
-    response->client_id = client_id;
-    {
-        absl::MutexLock lk(&message_connection_mu_);
-        message_connections_by_client_id_[client_id] = connection;
-        if (gsl::narrow_cast<Role>(message.role) == Role::WATCHDOG) {
-            if (watchdog_connections_by_func_id_.contains(message.func_id)) {
-                HLOG(ERROR) << "Watchdog for func_id " << message.func_id << " already exists";
-                response->status = gsl::narrow_cast<uint16_t>(Status::WATCHDOG_EXISTS);
-            } else {
-                watchdog_connections_by_func_id_[message.func_id] = connection;
-            }
-        }
-    }
-}
-
-class Server::ExternalFuncCallContext {
-public:
-    ExternalFuncCallContext(FuncCall call, std::shared_ptr<HttpAsyncRequestContext> http_context)
-        : call_(call), http_context_(http_context), grpc_context_(nullptr),
-          input_region_(nullptr), output_region_(nullptr) {}
-    
-    ExternalFuncCallContext(FuncCall call, std::shared_ptr<GrpcCallContext> grpc_context)
-        : call_(call), http_context_(nullptr), grpc_context_(grpc_context),
-          input_region_(nullptr), output_region_(nullptr) {}
-    
-    ~ExternalFuncCallContext() {
-        if (input_region_ != nullptr) {
-            input_region_->Close(true);
-        }
-        if (output_region_ != nullptr) {
-            output_region_->Close(true);
-        }
-    }
-
-    const FuncCall& call() const { return call_; }
-
-    void CreateInputRegion(utils::SharedMemory* shared_memory) {
-        if (http_context_ != nullptr) {
-            std::span<const char> body = http_context_->body();
-            input_region_ = shared_memory->Create(
-                utils::SharedMemory::InputPath(call_.full_call_id), body.size());
-            memcpy(input_region_->base(), body.data(), body.size());
-        }
-        if (grpc_context_ != nullptr) {
-            std::span<const char> body = grpc_context_->request_body();
-            input_region_ = shared_memory->Create(
-                utils::SharedMemory::InputPath(call_.full_call_id), body.size());
-            char* buf = input_region_->base();
-            if (body.size() > 0) {
-                memcpy(buf, body.data(), body.size());
-            }
-        }
-    }
-
-    void WriteOutput(utils::SharedMemory* shared_memory) {
-        output_region_ = shared_memory->OpenReadOnly(
-            shared_memory->OutputPath(call_.full_call_id));
-        if (http_context_ != nullptr) {
-            http_context_->AppendToResponseBody(output_region_->to_span());
-        }
-        if (grpc_context_ != nullptr) {
-            grpc_context_->AppendToResponseBody(output_region_->to_span());
-        }
-    }
-
-    bool CheckInputNotEmpty() {
-        if (http_context_ != nullptr && http_context_->body().size() == 0) {
-            http_context_->AppendToResponseBody("Request body cannot be empty!\n");
-            http_context_->SetStatus(400);
-            Finish();
-            return false;
-        }
-        // gRPC allows empty input (when protobuf serialized to empty string)
-        // However, the actual input buffer will not be empty because method name
-        // is appended.
-        return true;
-    }
-
-    void FinishWithError() {
-        if (http_context_ != nullptr) {
-            http_context_->AppendToResponseBody("Function call failed\n");
-            http_context_->SetStatus(500);
-        }
-        if (grpc_context_ != nullptr) {
-            grpc_context_->set_grpc_status(GrpcStatus::UNKNOWN);
-        }
-        Finish();
-    }
-
-    void FinishWithWatchdogNotFound() {
-        if (http_context_ != nullptr) {
-            http_context_->AppendToResponseBody(
-                absl::StrFormat("Cannot find watchdog for func_id %d\n", call_.func_id));
-            http_context_->SetStatus(404);
-        }
-        if (grpc_context_ != nullptr) {
-            grpc_context_->set_grpc_status(GrpcStatus::UNIMPLEMENTED);
-        }
-        Finish();
-    }
-
-    void Finish() {
-        if (http_context_ != nullptr) {
-            http_context_->Finish();
-        }
-        if (grpc_context_ != nullptr) {
-            grpc_context_->Finish();
-        }
-    }
-
-private:
-    FuncCall call_;
-    std::shared_ptr<HttpAsyncRequestContext> http_context_;
-    std::shared_ptr<GrpcCallContext> grpc_context_;
-    utils::SharedMemory::Region* input_region_;
-    utils::SharedMemory::Region* output_region_;
-
-    DISALLOW_COPY_AND_ASSIGN(ExternalFuncCallContext);
-};
-
-void Server::OnRecvMessage(MessageConnection* connection, const Message& message) {
-#ifdef __FAAS_ENABLE_PROFILING
-    message_delay_stat_.AddSample(gsl::narrow_cast<int32_t>(
-        GetMonotonicMicroTimestamp() - message.send_timestamp));
-#endif
-    MessageType type{message.message_type};
-    if (type == MessageType::INVOKE_FUNC) {
-        uint16_t func_id = message.func_call.func_id;
-        absl::MutexLock lk(&message_connection_mu_);
-        if (watchdog_connections_by_func_id_.contains(func_id)) {
-            MessageConnection* connection = watchdog_connections_by_func_id_[func_id];
-            connection->WriteMessage({
-#ifdef __FAAS_ENABLE_PROFILING
-                .send_timestamp = GetMonotonicMicroTimestamp(),
-                .processing_time = 0,
-#endif
-                .message_type = gsl::narrow_cast<uint16_t>(MessageType::INVOKE_FUNC),
-                .func_call = message.func_call
-            });
-        } else {
-            HLOG(ERROR) << "Cannot find message connection of watchdog with func_id " << func_id;
-        }
-    } else if (type == MessageType::FUNC_CALL_COMPLETE || type == MessageType::FUNC_CALL_FAILED) {
-        uint16_t client_id = message.func_call.client_id;
-        if (client_id > 0) {
-            absl::MutexLock lk(&message_connection_mu_);
-            if (message_connections_by_client_id_.contains(client_id)) {
-                MessageConnection* connection = message_connections_by_client_id_[client_id];
-                connection->WriteMessage({
-#ifdef __FAAS_ENABLE_PROFILING
-                    .send_timestamp = GetMonotonicMicroTimestamp(),
-                    .processing_time = message.processing_time,
-#endif
-                    .message_type = gsl::narrow_cast<uint16_t>(type),
-                    .func_call = message.func_call
-                });
-            } else {
-                HLOG(ERROR) << "Cannot find message connection with client_id " << client_id;
-            }
-        } else {
-            absl::MutexLock lk(&external_func_calls_mu_);
-            uint64_t full_call_id = message.func_call.full_call_id;
-            if (external_func_calls_.contains(full_call_id)) {
-                ExternalFuncCallContext* func_call_context = external_func_calls_[full_call_id].get();
-                if (type == MessageType::FUNC_CALL_COMPLETE) {
-                    func_call_context->WriteOutput(shared_memory_.get());
-                    func_call_context->Finish();
-                } else if (type == MessageType::FUNC_CALL_FAILED) {
-                    func_call_context->FinishWithError();
+                inflight_requests_per_node_[src_connection->node_id()]--;
+                if (next_func_call != nullptr) {
+                    FuncCall func_call = next_func_call->func_call();
+                    state.dispatch_timestamp = current_timestamp;
+                    queueing_delay_stat_.AddSample(gsl::narrow_cast<int32_t>(
+                        current_timestamp - state.recv_timestamp));
+                    running_func_calls_[func_call.full_call_id] = std::move(state);
+                    node_id = PickNextNode(func_call);
+                    running_requests_stat_.AddSample(
+                        gsl::narrow_cast<uint16_t>(running_func_calls_.size()));
                 }
-                external_func_calls_.erase(full_call_id);
+            }
+        }
+        if (func_call_context != nullptr) {
+            if (IsFuncCallCompleteMessage(message)) {
+                func_call_context->set_status(FuncCallContext::kSuccess);
+                func_call_context->append_output(payload);
+            } else if (IsFuncCallFailedMessage(message)) {
+                func_call_context->set_status(FuncCallContext::kFailed);
             } else {
-                HLOG(ERROR) << "Cannot find external call with func_id=" << message.func_call.func_id << ", "
-                            << "call_id=" << message.func_call.call_id;
+                HLOG(FATAL) << "Unreachable";
+            }
+            FinishFuncCall(std::move(connection), func_call_context);
+        }
+        if (next_func_call != nullptr) {
+            DispatchFuncCall(std::move(next_connection), next_func_call, node_id);
+        }
+    } else {
+        HLOG(ERROR) << "Unknown engine message type";
+    }
+}
+
+Server::PerFuncStat::PerFuncStat(uint16_t func_id)
+    : last_request_timestamp(-1),
+      incoming_requests_stat(stat::Counter::StandardReportCallback(
+          fmt::format("incoming_requests[{}]", func_id))),
+      request_interval_stat(stat::StatisticsCollector<int32_t>::StandardReportCallback(
+          fmt::format("request_interval[{}]", func_id))) {}
+
+void Server::TickNewFuncCall(uint16_t func_id, int64_t current_timestamp) {
+    if (!per_func_stats_.contains(func_id)) {
+        per_func_stats_[func_id] = std::unique_ptr<PerFuncStat>(new PerFuncStat(func_id));
+    }
+    PerFuncStat* per_func_stat = per_func_stats_[func_id].get();
+    per_func_stat->incoming_requests_stat.Tick();
+    if (current_timestamp <= per_func_stat->last_request_timestamp) {
+        current_timestamp = per_func_stat->last_request_timestamp + 1;
+    }
+    if (last_request_timestamp_ != -1) {
+        per_func_stat->request_interval_stat.AddSample(gsl::narrow_cast<int32_t>(
+            current_timestamp - per_func_stat->last_request_timestamp));
+    }
+    per_func_stat->last_request_timestamp = current_timestamp;
+}
+
+uint16_t Server::PickNextNode(const protocol::FuncCall& func_call) {
+    size_t idx;
+    if (absl::GetFlag(FLAGS_lb_per_fn_round_robin)) {
+        idx = next_dispatch_node_idx_[func_call.func_id];
+        next_dispatch_node_idx_[func_call.func_id] = (idx + 1) % connected_nodes_.size();
+    } else if (absl::GetFlag(FLAGS_lb_pick_least_load)) {
+        idx = 0;
+        for (size_t i = 1; i < connected_nodes_.size(); i++) {
+            if (inflight_requests_per_node_[connected_nodes_[i]]
+                  < inflight_requests_per_node_[connected_nodes_[idx]]) {
+                idx = i;
             }
         }
     } else {
-        LOG(ERROR) << "Unknown message type!";
+        idx = absl::Uniform<size_t>(random_bit_gen_, 0, connected_nodes_.size());
     }
+    dispatched_requests_stat_[idx]->Tick();
+    uint16_t node_id = connected_nodes_[idx];
+    inflight_requests_per_node_[node_id]++;
+    return node_id;
 }
 
-void Server::OnNewGrpcCall(std::shared_ptr<GrpcCallContext> call_context) {
-    const FuncConfig::Entry* func_entry = func_config_.find_by_func_name(
-        absl::StrFormat("grpc:%s", call_context->service_name()));
-    std::string method_name(call_context->method_name());
-    if (func_entry == nullptr
-          || func_entry->grpc_method_ids.count(method_name) == 0) {
-        call_context->set_grpc_status(GrpcStatus::NOT_FOUND);
-        call_context->Finish();
-        return;
-    }
-    NewExternalFuncCall(std::unique_ptr<ExternalFuncCallContext>(
-        new ExternalFuncCallContext(NewFuncCall(func_entry->func_id,
-                                                func_entry->grpc_method_ids.at(method_name)),
-                                    std::move(call_context))));
-}
-
-FuncCall Server::NewFuncCall(uint16_t func_id, uint16_t method_id) {
-    FuncCall call;
-    call.func_id = func_id;
-    call.method_id = method_id;
-    call.client_id = 0;
-    call.call_id = next_call_id_.fetch_add(1);
-    return call;
-}
-
-void Server::OnExternalFuncCall(uint16_t func_id, std::shared_ptr<HttpAsyncRequestContext> http_context) {
-    NewExternalFuncCall(std::unique_ptr<ExternalFuncCallContext>(
-        new ExternalFuncCallContext(NewFuncCall(func_id), std::move(http_context))));
-}
-
-void Server::NewExternalFuncCall(std::unique_ptr<ExternalFuncCallContext> func_call_context) {
-    if (!func_call_context->CheckInputNotEmpty()) {
-        return;
-    }
-    func_call_context->CreateInputRegion(shared_memory_.get());
-    uint16_t func_id = func_call_context->call().func_id;
+void Server::OnNewFuncCallCommon(std::shared_ptr<server::ConnectionBase> parent_connection,
+                                 FuncCallContext* func_call_context) {
+    FuncCall func_call = func_call_context->func_call();
+    uint16_t node_id = 0;
+    bool server_overloaded = false;
+    bool no_connected_nodes = false;
     {
-        absl::MutexLock lk(&message_connection_mu_);
-        if (watchdog_connections_by_func_id_.contains(func_id)) {
-            MessageConnection* connection = watchdog_connections_by_func_id_[func_id];
-            connection->WriteMessage({
-#ifdef __FAAS_ENABLE_PROFILING
-                .send_timestamp = GetMonotonicMicroTimestamp(),
-                .processing_time = 0,
-#endif
-                .message_type = gsl::narrow_cast<uint16_t>(MessageType::INVOKE_FUNC),
-                .func_call = func_call_context->call()
-            });
+        absl::MutexLock lk(&mu_);
+        int64_t current_timestamp = GetMonotonicMicroTimestamp();
+        incoming_requests_stat_.Tick();
+        if (current_timestamp <= last_request_timestamp_) {
+            current_timestamp = last_request_timestamp_ + 1;
+        }
+        if (last_request_timestamp_ != -1) {
+            requests_instant_rps_stat_.AddSample(gsl::narrow_cast<float>(
+                1e6 / (current_timestamp - last_request_timestamp_)));
+            request_interval_stat_.AddSample(gsl::narrow_cast<int32_t>(
+                current_timestamp - last_request_timestamp_));
+        }
+        last_request_timestamp_ = current_timestamp;
+        TickNewFuncCall(func_call.func_id, current_timestamp);
+        if (connected_nodes_.size() == 0) {
+            no_connected_nodes = true;
         } else {
-            HLOG(WARNING) << "Watchdog for func_id " << func_id << " not found";
-            func_call_context->FinishWithWatchdogNotFound();
-            return;
+            FuncCallState state = {
+                .func_call = func_call,
+                .connection_id = parent_connection->id(),
+                .context = func_call_context,
+                .recv_timestamp = current_timestamp,
+                .dispatch_timestamp = 0
+            };
+            if (max_running_requests_ > 0 && running_func_calls_.size() >= max_running_requests_) {
+                pending_func_calls_.push(std::move(state));
+                server_overloaded = true;
+            } else {
+                state.dispatch_timestamp = current_timestamp;
+                running_func_calls_[func_call.full_call_id] = std::move(state);
+                node_id = PickNextNode(func_call);
+                running_requests_stat_.AddSample(
+                    gsl::narrow_cast<uint16_t>(running_func_calls_.size()));
+            }
+            inflight_requests_stat_.AddSample(
+                gsl::narrow_cast<uint16_t>(running_func_calls_.size() + pending_func_calls_.size()));
         }
     }
-    {
-        absl::MutexLock lk(&external_func_calls_mu_);
-        external_func_calls_[func_call_context->call().full_call_id] = std::move(func_call_context);
+    if (server_overloaded) {
+        return;
     }
+    if (no_connected_nodes) {
+        HLOG(ERROR) << "There is no node connected";
+        func_call_context->set_status(FuncCallContext::kNoNode);
+        FinishFuncCall(std::move(parent_connection), func_call_context);
+    } else {
+        DispatchFuncCall(std::move(parent_connection), func_call_context, node_id);
+    }
+}
+
+void Server::DispatchFuncCall(std::shared_ptr<server::ConnectionBase> parent_connection,
+                              FuncCallContext* func_call_context, uint16_t node_id) {
+    FuncCall func_call = func_call_context->func_call();
+    server::IOWorker* io_worker = server::IOWorker::current();
+    DCHECK(io_worker != nullptr);
+    server::ConnectionBase* engine_connection = io_worker->PickConnection(
+        EngineConnection::type_id(node_id));
+    if (engine_connection != nullptr) {
+        GatewayMessage dispatch_message = NewDispatchFuncCallGatewayMessage(func_call);
+        dispatch_message.payload_size = func_call_context->input().size();
+        engine_connection->as_ptr<EngineConnection>()->SendMessage(
+            dispatch_message, func_call_context->input());
+    } else {
+        HLOG(WARNING) << "There is no engine connection for node_id=" << node_id;
+        {
+            absl::MutexLock lk(&mu_);
+            DCHECK(running_func_calls_.contains(func_call.full_call_id));
+            running_func_calls_.erase(func_call.full_call_id);
+        }
+        func_call_context->set_status(FuncCallContext::kNotFound);
+        FinishFuncCall(std::move(parent_connection), func_call_context);
+    }
+}
+
+void Server::FinishFuncCall(std::shared_ptr<server::ConnectionBase> parent_connection,
+                            FuncCallContext* func_call_context) {
+    switch (parent_connection->type()) {
+    case HttpConnection::kTypeId:
+        parent_connection->as_ptr<HttpConnection>()->OnFuncCallFinished(func_call_context);
+        break;
+    case GrpcConnection::kTypeId:
+        parent_connection->as_ptr<GrpcConnection>()->OnFuncCallFinished(func_call_context);
+        break;
+    default:
+        HLOG(FATAL) << "Unreachable";
+    }
+}
+
+bool Server::OnEngineHandshake(uv_tcp_t* uv_handle, std::span<const char> data) {
+    DCHECK_IN_EVENT_LOOP_THREAD(uv_loop());
+    DCHECK_GE(data.size(), sizeof(GatewayMessage));
+    const GatewayMessage* message = reinterpret_cast<const GatewayMessage*>(data.data());
+    if (!IsEngineHandshakeMessage(*message)) {
+        HLOG(ERROR) << "Unexpected engine handshake message";
+        return false;
+    }
+    uint16_t node_id = message->node_id;
+    uint16_t conn_id = message->conn_id;
+    std::span<const char> remaining_data(data.data() + sizeof(GatewayMessage),
+                                         data.size() - sizeof(GatewayMessage));
+    std::shared_ptr<server::ConnectionBase> connection(
+        new EngineConnection(this, node_id, conn_id, remaining_data));
+    if (!connected_node_set_.contains(node_id)) {
+        connected_node_set_.insert(node_id);
+        absl::MutexLock lk(&mu_);
+        connected_nodes_.push_back(node_id);
+        dispatched_requests_stat_.emplace_back(new stat::Counter(
+            stat::Counter::StandardReportCallback(fmt::format("dispatched_requests[{}]", node_id))));
+        HLOG(INFO) << "Number of connected nodes: " << connected_nodes_.size();
+        max_running_requests_ = absl::GetFlag(FLAGS_max_running_requests) * connected_nodes_.size();
+    }
+    size_t worker_id = conn_id % io_workers_.size();
+    HLOG(INFO) << fmt::format("New engine connection (node_id={}, conn_id={}) assigned to IO worker {}",
+                              node_id, conn_id, worker_id);
+    server::IOWorker* io_worker = io_workers_[worker_id];
+    RegisterConnection(io_worker, connection.get(), UV_AS_STREAM(uv_handle));
+    DCHECK_GE(connection->id(), 0);
+    DCHECK(!engine_connections_.contains(connection->id()));
+    engine_connections_[connection->id()] = std::move(connection);
+    return true;
 }
 
 UV_CONNECTION_CB_FOR_CLASS(Server, HttpConnection) {
@@ -554,13 +426,21 @@ UV_CONNECTION_CB_FOR_CLASS(Server, HttpConnection) {
         HLOG(WARNING) << "Failed to open HTTP connection: " << uv_strerror(status);
         return;
     }
-    std::unique_ptr<HttpConnection> connection = std::make_unique<HttpConnection>(
-        this, next_http_connection_id_++);
+    std::shared_ptr<server::ConnectionBase> connection(
+        new HttpConnection(this, next_http_connection_id_++));
     uv_tcp_t* client = reinterpret_cast<uv_tcp_t*>(malloc(sizeof(uv_tcp_t)));
-    UV_DCHECK_OK(uv_tcp_init(&uv_loop_, client));
+    UV_DCHECK_OK(uv_tcp_init(uv_loop(), client));
     if (uv_accept(UV_AS_STREAM(&uv_http_handle_), UV_AS_STREAM(client)) == 0) {
-        TransferConnectionToWorker(PickHttpWorker(), connection.get(), UV_AS_STREAM(client));
-        http_connections_.insert(std::move(connection));
+        DCHECK_LT(next_http_conn_worker_id_, io_workers_.size());
+        server::IOWorker* io_worker = io_workers_[next_http_conn_worker_id_];
+        next_http_conn_worker_id_ = (next_http_conn_worker_id_ + 1) % io_workers_.size();
+        RegisterConnection(io_worker, connection.get(), UV_AS_STREAM(client));
+        DCHECK_GE(connection->id(), 0);
+        {
+            absl::MutexLock lk(&mu_);
+            DCHECK(!connections_.contains(connection->id()));
+            connections_[connection->id()] = std::move(connection);
+        }
     } else {
         LOG(ERROR) << "Failed to accept new HTTP connection";
         free(client);
@@ -572,83 +452,112 @@ UV_CONNECTION_CB_FOR_CLASS(Server, GrpcConnection) {
         HLOG(WARNING) << "Failed to open gRPC connection: " << uv_strerror(status);
         return;
     }
-    std::unique_ptr<GrpcConnection> connection = std::make_unique<GrpcConnection>(
-        this, next_grpc_connection_id_++);
+    std::shared_ptr<server::ConnectionBase> connection(
+        new GrpcConnection(this, next_grpc_connection_id_++));
     uv_tcp_t* client = reinterpret_cast<uv_tcp_t*>(malloc(sizeof(uv_tcp_t)));
-    UV_DCHECK_OK(uv_tcp_init(&uv_loop_, client));
+    UV_DCHECK_OK(uv_tcp_init(uv_loop(), client));
     if (uv_accept(UV_AS_STREAM(&uv_grpc_handle_), UV_AS_STREAM(client)) == 0) {
-        TransferConnectionToWorker(PickHttpWorker(), connection.get(), UV_AS_STREAM(client));
-        grpc_connections_.insert(std::move(connection));
+        DCHECK_LT(next_grpc_conn_worker_id_, io_workers_.size());
+        server::IOWorker* io_worker = io_workers_[next_grpc_conn_worker_id_];
+        next_grpc_conn_worker_id_ = (next_grpc_conn_worker_id_ + 1) % io_workers_.size();
+        RegisterConnection(io_worker, connection.get(), UV_AS_STREAM(client));
+        DCHECK_GE(connection->id(), 0);
+        {
+            absl::MutexLock lk(&mu_);
+            DCHECK(!connections_.contains(connection->id()));
+            connections_[connection->id()] = std::move(connection);
+        }
     } else {
         LOG(ERROR) << "Failed to accept new gRPC connection";
         free(client);
     }
 }
 
-UV_CONNECTION_CB_FOR_CLASS(Server, MessageConnection) {
+class Server::OngoingEngineHandshake : public uv::Base {
+public:
+    OngoingEngineHandshake(Server* server, uv_tcp_t* uv_handle);
+    ~OngoingEngineHandshake();
+
+private:
+    Server* server_;
+    uv_tcp_t* uv_handle_;
+    utils::AppendableBuffer read_buffer_;
+
+    void OnReadHandshakeMessage();
+    void OnReadError();
+
+    DECLARE_UV_ALLOC_CB_FOR_CLASS(BufferAlloc);
+    DECLARE_UV_READ_CB_FOR_CLASS(ReadMessage);
+
+    DISALLOW_COPY_AND_ASSIGN(OngoingEngineHandshake);
+};
+
+UV_CONNECTION_CB_FOR_CLASS(Server, EngineConnection) {
     if (status != 0) {
-        HLOG(WARNING) << "Failed to open message connection: " << uv_strerror(status);
+        HLOG(WARNING) << "Failed to open engine connection: " << uv_strerror(status);
         return;
     }
-    HLOG(INFO) << "New message connection";
-    std::unique_ptr<MessageConnection> connection = std::make_unique<MessageConnection>(this);
-    uv_pipe_t* client = reinterpret_cast<uv_pipe_t*>(malloc(sizeof(uv_pipe_t)));
-    UV_DCHECK_OK(uv_pipe_init(&uv_loop_, client, 0));
-    if (uv_accept(UV_AS_STREAM(&uv_ipc_handle_), UV_AS_STREAM(client)) == 0) {
-        TransferConnectionToWorker(PickIpcWorker(), connection.get(),
-                                   UV_AS_STREAM(client));
-        message_connections_.insert(std::move(connection));
+    uv_tcp_t* client = reinterpret_cast<uv_tcp_t*>(malloc(sizeof(uv_tcp_t)));
+    UV_DCHECK_OK(uv_tcp_init(uv_loop(), client));
+    if (uv_accept(UV_AS_STREAM(&uv_engine_conn_handle_), UV_AS_STREAM(client)) == 0) {
+        ongoing_engine_handshakes_.insert(std::unique_ptr<OngoingEngineHandshake>(
+            new OngoingEngineHandshake(this, client)));
     } else {
-        LOG(ERROR) << "Failed to accept new message connection";
+        LOG(ERROR) << "Failed to accept new engine connection";
         free(client);
     }
 }
 
-UV_READ_CB_FOR_CLASS(Server, ReturnConnection) {
-    if (nread < 0) {
-        if (nread == UV_EOF) {
-            HLOG(WARNING) << "Pipe is closed by the corresponding IO worker";
-        } else {
-            HLOG(ERROR) << "Failed to read from pipe: " << uv_strerror(nread);
-        }
-    } else if (nread > 0) {
-        utils::ReadMessages<Connection*>(
-            &return_connection_read_buffer_, buf->base, nread,
-            [this] (Connection** connection) {
-                ReturnConnection(*connection);
-            });
-    }
-    free(buf->base);
+Server::OngoingEngineHandshake::OngoingEngineHandshake(Server* server, uv_tcp_t* uv_handle)
+    : server_(server), uv_handle_(uv_handle) {
+    uv_handle_->data = this;
+    UV_DCHECK_OK(uv_read_start(UV_AS_STREAM(uv_handle_),
+                               &OngoingEngineHandshake::BufferAllocCallback,
+                               &OngoingEngineHandshake::ReadMessageCallback));
 }
 
-UV_ASYNC_CB_FOR_CLASS(Server, Stop) {
-    if (state_.load(std::memory_order_consume) == kStopping) {
-        HLOG(WARNING) << "Already in stopping state";
+Server::OngoingEngineHandshake::~OngoingEngineHandshake() {
+    if (uv_handle_ != nullptr) {
+        LOG(INFO) << "Close uv_handle for dead engine connection";
+        uv_close(UV_AS_HANDLE(uv_handle_), uv::HandleFreeCallback);
+    }
+}
+
+void Server::OngoingEngineHandshake::OnReadHandshakeMessage() {
+    if (server_->OnEngineHandshake(uv_handle_, read_buffer_.to_span())) {
+        uv_handle_ = nullptr;
+    }
+    server_->ongoing_engine_handshakes_.erase(this);
+}
+
+void Server::OngoingEngineHandshake::OnReadError() {
+    server_->ongoing_engine_handshakes_.erase(this);
+}
+
+UV_ALLOC_CB_FOR_CLASS(Server::OngoingEngineHandshake, BufferAlloc) {
+    server_->read_buffer_pool_.Get(buf);
+}
+
+UV_READ_CB_FOR_CLASS(Server::OngoingEngineHandshake, ReadMessage) {
+    auto reclaim_resource = gsl::finally([server = server_, buf] {
+        if (buf->base != 0) {
+            server->read_buffer_pool_.Return(buf);
+        }
+    });
+    if (nread < 0) {
+        HLOG(ERROR) << "Read error on handshake: " << uv_strerror(nread);
+        OnReadError();
         return;
     }
-    HLOG(INFO) << "Start stopping process";
-    for (const auto& io_worker : io_workers_) {
-        io_worker->ScheduleStop();
-        uv_pipe_t* pipe = pipes_to_io_worker_[io_worker.get()].get();
-        UV_DCHECK_OK(uv_read_stop(UV_AS_STREAM(pipe)));
-        uv_close(UV_AS_HANDLE(pipe), nullptr);
+    if (nread == 0) {
+        HLOG(WARNING) << "nread=0, will do nothing";
+        return;
     }
-    uv_close(UV_AS_HANDLE(&uv_http_handle_), nullptr);
-    uv_close(UV_AS_HANDLE(&uv_grpc_handle_), nullptr);
-    uv_close(UV_AS_HANDLE(&uv_ipc_handle_), nullptr);
-    uv_close(UV_AS_HANDLE(&stop_event_), nullptr);
-    state_.store(kStopping);
-}
-
-namespace {
-void HandleFreeCallback(uv_handle_t* handle) {
-    free(handle);
-}
-}
-
-UV_WRITE_CB_FOR_CLASS(Server, PipeWrite2) {
-    DCHECK(status == 0) << "Failed to write to pipe: " << uv_strerror(status);
-    uv_close(UV_AS_HANDLE(req->data), HandleFreeCallback);
+    read_buffer_.AppendData(buf->base, nread);
+    if (read_buffer_.length() >= sizeof(GatewayMessage)) {
+        UV_DCHECK_OK(uv_read_stop(UV_AS_STREAM(uv_handle_)));
+        OnReadHandshakeMessage();
+    }
 }
 
 }  // namespace gateway

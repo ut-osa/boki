@@ -1,5 +1,6 @@
 #include "base/init.h"
 #include "base/common.h"
+#include "ipc/base.h"
 #include "utils/env_variables.h"
 #include "worker/v1/func_worker.h"
 
@@ -9,25 +10,24 @@ int main(int argc, char* argv[]) {
     if (positional_args.size() != 1) {
         LOG(FATAL) << "The only positional argument should be path to the function library";
     }
-    if (faas::utils::GetEnvVariableAsInt("ASYNC_MODE", 0) != 0) {
-        LOG(FATAL) << "This function worker cannot be used in async mode";
-    }
+    faas::ipc::SetRootPathForIpc(
+        faas::utils::GetEnvVariable("FAAS_ROOT_PATH_FOR_IPC", "/dev/shm/faas_ipc"));
 
     auto func_worker = std::make_unique<faas::worker_v1::FuncWorker>();
-    func_worker->set_gateway_ipc_path(
-        faas::utils::GetEnvVariable("GATEWAY_IPC_PATH", "/tmp/faas_gateway"));
     func_worker->set_func_id(
-        faas::utils::GetEnvVariableAsInt("FUNC_ID", -1));
+        faas::utils::GetEnvVariableAsInt("FAAS_FUNC_ID", -1));
+    func_worker->set_fprocess_id(
+        faas::utils::GetEnvVariableAsInt("FAAS_FPROCESS_ID", -1));
+    func_worker->set_client_id(
+        faas::utils::GetEnvVariableAsInt("FAAS_CLIENT_ID", 0));
+    func_worker->set_message_pipe_fd(
+        faas::utils::GetEnvVariableAsInt("FAAS_MSG_PIPE_FD", -1));
+    if (faas::utils::GetEnvVariableAsInt("FAAS_USE_ENGINE_SOCKET", 0) == 1) {
+        func_worker->enable_use_engine_socket();
+    }
+    func_worker->set_engine_tcp_port(
+        faas::utils::GetEnvVariableAsInt("FAAS_ENGINE_TCP_PORT", -1));
     func_worker->set_func_library_path(positional_args[0]);
-    func_worker->set_input_pipe_fd(
-        faas::utils::GetEnvVariableAsInt("INPUT_PIPE_FD", -1));
-    func_worker->set_output_pipe_fd(
-        faas::utils::GetEnvVariableAsInt("OUTPUT_PIPE_FD", -1));
-    func_worker->set_shared_mem_path(
-        faas::utils::GetEnvVariable("SHARED_MEMORY_PATH", "/dev/shm/faas"));
-    func_worker->set_func_config_file(
-        faas::utils::GetEnvVariable("FUNC_CONFIG_FILE"));
-
     func_worker->Serve();
 
     return 0;

@@ -19,15 +19,15 @@
 
 #ifdef __FAAS_SRC
 
+#include <absl/synchronization/mutex.h>
 #include <absl/synchronization/notification.h>
 #include "base/thread.h"
 
 #else  // __FAAS_SRC
 
 #include <sys/syscall.h>
-#include "base/absl_mutex_polyfill.h"
 
-pid_t gettid() {
+static pid_t __gettid() {
     return syscall(SYS_gettid);
 }
 
@@ -99,7 +99,7 @@ LogMessage::LogMessage(const char* file, int line, LogSeverity severity, bool ap
 #ifdef __FAAS_SRC
     sprintf(buffer+21, " %-8.8s", base::Thread::current()->name());
 #else
-    sprintf(buffer+21, " %d", static_cast<int>(gettid()));
+    sprintf(buffer+21, " %d", static_cast<int>(__gettid()));
 #endif
     stream() << fmt::format("{} {}:{}] ", buffer, filename, line);
 }
@@ -124,10 +124,14 @@ LogMessageFatal::~LogMessageFatal() {
     exit(EXIT_FAILURE);
 }
 
+#ifdef __FAAS_SRC
 absl::Mutex stderr_mu;
+#endif
 
 void LogMessage::SendToLog(const std::string& message_text) {
+#ifdef __FAAS_SRC
     absl::MutexLock lk(&stderr_mu);
+#endif
     fprintf(stderr, "%s\n", message_text.c_str());
     fflush(stderr);
 }

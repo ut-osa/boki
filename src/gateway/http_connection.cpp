@@ -2,7 +2,9 @@
 
 #include "common/time.h"
 #include "gateway/server.h"
-#include "gateway/io_worker.h"
+
+#include <nlohmann/json.hpp>
+using json = nlohmann::json;
 
 #define HLOG(l) LOG(l) << log_header_
 #define HVLOG(l) VLOG(l) << log_header_
@@ -10,14 +12,9 @@
 namespace faas {
 namespace gateway {
 
-constexpr const char* HttpConnection::kDefaultContentType;
-
 HttpConnection::HttpConnection(Server* server, int connection_id)
-    : Connection(Connection::Type::Http, server),
-      connection_id_(connection_id), io_worker_(nullptr),
-      state_(kCreated), log_header_(absl::StrFormat("HttpConnection[%d]: ", connection_id)),
-      within_async_request_(false),
-      finished_event_recv_timestamp_(0) {
+    : server::ConnectionBase(kTypeId), server_(server), io_worker_(nullptr), state_(kCreated),
+      log_header_(fmt::format("HttpConnection[{}]: ", connection_id)) {
     http_parser_init(&http_parser_, HTTP_REQUEST);
     http_parser_.data = this;
     http_parser_settings_init(&http_parser_settings_);
@@ -39,7 +36,7 @@ uv_stream_t* HttpConnection::InitUVHandle(uv_loop_t* uv_loop) {
     return UV_AS_STREAM(&uv_tcp_handle_);
 }
 
-void HttpConnection::Start(IOWorker* io_worker) {
+void HttpConnection::Start(server::IOWorker* io_worker) {
     DCHECK(state_ == kCreated);
     DCHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
     io_worker_ = io_worker;
@@ -56,11 +53,6 @@ void HttpConnection::ScheduleClose() {
         return;
     }
     DCHECK(state_ == kRunning);
-    if (within_async_request_) {
-        async_request_context_->OnConnectionClose();
-        async_request_context_ = nullptr;
-        within_async_request_ = false;
-    }
     uv_close(UV_AS_HANDLE(&uv_tcp_handle_), &HttpConnection::CloseCallback);
     state_ = kClosing;
 }
@@ -93,10 +85,9 @@ UV_READ_CB_FOR_CLASS(HttpConnection, RecvData) {
     });
     if (nread < 0) {
         if (nread == UV_EOF || nread == UV_ECONNRESET) {
-            HLOG(INFO) << "HttpConnection closed by client";
+            VLOG(1) << "HttpConnection closed by client";
         } else {
-            HLOG(WARNING) << "Read error, will close the connection: "
-                          << uv_strerror(nread);
+            HLOG(WARNING) << "Read error, will close the connection: " << uv_strerror(nread);
         }
         ScheduleClose();
         return;
@@ -109,9 +100,8 @@ UV_READ_CB_FOR_CLASS(HttpConnection, RecvData) {
     size_t length = gsl::narrow_cast<size_t>(nread);
     size_t parsed = http_parser_execute(&http_parser_, &http_parser_settings_, data, length);
     if (parsed < length) {
-        HLOG(WARNING) << "HTTP parsing failed: "
-                      << http_errno_name(static_cast<http_errno>(http_parser_.http_errno))
-                      << ",  will close the connection";
+        HLOG(WARNING) << fmt::format("HTTP parsing failed: {}, will close the connection",
+                                     http_errno_name(static_cast<http_errno>(http_parser_.http_errno)));
         ScheduleClose();
     }
 }
@@ -185,6 +175,78 @@ static bool ReadParsedUrlField(const http_parser_url* parsed_url, http_parser_ur
         return true;
     }
 }
+
+static int to_hex(char ch) {
+    if ('0' <= ch && ch <= '9') {
+        return ch - '0';
+    } else if ('A' <= ch && ch <= 'F') {
+        return ch - 'A' + 10;
+    } else if ('a' <= ch && ch <= 'f') {
+        return ch - 'a' + 10;
+    } else {
+        return -1;
+    }
+}
+
+static bool ParseQueryStringPart(std::string_view data, std::string* field, std::string* value) {
+    field->clear();
+    value->clear();
+    std::string* current = field;
+    for (size_t i = 0; i < data.size(); i++) {
+        char ch = data[i];
+        if (ch == '=') {
+            if (current == field) {
+                current = value;
+                continue;
+            } else {
+                return false;
+            }
+        }
+        if (('A' <= ch && ch <= 'Z') || ('a' <= ch && ch <= 'z')
+              || ('0' <= ch && ch <= '9')
+              || ch == '~' || ch == '-' || ch == '.' || ch == '_') {
+            current->push_back(ch);
+            continue;
+        }
+        if (ch == '+') {
+            current->push_back(' ');
+            continue;
+        }
+        if (ch == '%') {
+            if (i + 2 >= data.size()) {
+                return false;
+            }
+            int a = to_hex(data[i+1]);
+            int b = to_hex(data[i+2]);
+            if (a == -1 || b == -1) {
+                return false;
+            }
+            current->push_back(gsl::narrow_cast<char>(a * 16 + b));
+            i += 2;
+            continue;
+        }
+        return false;
+    }
+    if (current != value) {
+        return false;
+    }
+    return true;
+}
+
+static std::string QueryStringToJSON(std::string_view qs) {
+    json data;
+    std::string field;
+    std::string value;
+    std::vector<std::string_view> parts = absl::StrSplit(qs, '&', absl::SkipEmpty());
+    for (std::string_view part : parts) {
+        if (!ParseQueryStringPart(part, &field, &value)) {
+            LOG(WARNING) << "Invalid query string part: " << part;
+        } else {
+            data[field] = value;
+        }
+    }
+    return std::string(data.dump());
+}
 }
 
 void HttpConnection::HttpParserOnMessageComplete() {
@@ -202,7 +264,12 @@ void HttpConnection::HttpParserOnMessageComplete() {
         ScheduleClose();
         return;
     }
-    OnNewHttpRequest(http_method_str(static_cast<http_method>(http_parser_.method)), path);
+    std::string_view qs;
+    if (ReadParsedUrlField(&parsed_url, UF_QUERY, url_buffer_.data(), &qs)) {
+        OnNewHttpRequest(http_method_str(static_cast<http_method>(http_parser_.method)), path, qs);
+    } else {
+        OnNewHttpRequest(http_method_str(static_cast<http_method>(http_parser_.method)), path);
+    }
     ResetHttpParser();   
 }
 
@@ -221,110 +288,97 @@ void HttpConnection::ResetHttpParser() {
     http_parser_init(&http_parser_, HTTP_REQUEST);
 }
 
-void HttpConnection::OnNewHttpRequest(std::string_view method, std::string_view path) {
+void HttpConnection::OnNewHttpRequest(std::string_view method, std::string_view path,
+                                      std::string_view qs) {
     DCHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
     HVLOG(1) << "New HTTP request: " << method << " " << path;
-    response_status_ = 200;
-    response_content_type_ = kDefaultContentType;
-    response_body_buffer_.Reset();
-    const Server::RequestHandler* request_handler;
-    if (!server_->MatchRequest(method, path, &request_handler)) {
-        response_status_ = 404;
-        SendHttpResponse();
+
+    if (!(method == "GET" || method == "POST") || !absl::StartsWith(path, "/function/")) {
+        SendHttpResponse(HttpStatus::NOT_FOUND);
         return;
     }
-    if (request_handler->async()) {
-        if (async_request_context_ == nullptr) {
-            async_request_context_.reset(new HttpAsyncRequestContext());
+    std::string_view func_name = absl::StripPrefix(path, "/function/");
+    auto func_entry = server_->func_config()->find_by_func_name(func_name);
+    if (func_entry == nullptr || (!func_entry->allow_http_get && method == "GET")) {
+        SendHttpResponse(HttpStatus::NOT_FOUND);
+        return;
+    }
+
+    func_call_context_.Reset();
+    func_call_context_.set_func_name(func_name);
+    if (func_entry->qs_as_input) {
+        if (body_buffer_.length() > 0) {
+            HLOG(WARNING) << "Body not empty, but qsAsInput is set for func " << func_name;
         }
-        HttpAsyncRequestContext* context = async_request_context_.get();
-        context->method_ = std::string(method);
-        context->path_ = std::string(path);
-        for (const auto& item : headers_) {
-            context->headers_[std::string(item.first)] = std::string(item.second);
-        }
-        context->body_buffer_.Swap(body_buffer_);
-        context->status_ = 200;
-        context->content_type_ = kDefaultContentType;
-        context->response_body_buffer_.Swap(response_body_buffer_);
-        context->connection_ = this;
-        within_async_request_ = true;
-        request_handler->CallAsync(async_request_context_);
+        std::string encoded_json(QueryStringToJSON(qs));
+        func_call_context_.append_input(std::span<const char>(encoded_json.data(),
+                                                              encoded_json.length()));
     } else {
-        HttpSyncRequestContext context;
-        context.method_ = method;
-        context.path_ = path;
-        context.headers_ = &headers_;
-        context.body_ = body_buffer_.to_span();
-        context.status_ = &response_status_;
-        context.content_type_ = &response_content_type_;
-        context.response_body_buffer_ = &response_body_buffer_;
-        request_handler->CallSync(&context);
-        SendHttpResponse();
+        func_call_context_.append_input(body_buffer_.to_span());
+    }
+    server_->OnNewHttpFuncCall(this, &func_call_context_);
+}
+
+void HttpConnection::OnFuncCallFinished(FuncCallContext* func_call_context) {
+    DCHECK(func_call_context == &func_call_context_);
+    io_worker_->ScheduleFunction(
+        this, absl::bind_front(&HttpConnection::OnFuncCallFinishedInternal, this));
+}
+
+void HttpConnection::SendHttpResponse(HttpStatus status, std::span<const char> body) {
+    DCHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
+    response_header_ = fmt::format(
+        "HTTP/1.1 {}\r\n"
+        "Date: {}\r\n"
+        "Server: {}\r\n"
+        "Connection: Keep-Alive\r\n"
+        "Content-Type: {}\r\n"
+        "Content-Length: {}\r\n"
+        "\r\n",
+        GetHttpStatusString(status),
+        absl::FormatTime(absl::RFC1123_full, absl::Now(), absl::UTCTimeZone()),
+        kServerString,
+        kResponseContentType,
+        body.size()
+    );
+    if (body.size() > 0) {
+        uv_buf_t bufs[] = {
+            { .base = const_cast<char*>(response_header_.data()), .len = response_header_.length() },
+            { .base = const_cast<char*>(body.data()), .len = body.size() }
+        };
+        UV_DCHECK_OK(uv_write(&response_write_req_, UV_AS_STREAM(&uv_tcp_handle_),
+                              bufs, 2, &HttpConnection::DataWrittenCallback));
+    } else {
+        uv_buf_t buf = {
+            .base = const_cast<char*>(response_header_.data()),
+            .len = response_header_.length()
+        };
+        UV_DCHECK_OK(uv_write(&response_write_req_, UV_AS_STREAM(&uv_tcp_handle_),
+                              &buf, 1, &HttpConnection::DataWrittenCallback));
     }
 }
 
-void HttpConnection::OnAsyncRequestFinish() {
-    HttpAsyncRequestContext* context = async_request_context_.get();
-    DCHECK(context != nullptr);
-    if (!within_async_request_) {
-        HLOG(WARNING) << "HttpConnection is closing or has closed, will not handle the finish of async request";
-        return;
-    }
-    context->body_buffer_.Swap(body_buffer_);
-    response_status_ = context->status_;
-    response_content_type_ = context->content_type_;
-    context->response_body_buffer_.Swap(response_body_buffer_);
-    within_async_request_ = false;
+void HttpConnection::OnFuncCallFinishedInternal() {
+    DCHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
     if (state_ != kRunning) {
         HLOG(WARNING) << "HttpConnection is closing or has closed, will not send response";
         return;
     }
-    SendHttpResponse();
-}
-
-void HttpConnection::AsyncRequestFinish(HttpAsyncRequestContext* context) {
-    io_worker_->ScheduleFunction(
-        this, absl::bind_front(&HttpConnection::OnAsyncRequestFinish, this));
-}
-
-void HttpConnection::SendHttpResponse() {
-    DCHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
-    HVLOG(1) << "Send HTTP response with status " << response_status_;
-    static const char* CRLF = "\r\n";
-    std::ostringstream header;
-    header << "HTTP/1.1 " << response_status_ << " ";
-    switch (response_status_) {
-    case 200:
-        header << "OK";
+    switch (func_call_context_.status()) {
+    case FuncCallContext::kSuccess:
+        SendHttpResponse(HttpStatus::OK, func_call_context_.output());
         break;
-    case 400:
-        header << "Bad Request";
+    case FuncCallContext::kNotFound:
+        SendHttpResponse(HttpStatus::NOT_FOUND);
         break;
-    case 404:
-        header << "Not Found";
-        break;
-    case 500:
-        header << "Internal Server Error";
+    case FuncCallContext::kNoNode:
+    case FuncCallContext::kFailed:
+        SendHttpResponse(HttpStatus::INTERNAL_SERVER_ERROR);
         break;
     default:
-        LOG(FATAL) << "Unsupported status code " << response_status_;
+        HLOG(ERROR) << "Invalid FuncCallContext status, will close the connection";
+        ScheduleClose();
     }
-    header << CRLF;
-    header << "Date: " << absl::FormatTime(absl::RFC1123_full, absl::Now(), absl::UTCTimeZone()) << CRLF;
-    header << "Server: FaaS/0.1" << CRLF;
-    header << "Content-Type: " << response_content_type_ << CRLF;
-    header << "Content-Length: " << response_body_buffer_.length() << CRLF;
-    header << "HttpConnection: Keep-Alive" << CRLF;
-    header << CRLF;
-    response_header_buffer_.Reset();
-    response_header_buffer_.AppendData(header.str());
-    uv_buf_t bufs[] = {
-        { .base = response_header_buffer_.data(), .len = response_header_buffer_.length() },
-        { .base = response_body_buffer_.data(), .len = response_body_buffer_.length() }
-    };
-    UV_DCHECK_OK(uv_write(&response_write_req_, UV_AS_STREAM(&uv_tcp_handle_),
-                          bufs, 2, &HttpConnection::DataWrittenCallback));
 }
 
 int HttpConnection::HttpParserOnMessageBeginCallback(http_parser* http_parser) {

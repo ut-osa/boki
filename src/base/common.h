@@ -64,10 +64,8 @@
 // Will not include common absl headers in source files
 // with __FAAS_USED_IN_BINDING defined
 
-#include <absl/base/call_once.h>
 #include <absl/time/time.h>
 #include <absl/time/clock.h>
-#include <absl/strings/str_format.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/match.h>
 #include <absl/strings/strip.h>
@@ -89,4 +87,3 @@
 #include "base/macro.h"
 #include "base/logging.h"
 #include "base/std_span_polyfill.h"
-#include "base/absl_mutex_polyfill.h"

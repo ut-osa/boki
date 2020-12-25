@@ -4,12 +4,9 @@
 #include "utils/fs.h"
 
 #include <nlohmann/json.hpp>
-
 using json = nlohmann::json;
 
 namespace faas {
-
-constexpr int FuncConfig::kMaxFuncId;
 
 namespace {
 bool StartsWith(std::string_view s, std::string_view prefix) {
@@ -54,12 +51,7 @@ bool FuncConfig::ValidateFuncName(std::string_view func_name) {
     return true;
 }
 
-bool FuncConfig::Load(std::string_view json_path) {
-    std::string json_contents;
-    if (!fs_utils::ReadContents(json_path, &json_contents)) {
-        LOG(ERROR) << "Failed to read from file " << json_path;
-        return false;
-    }
+bool FuncConfig::Load(std::string_view json_contents) {
     json config;
 #ifndef __FAAS_CXX_NO_EXCEPTIONS
     try {
@@ -98,6 +90,16 @@ bool FuncConfig::Load(std::string_view json_path) {
             auto entry = std::make_unique<Entry>();
             entry->func_name = func_name;
             entry->func_id = func_id;
+            entry->min_workers = -1;
+            entry->max_workers = -1;
+            if (item.contains("minWorkers")) {
+                entry->min_workers = item.at("minWorkers").get<int>();
+            }
+            if (item.contains("maxWorkers")) {
+                entry->max_workers = item.at("maxWorkers").get<int>();
+            }
+            entry->allow_http_get = false;
+            entry->qs_as_input = false;
             entry->is_grpc_service = false;
             if (StartsWith(func_name, "grpc:")) {
                 std::string_view service_name = StripPrefix(func_name, "grpc:");
@@ -132,6 +134,14 @@ bool FuncConfig::Load(std::string_view json_path) {
             } else {
                 LOG(INFO) << "Load configuration for function " << func_name
                           << "[" << func_id << "]";
+                if (item.contains("allowHttpGet") && item.at("allowHttpGet").get<bool>()) {
+                    LOG(INFO) << "Allow HTTP GET enabled for " << func_name;
+                    entry->allow_http_get = true;
+                }
+                if (item.contains("qsAsInput") && item.at("qsAsInput").get<bool>()) {
+                    LOG(INFO) << "Query string used as input for " << func_name;
+                    entry->qs_as_input = true;
+                }
             }
             entires_by_func_name_[func_name] = entry.get();
             entries_by_func_id_[func_id] = entry.get();
