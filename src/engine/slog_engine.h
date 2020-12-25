@@ -45,6 +45,8 @@ private:
     absl::flat_hash_map</* full_call_id */ uint64_t, FuncCallContext>
         func_call_ctx_ ABSL_GUARDED_BY(func_ctx_mu_);
 
+    std::atomic<uint32_t> known_fsm_progress_;
+
     absl::Mutex mu_;
 
     log::EngineCore core_ ABSL_GUARDED_BY(mu_);
@@ -94,7 +96,19 @@ private:
         uint64_t seqnum;
         LogOp* append_op;
     };
-    absl::InlinedVector<CompletedLogEntry, 8> completed_log_entries_ ABSL_GUARDED_BY(mu_);
+    absl::InlinedVector<CompletedLogEntry, 8>
+        completed_log_entries_ ABSL_GUARDED_BY(mu_);
+
+    struct PendingRequest {
+        bool local;
+        FuncCallContext ctx;
+        protocol::Message message;
+    };
+    absl::Mutex request_mu_;
+    utils::SimpleObjectPool<PendingRequest>
+        pending_request_pool_ ABSL_GUARDED_BY(request_mu_);
+    std::multimap</* min_fsm_progress */ uint32_t, PendingRequest*>
+        pending_requests_ ABSL_GUARDED_BY(request_mu_);
 
     Timer* statecheck_timer_;
 
@@ -113,13 +127,18 @@ private:
     void LocalCutTimerTriggered();
     void StateCheckTimerTriggered();
 
+    void HandleRemoteRequest(const protocol::Message& message);
     void HandleRemoteAppend(const protocol::Message& message);
     void HandleRemoteReplicate(const protocol::Message& message);
     void HandleRemoteReadAt(const protocol::Message& message);
     void HandleRemoteRead(const protocol::Message& message);
 
-    void HandleLocalAppend(const protocol::Message& message);
-    void HandleLocalRead(const protocol::Message& message, int direction);
+    void HandleLocalRequest(const FuncCallContext& ctx,
+                            const protocol::Message& message);
+    void HandleLocalAppend(const FuncCallContext& ctx,
+                           const protocol::Message& message);
+    void HandleLocalRead(const FuncCallContext& ctx,
+                         const protocol::Message& message, int direction);
 
     void RemoteOpFinished(const protocol::Message& response);
     void RemoteAppendFinished(const protocol::Message& message, LogOp* op);
@@ -141,6 +160,10 @@ private:
     void LogEntryCompleted(CompletedLogEntry entry, uint32_t fsm_progress);
     void RetryAppendOpIfDoable(LogOp* op);
     void RecordLogOpCompletion(LogOp* op);
+
+    void HoldLocalRequest(const FuncCallContext& ctx, const protocol::Message& message);
+    void HoldRemoteRequest(const protocol::Message& message);
+    void ProcessOnHoldRequest(uint32_t fsm_progress);
 
     void SendFailedResponse(const protocol::Message& request,
                             protocol::SharedLogResultType result);

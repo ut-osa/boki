@@ -369,21 +369,24 @@ public:
         message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
         message.log_op = static_cast<uint16_t>(SharedLogOpType::APPEND);
         message.log_tag = log_tag;
+        message.log_fsm_progress = 0;
         message.log_client_data = log_client_data;
         return message;
     }
 
-    static Message NewSharedLogReadAt(uint64_t log_seqnum, uint64_t log_client_data) {
+    static Message NewSharedLogReadAt(uint64_t log_seqnum, uint32_t log_fsm_progress,
+                                      uint64_t log_client_data) {
         NEW_EMPTY_MESSAGE(message);
         message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
         message.log_op = static_cast<uint16_t>(SharedLogOpType::READ_AT);
         message.log_seqnum = log_seqnum;
+        message.log_fsm_progress = log_fsm_progress;
         message.log_client_data = log_client_data;
         return message;
     }
 
     static Message NewSharedLogRead(uint64_t log_tag, uint64_t log_seqnum, int direction,
-                                    uint64_t log_client_data) {
+                                    uint32_t log_fsm_progress, uint64_t log_client_data) {
         NEW_EMPTY_MESSAGE(message);
         message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
         if (direction > 0) {
@@ -394,6 +397,7 @@ public:
         }
         message.log_tag = log_tag;
         message.log_seqnum = log_seqnum;
+        message.log_fsm_progress = log_fsm_progress;
         message.log_client_data = log_client_data;
         return message;
     }
@@ -404,6 +408,7 @@ public:
         message.log_op = static_cast<uint16_t>(SharedLogOpType::REPLICATE);
         message.log_tag = log_tag;
         message.log_localid = log_localid;
+        message.log_fsm_progress = 0;
         return message;
     }
 
