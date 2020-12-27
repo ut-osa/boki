@@ -45,7 +45,7 @@ private:
     absl::flat_hash_map</* full_call_id */ uint64_t, FuncCallContext>
         func_call_ctx_ ABSL_GUARDED_BY(func_ctx_mu_);
 
-    std::atomic<uint32_t> known_fsm_progress_;
+    std::atomic<uint32_t> known_fsm_progress_[log::EngineCore::kTotalProgressKinds];
 
     absl::Mutex mu_;
 
@@ -104,11 +104,12 @@ private:
         FuncCallContext ctx;
         protocol::Message message;
     };
-    absl::Mutex request_mu_;
+    absl::Mutex pending_requests_mu_;
     utils::SimpleObjectPool<PendingRequest>
-        pending_request_pool_ ABSL_GUARDED_BY(request_mu_);
-    std::multimap</* min_fsm_progress */ uint32_t, PendingRequest*>
-        pending_requests_ ABSL_GUARDED_BY(request_mu_);
+        pending_request_pool_ ABSL_GUARDED_BY(pending_requests_mu_);
+    std::multimap</* min_progress */ uint32_t, PendingRequest*>
+        pending_requests_[log::EngineCore::kTotalProgressKinds]
+        ABSL_GUARDED_BY(pending_requests_mu_);
 
     Timer* statecheck_timer_;
 
@@ -161,9 +162,9 @@ private:
     void RetryAppendOpIfDoable(LogOp* op);
     void RecordLogOpCompletion(LogOp* op);
 
-    void HoldLocalRequest(const FuncCallContext& ctx, const protocol::Message& message);
-    void HoldRemoteRequest(const protocol::Message& message);
-    void ProcessOnHoldRequest(uint32_t fsm_progress);
+    bool CheckForFsmProgress(log::EngineCore::FsmProgressKind kind,
+                             const FuncCallContext* local_ctx, const protocol::Message& message);
+    void ProcessOnHoldRequests(log::EngineCore::FsmProgressKind kind, uint32_t fsm_progress);
 
     void SendFailedResponse(const protocol::Message& request,
                             protocol::SharedLogResultType result);

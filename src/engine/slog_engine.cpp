@@ -14,6 +14,8 @@ ABSL_FLAG(bool, slog_engine_fast_append, false, "");
 namespace faas {
 namespace engine {
 
+using log::EngineCore;
+
 using protocol::Message;
 using protocol::MessageHelper;
 using protocol::SharedLogOpType;
@@ -41,6 +43,9 @@ SLogEngine::SLogEngine(Engine* engine)
     // } else {
     //     HLOG(FATAL) << "Unknown storage backend: " << storage_backend;
     // }
+    for (int i = 0; i < EngineCore::kTotalProgressKinds; i++) {
+        known_fsm_progress_[i].store(0);
+    }
     SetupTimers();
 }
 
@@ -121,7 +126,7 @@ inline void FillReadLogResponse(uint64_t seqnum, const std::string& data,
 
 void SLogEngine::SetupTimers() {
     size_t n_workers = engine_->io_workers_.size();
-    absl::Duration duration = log::EngineCore::local_cut_interval();
+    absl::Duration duration = EngineCore::local_cut_interval();
     absl::Time initial = absl::Now() + absl::Milliseconds(200);
     for (IOWorker* io_worker : engine_->io_workers_) {
         engine_->CreatePeriodicTimer(
@@ -170,18 +175,28 @@ void SLogEngine::OnSequencerMessage(const SequencerMessage& message,
             return;
         }
         absl::InlinedVector<CompletedLogEntry, 8> completed_log_entries;
-        uint32_t fsm_progress;
+        uint32_t fsm_progress[EngineCore::kTotalProgressKinds];
         {
             absl::MutexLock lk(&mu_);
             core_.OnNewFsmRecordsMessage(message_proto);
-            fsm_progress = core_.fsm_progress();
             completed_log_entries_.swap(completed_log_entries);
+            for (int i = 0; i < EngineCore::kTotalProgressKinds; i++) {
+                fsm_progress[i] = core_.fsm_progress(
+                    static_cast<EngineCore::FsmProgressKind>(i));
+            }
         }
-        known_fsm_progress_.store(fsm_progress, std::memory_order_release);
         for (const CompletedLogEntry& entry : completed_log_entries) {
-            LogEntryCompleted(entry, fsm_progress);
+            LogEntryCompleted(entry, fsm_progress[EngineCore::kStorageProgress]);
         }
-        ProcessOnHoldRequest(fsm_progress);
+        for (int i = 0; i < EngineCore::kTotalProgressKinds; i++) {
+            uint32_t old_progress = known_fsm_progress_[i].exchange(
+                fsm_progress[i], std::memory_order_release);
+            DCHECK_LE(old_progress, fsm_progress[i]);
+            if (old_progress < fsm_progress[i]) {
+                ProcessOnHoldRequests(static_cast<EngineCore::FsmProgressKind>(i),
+                                      fsm_progress[i]);
+            }
+        }
     } else {
         HLOG(ERROR) << fmt::format("Unknown message type: {}!", message.message_type);
     }
@@ -215,28 +230,12 @@ void SLogEngine::OnMessageFromOtherEngine(const Message& message) {
         RemoteOpFinished(message);
         return;
     }
-    uint32_t fsm_progress = known_fsm_progress_.load(std::memory_order_relaxed);
-    if (fsm_progress < message.log_fsm_progress) {
-        absl::ReaderMutexLock lk(&mu_);
-        if (core_.fsm_progress() < message.log_fsm_progress) {
-            HoldRemoteRequest(message);
-        }
-        return;
-    }
     HandleRemoteRequest(message);
 }
 
 void SLogEngine::OnMessageFromFuncWorker(const Message& message) {
     DCHECK(MessageHelper::IsSharedLogOp(message));
     FuncCallContext ctx = GetFuncContext(MessageHelper::GetFuncCall(message));
-    uint32_t fsm_progress = known_fsm_progress_.load(std::memory_order_relaxed);
-    if (fsm_progress < ctx.fsm_progress) {
-        absl::ReaderMutexLock lk(&mu_);
-        if (core_.fsm_progress() < ctx.fsm_progress) {
-            HoldLocalRequest(ctx, message);
-        }
-        return;
-    }
     HandleLocalRequest(ctx, message);
 }
 
@@ -374,7 +373,7 @@ void SLogEngine::HandleLocalRead(const FuncCallContext& ctx,
         bool success = false;
         {
             absl::ReaderMutexLock lk(&mu_);
-            fsm_progress = core_.fsm_progress();
+            fsm_progress = core_.fsm_progress(EngineCore::kStorageProgress);
             if (direction > 0) {
                 success = core_.fsm()->FindNextSeqnum(
                     message.log_seqnum, &seqnum, &view, &primary_node_id);
@@ -443,7 +442,7 @@ void SLogEngine::RemoteAppendFinished(const protocol::Message& message, LogOp* o
         bool known;
         {
             absl::MutexLock lk(&mu_);
-            fsm_progress = core_.fsm_progress();
+            fsm_progress = core_.fsm_progress(EngineCore::kStorageProgress);
             known = core_.fsm()->ConvertLocalId(localid, &seqnum);
             if (!known) {
                 core_.AddWaitForReplication(op->log_tag, localid);
@@ -611,7 +610,7 @@ void SLogEngine::NewReadLogOp(LogOp* op) {
         uint32_t fsm_progress;
         {
             absl::ReaderMutexLock lk(&mu_);
-            fsm_progress = core_.fsm_progress();
+            fsm_progress = core_.fsm_progress(EngineCore::kStorageProgress);
             DCHECK_GE(fsm_progress, op->min_fsm_progress);
             view = core_.fsm()->view_with_id(view_id);
             if (view == nullptr && direction < 0) {
@@ -758,35 +757,46 @@ void SLogEngine::RecordLogOpCompletion(LogOp* op) {
                             elapsed_time, op->hop_times);
 }
 
-void SLogEngine::HoldLocalRequest(const FuncCallContext& ctx,
-                                  const protocol::Message& message) {
-    absl::MutexLock lk(&request_mu_);
+bool SLogEngine::CheckForFsmProgress(EngineCore::FsmProgressKind kind,
+                                     const FuncCallContext* local_ctx,
+                                     const protocol::Message& message) {
+    uint32_t min_fsm_progress = (local_ctx != nullptr) ? local_ctx->fsm_progress
+                                                       : message.log_fsm_progress;
+    if (min_fsm_progress == 0) {
+        return true;
+    }
+    uint32_t fsm_progress = known_fsm_progress_[kind].load(std::memory_order_relaxed);
+    if (fsm_progress >= min_fsm_progress) {
+        return true;
+    }
+    absl::ReaderMutexLock lk1(&mu_);
+    if (core_.fsm_progress(kind) >= min_fsm_progress) {
+        return true;
+    }
+    absl::MutexLock lk2(&pending_requests_mu_);
     PendingRequest* request = pending_request_pool_.Get();
-    request->local = true;
-    request->ctx = ctx;
+    if (local_ctx != nullptr) {
+        request->local = true;
+        request->ctx = *local_ctx;
+    } else {
+        request->local = false;
+    }
     memcpy(&request->message, &message, sizeof(protocol::Message));
-    pending_requests_.insert(std::make_pair(ctx.fsm_progress, request));
-}
-    
-void SLogEngine::HoldRemoteRequest(const protocol::Message& message) {
-    absl::MutexLock lk(&request_mu_);
-    PendingRequest* request = pending_request_pool_.Get();
-    request->local = false;
-    memcpy(&request->message, &message, sizeof(protocol::Message));
-    pending_requests_.insert(std::make_pair(message.log_fsm_progress, request));
+    pending_requests_[kind].insert(std::make_pair(min_fsm_progress, request));
+    return false;
 }
 
-void SLogEngine::ProcessOnHoldRequest(uint32_t fsm_progress) {
+void SLogEngine::ProcessOnHoldRequests(EngineCore::FsmProgressKind kind, uint32_t fsm_progress) {
     absl::InlinedVector<PendingRequest*, 8> requests;
     {
-        absl::MutexLock lk(&request_mu_);
-        auto iter = pending_requests_.begin();
-        while (iter != pending_requests_.end()) {
+        absl::MutexLock lk(&pending_requests_mu_);
+        auto iter = pending_requests_[kind].begin();
+        while (iter != pending_requests_[kind].end()) {
             if (fsm_progress < iter->first) {
                 break;
             }
             requests.push_back(iter->second);
-            iter = pending_requests_.erase(iter);
+            iter = pending_requests_[kind].erase(iter);
         }
     }
     if (requests.empty()) {
@@ -800,7 +810,7 @@ void SLogEngine::ProcessOnHoldRequest(uint32_t fsm_progress) {
         }
     }
     {
-        absl::MutexLock lk(&request_mu_);
+        absl::MutexLock lk(&pending_requests_mu_);
         for (PendingRequest* request : requests) {
             pending_request_pool_.Return(request);
         }

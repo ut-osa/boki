@@ -13,8 +13,7 @@ EngineCore::EngineCore(uint16_t my_node_id)
     : my_node_id_(my_node_id),
       local_cut_interval_us_(absl::GetFlag(FLAGS_slog_local_cut_interval_us)),
       next_localid_(0),
-      log_progress_dirty_(false),
-      tag_index_(new TagIndex()) {
+      log_progress_dirty_(false) {
     fsm_.SetNewViewCallback(absl::bind_front(&EngineCore::OnFsmNewView, this));
     fsm_.SetLogReplicatedCallback(absl::bind_front(&EngineCore::OnFsmLogReplicated, this));
 }
@@ -23,6 +22,17 @@ EngineCore::~EngineCore() {}
 
 absl::Duration EngineCore::local_cut_interval() {
     return absl::Microseconds(absl::GetFlag(FLAGS_slog_local_cut_interval_us));
+}
+
+uint32_t EngineCore::fsm_progress(FsmProgressKind kind) const {
+    switch (kind) {
+    case kStorageProgress:
+        return fsm_.progress();
+    case kIndexProgress:
+        return tag_index_.fsm_progress();
+    default:
+        UNREACHABLE();
+    }
 }
 
 void EngineCore::SetLogPersistedCallback(LogPersistedCallback cb) {
@@ -53,6 +63,11 @@ void EngineCore::OnNewFsmRecordsMessage(const FsmRecordsMsgProto& message) {
     for (const FsmRecordProto& record : message.records()) {
         fsm_.OnRecvRecord(record);
     }
+}
+
+void EngineCore::OnRecvTagData(uint16_t primary_node_id, uint64_t start_seqnum,
+                               const TagIndex::TagVec& tags) {
+    tag_index_.RecvTagData(primary_node_id, start_seqnum, tags);
 }
 
 bool EngineCore::LogTagToPrimaryNode(uint64_t tag, uint16_t* primary_node_id) {
@@ -160,7 +175,7 @@ void EngineCore::OnFsmNewView(uint32_t record_seqnum, const Fsm::View* view) {
             AdvanceLogProgress(view, node_id);
         });
     }
-    tag_index_->OnNewView(record_seqnum, view->id());
+    tag_index_.OnNewView(record_seqnum, view->id());
 }
 
 void EngineCore::OnFsmLogReplicated(uint64_t start_localid, uint64_t start_seqnum,
@@ -183,7 +198,7 @@ void EngineCore::OnFsmLogReplicated(uint64_t start_localid, uint64_t start_seqnu
 
 void EngineCore::OnFsmGlobalCut(uint32_t record_seqnum, uint64_t start_seqnum,
                                 uint64_t end_seqnum) {
-    tag_index_->OnNewGlobalCut(record_seqnum, start_seqnum, end_seqnum);
+    tag_index_.OnNewGlobalCut(record_seqnum, start_seqnum, end_seqnum);
 }
 
 void EngineCore::AdvanceLogProgress(const Fsm::View* view, uint16_t node_id) {
@@ -236,6 +251,7 @@ void EngineCore::DoStateCheck(std::ostringstream& stream) const {
     }
     stream << fmt::format(" Myself={:#010x}", next_localid_);
     stream << "\n";
+    tag_index_.DoStateCheck(stream);
 }
 
 }  // namespace log

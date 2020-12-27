@@ -17,7 +17,14 @@ public:
     static absl::Duration local_cut_interval();
 
     const Fsm* fsm() const { return &fsm_; }
-    uint32_t fsm_progress() const { return fsm_.progress(); }
+    const TagIndex* tag_index() const { return &tag_index_; }
+
+    enum FsmProgressKind {
+        kStorageProgress    = 0,
+        kIndexProgress      = 1,
+        kTotalProgressKinds = 2
+    };
+    uint32_t fsm_progress(FsmProgressKind kind) const;
 
     typedef std::function<void(uint64_t /* localid */, uint64_t /* seqnum */)>
             LogPersistedCallback;
@@ -29,6 +36,8 @@ public:
 
     bool BuildLocalCutMessage(LocalCutMsgProto* message);
     void OnNewFsmRecordsMessage(const FsmRecordsMsgProto& message);
+    void OnRecvTagData(uint16_t primary_node_id, uint64_t start_seqnum,
+                       const TagIndex::TagVec& tags);
 
     bool LogTagToPrimaryNode(uint64_t tag, uint16_t* primary_node_id);
     bool StoreLogAsPrimaryNode(uint64_t tag, std::span<const char> data, uint64_t* localid);
@@ -61,7 +70,7 @@ private:
 
     bool log_progress_dirty_;
 
-    std::unique_ptr<TagIndex> tag_index_;
+    TagIndex tag_index_;
 
     LogEntry* AllocLogEntry(uint64_t tag, uint64_t localid, std::span<const char> data);
 
