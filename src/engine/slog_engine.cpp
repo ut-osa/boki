@@ -33,6 +33,8 @@ SLogEngine::SLogEngine(Engine* engine)
         absl::bind_front(&SLogEngine::LogPersisted, this));
     core_.SetLogDiscardedCallback(
         absl::bind_front(&SLogEngine::LogDiscarded, this));
+    core_.SetSendTagVecCallback(
+        absl::bind_front(&SLogEngine::SendTagVec, this));
     // std::string storage_backend = absl::GetFlag(FLAGS_slog_storage_backend);
     // if (storage_backend == "inmem") {
     //     storage_.reset(new log::InMemoryStorage());
@@ -111,8 +113,7 @@ void SLogEngine::UpdateFuncFsmProgress(const protocol::FuncCall& func_call,
 
 namespace {
 inline void FillReadLogResponse(uint64_t seqnum, const std::string& data,
-                                uint32_t fsm_progress,
-                                protocol::Message* response) {
+                                uint32_t fsm_progress, protocol::Message* response) {
     if (data.size() > MESSAGE_INLINE_DATA_SIZE) {
         LOG(FATAL) << "Log data too long to fit into one message, "
                       "this should not happend given current implementation";
@@ -168,37 +169,60 @@ void SLogEngine::StateCheckTimerTriggered() {
 
 void SLogEngine::OnSequencerMessage(const SequencerMessage& message,
                                     std::span<const char> payload) {
-    if (SequencerMessageHelper::IsFsmRecords(message)) {
-        log::FsmRecordsMsgProto message_proto;
-        if (!message_proto.ParseFromArray(payload.data(), payload.size())) {
-            HLOG(ERROR) << "Failed to parse sequencer message!";
-            return;
-        }
-        absl::InlinedVector<CompletedLogEntry, 8> completed_log_entries;
-        uint32_t fsm_progress[EngineCore::kTotalProgressKinds];
-        {
-            absl::MutexLock lk(&mu_);
-            core_.OnNewFsmRecordsMessage(message_proto);
-            completed_log_entries_.swap(completed_log_entries);
-            for (int i = 0; i < EngineCore::kTotalProgressKinds; i++) {
-                fsm_progress[i] = core_.fsm_progress(
-                    static_cast<EngineCore::FsmProgressKind>(i));
-            }
-        }
-        for (const CompletedLogEntry& entry : completed_log_entries) {
-            LogEntryCompleted(entry, fsm_progress[EngineCore::kStorageProgress]);
-        }
+    if (!SequencerMessageHelper::IsFsmRecords(message)) {
+        HLOG(FATAL) << fmt::format("Unknown message type: {}!", message.message_type);
+    }
+    log::FsmRecordsMsgProto message_proto;
+    if (!message_proto.ParseFromArray(payload.data(), payload.size())) {
+        HLOG(FATAL) << "Failed to parse sequencer message!";
+        return;
+    }
+    CompletionActionVec completed_actions;
+    uint32_t fsm_progress[EngineCore::kTotalProgressKinds];
+    {
+        absl::MutexLock lk(&mu_);
+        DCHECK(completed_actions_ == nullptr);
+        completed_actions_ = &completed_actions;
+        core_.OnNewFsmRecordsMessage(message_proto);
+        completed_actions_ = nullptr;
         for (int i = 0; i < EngineCore::kTotalProgressKinds; i++) {
-            uint32_t old_progress = known_fsm_progress_[i].exchange(
-                fsm_progress[i], std::memory_order_release);
-            DCHECK_LE(old_progress, fsm_progress[i]);
-            if (old_progress < fsm_progress[i]) {
-                ProcessOnHoldRequests(static_cast<EngineCore::FsmProgressKind>(i),
-                                      fsm_progress[i]);
-            }
+            fsm_progress[i] = core_.fsm_progress(static_cast<EngineCore::FsmProgressKind>(i));
         }
-    } else {
-        HLOG(ERROR) << fmt::format("Unknown message type: {}!", message.message_type);
+    }
+    for (const CompletionAction& action : completed_actions) {
+        switch (action.type) {
+        case CompletionAction::kLogPersisted:
+            if (action.op != nullptr) {
+                Message response = MessageHelper::NewSharedLogOpSucceeded(
+                    SharedLogResultType::APPEND_OK, action.seqnum);
+                response.log_fsm_progress = fsm_progress[EngineCore::kStorageProgress];
+                FinishLogOp(action.op, &response);
+            }
+            break;
+        case CompletionAction::kLogDiscarded:
+            HLOG(WARNING) << fmt::format("Log with localid {:#018x} discarded", action.localid);
+            if (action.op != nullptr) {
+                RetryAppendOpIfDoable(action.op);
+            }
+            break;
+        case CompletionAction::kSendTagVec:
+            {
+                Message message = MessageHelper::NewSharedLogIndexData(
+                    action.seqnum,
+                    std::span<const uint64_t>(action.tags.data(), action.tags.size()));
+                action.view->ForEachNode([this, &message] (size_t, uint16_t node_id) {
+                    if (node_id != my_node_id()) {
+                        SendMessageToEngine(node_id, &message);
+                    }
+                });
+            }
+            break;
+        default:
+            UNREACHABLE();
+        }
+    }
+    for (int i = 0; i < EngineCore::kTotalProgressKinds; i++) {
+        AdvanceFsmProgress(static_cast<EngineCore::FsmProgressKind>(i), fsm_progress[i]);
     }
 }
 
@@ -215,7 +239,7 @@ SLogEngine::LogOp* SLogEngine::AllocLogOp(LogOpType type, uint32_t log_space,
     op->client_data = client_data;
     op->log_tag = protocol::kInvalidLogTag;
     op->log_seqnum = protocol::kInvalidLogSeqNum;
-    op->log_data.clear();
+    op->log_data.Reset();
     op->func_call = protocol::kInvalidFuncCall;
     op->remaining_retries = kMaxRetires;
     op->start_timestamp = GetMonotonicMicroTimestamp();
@@ -246,6 +270,8 @@ void SLogEngine::HandleRemoteRequest(const protocol::Message& message) {
         HandleRemoteAppend(message);
     } else if (op_type == SharedLogOpType::REPLICATE) {
         HandleRemoteReplicate(message);
+    } else if (op_type == SharedLogOpType::INDEX_DATA) {
+        HandleRemoteIndexData(message);
     } else if (op_type == SharedLogOpType::READ_AT) {
         HandleRemoteReadAt(message);
     } else if (op_type == SharedLogOpType::READ_NEXT
@@ -275,6 +301,24 @@ void SLogEngine::HandleRemoteReplicate(const Message& message) {
     absl::MutexLock lk(&mu_);
     core_.StoreLogAsBackupNode(message.log_tag, MessageHelper::GetInlineData(message),
                                message.log_localid);
+}
+
+void SLogEngine::HandleRemoteIndexData(const protocol::Message& message) {
+    DCHECK(MessageHelper::GetSharedLogOpType(message) == SharedLogOpType::INDEX_DATA);
+    DCHECK(message.src_node_id != my_node_id());
+    uint64_t start_seqnum = message.log_seqnum;
+    uint16_t primary_node_id = message.src_node_id;
+    std::span<const char> data = MessageHelper::GetInlineData(message);
+    DCHECK(data.size() % sizeof(uint64_t) == 0);
+    log::TagIndex::TagVec tags(data.size() / sizeof(uint64_t));
+    memcpy(tags.data(), data.data(), data.size());
+    uint32_t fsm_progress;
+    {
+        absl::MutexLock lk(&mu_);
+        core_.OnRecvTagData(primary_node_id, start_seqnum, tags);
+        fsm_progress = core_.fsm_progress(EngineCore::kIndexProgress);
+    }
+    AdvanceFsmProgress(EngineCore::kIndexProgress, fsm_progress);
 }
 
 void SLogEngine::HandleRemoteReadAt(const protocol::Message& message) {
@@ -356,7 +400,7 @@ void SLogEngine::HandleLocalAppend(const FuncCallContext& ctx, const Message& me
     } else {
         HVLOG(1) << fmt::format("Local append with tag {}", op->log_tag);
     }
-    op->log_data.assign(data.data(), data.size());
+    op->log_data.ResetWithData(data);
     NewAppendLogOp(op, data);
 }
 
@@ -481,21 +525,31 @@ void SLogEngine::RemoteReadFinished(const protocol::Message& message, LogOp* op)
 
 void SLogEngine::LogPersisted(uint64_t localid, uint64_t seqnum) {
     mu_.AssertHeld();
-    LogOp* op = GrabLogOp(append_ops_, localid);
-    completed_log_entries_.push_back({
+    DCHECK(completed_actions_ != nullptr);
+    completed_actions_->push_back(CompletionAction {
         .localid = localid,
         .seqnum = seqnum,
-        .append_op = op
+        .op = GrabLogOp(append_ops_, localid)
     });
 }
 
 void SLogEngine::LogDiscarded(uint64_t localid) {
     mu_.AssertHeld();
-    LogOp* op = GrabLogOp(append_ops_, localid);
-    completed_log_entries_.push_back({
+    DCHECK(completed_actions_ != nullptr);
+    completed_actions_->push_back(CompletionAction {
         .localid = localid,
-        .seqnum = protocol::kInvalidLogSeqNum,
-        .append_op = op
+        .op = GrabLogOp(append_ops_, localid)
+    });
+}
+
+void SLogEngine::SendTagVec(const log::Fsm::View* view, uint64_t start_seqnum,
+                            const log::TagIndex::TagVec& tags) {
+    mu_.AssertHeld();
+    DCHECK(completed_actions_ != nullptr);
+    completed_actions_->push_back(CompletionAction {
+        .seqnum = start_seqnum,
+        .view = view,
+        .tags = tags
     });
 }
 
@@ -711,38 +765,12 @@ void SLogEngine::ReadLogFromStorage(uint64_t seqnum, protocol::Message* response
     }
 }
 
-void SLogEngine::LogEntryCompleted(CompletedLogEntry entry, uint32_t fsm_progress) {
-    if (entry.seqnum != protocol::kInvalidLogSeqNum) {
-        uint64_t seqnum = entry.seqnum;
-        // if (entry.log_entry->data.size() > 0) {
-        //     storage_->Add(std::move(entry.log_entry), fsm_progress);
-        // }
-        LogOp* op = entry.append_op;
-        if (op == nullptr) {
-            return;
-        }
-        Message response = MessageHelper::NewSharedLogOpSucceeded(
-            SharedLogResultType::APPEND_OK, seqnum);
-        response.log_fsm_progress = fsm_progress;
-        FinishLogOp(op, &response);
-    } else {
-        HLOG(WARNING) << fmt::format("Log with localid {:#018x} discarded",
-                                     entry.localid);
-        LogOp* op = entry.append_op;
-        if (op == nullptr) {
-            return;
-        }
-        RetryAppendOpIfDoable(op);
-    }
-}
-
 void SLogEngine::RetryAppendOpIfDoable(LogOp* op) {
     DCHECK(op_type(op) == LogOpType::kAppend);
     DCHECK_EQ(op->src_node_id, my_node_id());
     if (op->src_node_id == my_node_id() && --op->remaining_retries > 0) {
-        std::span<const char> data(op->log_data.data(), op->log_data.size());
-        DCHECK(data.size() > 0);
-        NewAppendLogOp(op, data);
+        DCHECK(!op->log_data.empty());
+        NewAppendLogOp(op, op->log_data.to_span());
     } else {
         Message response = MessageHelper::NewSharedLogOpFailed(
             SharedLogResultType::DISCARDED);
@@ -786,7 +814,20 @@ bool SLogEngine::CheckForFsmProgress(EngineCore::FsmProgressKind kind,
     return false;
 }
 
-void SLogEngine::ProcessOnHoldRequests(EngineCore::FsmProgressKind kind, uint32_t fsm_progress) {
+void SLogEngine::AdvanceFsmProgress(EngineCore::FsmProgressKind kind,
+                                    uint32_t fsm_progress) {
+    std::atomic<uint32_t>& target = known_fsm_progress_[kind];
+    uint32_t old_progress = target.load(std::memory_order_relaxed);
+    while (true) {
+        if (old_progress >= fsm_progress) {
+            return;
+        }
+        if (target.compare_exchange_weak(old_progress, fsm_progress,
+                                         std::memory_order_release,
+                                         std::memory_order_relaxed)) {
+            break;
+        }
+    }
     absl::InlinedVector<PendingRequest*, 8> requests;
     {
         absl::MutexLock lk(&pending_requests_mu_);

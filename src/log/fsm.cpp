@@ -392,6 +392,13 @@ Fsm::View::View(const NewViewRecordProto& proto)
 
 Fsm::View::~View() {}
 
+void Fsm::View::ForEachNode(std::function<void(size_t /* idx */,
+                                               uint16_t /* node_id */)> cb) const {
+    for (size_t i = 0; i < node_ids_.size(); i++) {
+        cb(i, node_ids_.at(i));
+    }
+}
+
 void Fsm::View::ForEachBackupNode(uint16_t primary_node_id,
                                   std::function<void(uint16_t /* node_id */)> cb) const {
     DCHECK(node_indices_.contains(primary_node_id));

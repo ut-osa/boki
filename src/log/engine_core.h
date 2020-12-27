@@ -1,5 +1,6 @@
 #pragma once
 
+#include "utils/appendable_buffer.h"
 #include "utils/object_pool.h"
 #include "log/common.h"
 #include "log/fsm.h"
@@ -34,6 +35,11 @@ public:
             LogDiscardedCallback;
     void SetLogDiscardedCallback(LogDiscardedCallback cb);
 
+    typedef std::function<void(const log::Fsm::View*, uint64_t /* start_seqnum */,
+                               const TagIndex::TagVec&)>
+            SendTagVecCallback;
+    void SetSendTagVecCallback(SendTagVecCallback cb);
+
     bool BuildLocalCutMessage(LocalCutMsgProto* message);
     void OnNewFsmRecordsMessage(const FsmRecordsMsgProto& message);
     void OnRecvTagData(uint16_t primary_node_id, uint64_t start_seqnum,
@@ -53,6 +59,7 @@ private:
 
     LogPersistedCallback  log_persisted_cb_;
     LogDiscardedCallback  log_discarded_cb_;
+    SendTagVecCallback    send_tag_vec_cb_;
 
     uint32_t next_localid_;
 

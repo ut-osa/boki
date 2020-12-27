@@ -93,6 +93,7 @@ enum class SharedLogOpType : uint16_t {
     TRIM        = 0x04,
     READ_AT     = 0x10,
     REPLICATE   = 0x11,
+    INDEX_DATA  = 0x12,
     RESPONSE    = 0x20
 };
 
@@ -262,12 +263,18 @@ public:
         return func_call;
     }
 
-    static void SetInlineData(Message* message, std::span<const char> data) {
-        message->payload_size = gsl::narrow_cast<int32_t>(data.size());
-        DCHECK(data.size() <= MESSAGE_INLINE_DATA_SIZE);
-        if (data.size() > 0) {
-            memcpy(message->inline_data, data.data(), data.size());
+    template<class T>
+    static void SetInlineData(Message* message, std::span<const T> data) {
+        size_t total_size = data.size() * sizeof(T);
+        DCHECK(total_size <= MESSAGE_INLINE_DATA_SIZE);
+        message->payload_size = gsl::narrow_cast<int32_t>(total_size);
+        if (total_size > 0) {
+            memcpy(message->inline_data, data.data(), total_size);
         }
+    }
+
+    static void SetInlineData(Message* message, const std::string& data) {
+        SetInlineData<char>(message, std::span<const char>(data.data(), data.size()));
     }
 
     static std::span<const char> GetInlineData(const Message& message) {
@@ -409,6 +416,19 @@ public:
         message.log_tag = log_tag;
         message.log_localid = log_localid;
         message.log_fsm_progress = 0;
+        return message;
+    }
+
+    static Message NewSharedLogIndexData(uint64_t start_seqnum,
+                                         std::span<const uint64_t> tags) {
+        if (tags.size() * sizeof(uint64_t) > MESSAGE_INLINE_DATA_SIZE) {
+            LOG(FATAL) << "Well, the unexpected thing happens";
+        }
+        NEW_EMPTY_MESSAGE(message);
+        message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
+        message.log_op = static_cast<uint16_t>(SharedLogOpType::INDEX_DATA);
+        message.log_seqnum = start_seqnum;
+        SetInlineData(&message, tags);
         return message;
     }
 

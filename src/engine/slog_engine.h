@@ -3,6 +3,7 @@
 #include "base/common.h"
 #include "common/protocol.h"
 #include "common/sequencer_config.h"
+#include "utils/appendable_buffer.h"
 #include "utils/object_pool.h"
 #include "log/engine_core.h"
 #include "log/storage.h"
@@ -77,7 +78,7 @@ private:
         uint64_t client_data;
         uint64_t log_tag;
         uint64_t log_seqnum;
-        std::string log_data;
+        utils::AppendableBuffer log_data;
         protocol::FuncCall func_call;
         int remaining_retries;
         int64_t start_timestamp;
@@ -91,13 +92,17 @@ private:
     absl::flat_hash_map</* localid */ uint64_t, LogOp*> append_ops_ ABSL_GUARDED_BY(mu_);
     absl::flat_hash_map</* op_id */ uint64_t, LogOp*> remote_ops_ ABSL_GUARDED_BY(mu_);
 
-    struct CompletedLogEntry {
+    struct CompletionAction {
+        enum Type { kLogPersisted, kLogDiscarded, kSendTagVec };
+        Type type;
         uint64_t localid;
         uint64_t seqnum;
-        LogOp* append_op;
+        LogOp* op;
+        const log::Fsm::View* view;
+        log::TagIndex::TagVec tags;
     };
-    absl::InlinedVector<CompletedLogEntry, 8>
-        completed_log_entries_ ABSL_GUARDED_BY(mu_);
+    typedef absl::InlinedVector<CompletionAction, 8> CompletionActionVec;
+    CompletionActionVec* completed_actions_ ABSL_GUARDED_BY(mu_);
 
     struct PendingRequest {
         bool local;
@@ -131,6 +136,7 @@ private:
     void HandleRemoteRequest(const protocol::Message& message);
     void HandleRemoteAppend(const protocol::Message& message);
     void HandleRemoteReplicate(const protocol::Message& message);
+    void HandleRemoteIndexData(const protocol::Message& message);
     void HandleRemoteReadAt(const protocol::Message& message);
     void HandleRemoteRead(const protocol::Message& message);
 
@@ -148,6 +154,8 @@ private:
 
     void LogPersisted(uint64_t localid, uint64_t seqnum);
     void LogDiscarded(uint64_t localid);
+    void SendTagVec(const log::Fsm::View* view, uint64_t start_seqnum,
+                    const log::TagIndex::TagVec& tags);
 
     void FinishLogOp(LogOp* op, protocol::Message* response);
     void ForwardLogOp(LogOp* op, uint16_t dst_node_id, protocol::Message* message);
@@ -158,13 +166,12 @@ private:
     void ReplicateLog(const log::Fsm::View* view, uint64_t tag, uint64_t localid,
                       std::span<const char> data);
     void ReadLogFromStorage(uint64_t seqnum, protocol::Message* response);
-    void LogEntryCompleted(CompletedLogEntry entry, uint32_t fsm_progress);
     void RetryAppendOpIfDoable(LogOp* op);
     void RecordLogOpCompletion(LogOp* op);
 
     bool CheckForFsmProgress(log::EngineCore::FsmProgressKind kind,
                              const FuncCallContext* local_ctx, const protocol::Message& message);
-    void ProcessOnHoldRequests(log::EngineCore::FsmProgressKind kind, uint32_t fsm_progress);
+    void AdvanceFsmProgress(log::EngineCore::FsmProgressKind kind, uint32_t fsm_progress);
 
     void SendFailedResponse(const protocol::Message& request,
                             protocol::SharedLogResultType result);

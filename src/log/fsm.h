@@ -146,6 +146,7 @@ public:
         return node_addr_.at(node_id);
     }
 
+    void ForEachNode(std::function<void(size_t /* idx */, uint16_t /* node_id */)> cb) const;
     void ForEachBackupNode(uint16_t primary_node_id,
                            std::function<void(uint16_t /* node_id */)> cb) const;
     void ForEachPrimaryNode(uint16_t backup_node_id,

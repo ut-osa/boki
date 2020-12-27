@@ -61,6 +61,11 @@ public:
         pos_ -= size;
     }
 
+    void ResetWithData(std::span<const char> data) {
+        Reset();
+        AppendData(data);
+    }
+
     std::span<const char> to_span() const {
         return std::span<const char>(buf_, pos_);
     }
@@ -68,6 +73,7 @@ public:
     const char* data() const { return buf_; }
     char* data() { return buf_; }
     size_t length() const { return pos_; }
+    bool empty() const { return pos_ == 0; }
     size_t buffer_size() const { return buf_size_; }
 
     void Swap(AppendableBuffer& other) {

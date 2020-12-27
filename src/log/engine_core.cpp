@@ -43,6 +43,10 @@ void EngineCore::SetLogDiscardedCallback(LogDiscardedCallback cb) {
     log_discarded_cb_ = cb;
 }
 
+void EngineCore::SetSendTagVecCallback(SendTagVecCallback cb) {
+    send_tag_vec_cb_ = cb;
+}
+
 bool EngineCore::BuildLocalCutMessage(LocalCutMsgProto* message) {
     if (!log_progress_dirty_) {
         return false;
@@ -96,10 +100,7 @@ EngineCore::LogEntry* EngineCore::AllocLogEntry(uint64_t tag, uint64_t localid,
     log_entry->localid = localid;
     log_entry->seqnum = 0;
     log_entry->tag = tag;
-    log_entry->data.Reset();
-    if (data.size() > 0) {
-        log_entry->data.AppendData(data);
-    }
+    log_entry->data.ResetWithData(data);
     return log_entry;
 }
 
@@ -193,6 +194,16 @@ void EngineCore::OnFsmLogReplicated(uint64_t start_localid, uint64_t start_seqnu
         log_entry->seqnum = start_seqnum + i;
         log_persisted_cb_(log_entry->localid, log_entry->seqnum);
         persisted_entries_[log_entry->seqnum] = log_entry;
+    }
+    if (LocalIdToNodeId(start_localid) == my_node_id_) {
+        TagIndex::TagVec tags(delta);
+        for (uint32_t i = 0; i < delta; i++) {
+            uint64_t seqnum = start_seqnum + i;
+            DCHECK(persisted_entries_.count(seqnum) > 0);
+            tags[i] = persisted_entries_[seqnum]->tag;
+        }
+        tag_index_.RecvTagData(my_node_id_, start_seqnum, tags);
+        send_tag_vec_cb_(fsm_.current_view(), start_seqnum, tags);
     }
 }
 
