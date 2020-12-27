@@ -61,10 +61,13 @@ private:
 
     bool log_progress_dirty_;
 
+    std::unique_ptr<TagIndex> tag_index_;
+
     LogEntry* AllocLogEntry(uint64_t tag, uint64_t localid, std::span<const char> data);
 
-    void OnFsmNewView(const Fsm::View* view);
+    void OnFsmNewView(uint32_t record_seqnum, const Fsm::View* view);
     void OnFsmLogReplicated(uint64_t start_localid, uint64_t start_seqnum, uint32_t delta);
+    void OnFsmGlobalCut(uint32_t record_seqnum, uint64_t start_seqnum, uint64_t end_seqnum);
 
     void AdvanceLogProgress(const Fsm::View* view, uint16_t node_id);
     void ScheduleLocalCutIfNecessary();

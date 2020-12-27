@@ -13,13 +13,17 @@ public:
 
     class View;
 
-    typedef std::function<void(const View*)> NewViewCallback;
+    typedef std::function<void(uint32_t /* record_seqnum */, const View*)> NewViewCallback;
     void SetNewViewCallback(NewViewCallback cb);
 
     typedef std::function<void(uint64_t /* start_localid */, uint64_t /* start_seqnum */,
                                uint32_t /* delta */)>
             LogReplicatedCallback;
     void SetLogReplicatedCallback(LogReplicatedCallback cb);
+
+    typedef std::function<void(uint32_t /* record_seqnum */, uint64_t /* start_seqnum */,
+                               uint64_t /* end_seqnum */)> GlobalCutCallback;
+    void SetGlobalCutCallback(GlobalCutCallback cb);
 
     const View* current_view() const {
         return views_.empty() ? nullptr : views_.back().get();
@@ -83,6 +87,7 @@ private:
 
     NewViewCallback       new_view_cb_;
     LogReplicatedCallback log_replicated_cb_;
+    GlobalCutCallback     global_cut_cb_;
 
     uint32_t next_record_seqnum_;
     absl::flat_hash_map</* seqnum */ uint32_t, FsmRecordProto> pending_records_;

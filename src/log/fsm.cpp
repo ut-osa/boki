@@ -16,8 +16,6 @@ namespace log {
 
 Fsm::Fsm(uint16_t sequencer_id)
     : sequencer_id_(sequencer_id),
-      new_view_cb_([] (const View*) {}),
-      log_replicated_cb_([] (uint64_t, uint64_t, uint32_t) {}),
       next_record_seqnum_(0),
       record_apply_counter_(stat::Counter::StandardReportCallback(
           "fsm_record_apply")),
@@ -39,6 +37,10 @@ void Fsm::SetNewViewCallback(NewViewCallback cb) {
 
 void Fsm::SetLogReplicatedCallback(LogReplicatedCallback cb) {
     log_replicated_cb_ = cb;
+}
+
+void Fsm::SetGlobalCutCallback(GlobalCutCallback cb) {
+    global_cut_cb_ = cb;
 }
 
 void Fsm::OnRecvRecord(const FsmRecordProto& record) {
@@ -239,7 +241,6 @@ bool Fsm::FindPrevSeqnum(uint64_t ref_seqnum, uint64_t* seqnum,
 void Fsm::ApplyRecord(const FsmRecordProto& record) {
     DCHECK_EQ(record.seqnum(), next_record_seqnum_);
     record_apply_counter_.Tick();
-    next_record_seqnum_++;
     HVLOG(1) << fmt::format("Fsm::ApplyRecord: seqnum={}", record.seqnum());
     switch (record.type()) {
     case FsmRecordType::NEW_VIEW:
@@ -251,6 +252,7 @@ void Fsm::ApplyRecord(const FsmRecordProto& record) {
     default:
         HLOG(FATAL) << "Unknown record type";
     }
+    next_record_seqnum_++;
 }
 
 void Fsm::ApplyNewViewRecord(const NewViewRecordProto& record) {
@@ -275,7 +277,9 @@ void Fsm::ApplyNewViewRecord(const NewViewRecordProto& record) {
     views_.emplace_back(view);
     first_cut_of_view_.push_back(global_cuts_.size());
     next_log_seqnum_ = BuildSeqNum(view->id(), 0);
-    new_view_cb_(view);
+    if (new_view_cb_) {
+        new_view_cb_(next_record_seqnum_, view);
+    }
 }
 
 void Fsm::ApplyGlobalCutRecord(const GlobalCutRecordProto& record) {
@@ -301,11 +305,13 @@ void Fsm::ApplyGlobalCutRecord(const GlobalCutRecordProto& record) {
         uint32_t end_localid = new_cut->localid_cuts[i];
         if (start_localid < end_localid) {
             uint32_t delta = end_localid - start_localid;
-            log_replicated_cb_(
-                /* start_localid= */ BuildLocalId(view->id(), node_id, start_localid),
-                /* start_seqnum= */  next_log_seqnum_,
-                /* delta= */         delta
-            );
+            if (log_replicated_cb_) {
+                log_replicated_cb_(
+                    /* start_localid= */ BuildLocalId(view->id(), node_id, start_localid),
+                    /* start_seqnum= */  next_log_seqnum_,
+                    /* delta= */         delta
+                );
+            }
             next_log_seqnum_ += delta;
             new_cut->deltas[i] = delta;
 /*
@@ -331,6 +337,9 @@ void Fsm::ApplyGlobalCutRecord(const GlobalCutRecordProto& record) {
     new_cut->end_seqnum = next_log_seqnum_;
     if (new_cut->start_seqnum >= new_cut->end_seqnum) {
         HLOG(FATAL) << "New global cut does not replicate any new log";
+    }
+    if (global_cut_cb_) {
+        global_cut_cb_(next_record_seqnum_, new_cut->start_seqnum, new_cut->end_seqnum);
     }
 }
 

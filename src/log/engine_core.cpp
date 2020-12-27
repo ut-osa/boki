@@ -13,7 +13,8 @@ EngineCore::EngineCore(uint16_t my_node_id)
     : my_node_id_(my_node_id),
       local_cut_interval_us_(absl::GetFlag(FLAGS_slog_local_cut_interval_us)),
       next_localid_(0),
-      log_progress_dirty_(false) {
+      log_progress_dirty_(false),
+      tag_index_(new TagIndex()) {
     fsm_.SetNewViewCallback(absl::bind_front(&EngineCore::OnFsmNewView, this));
     fsm_.SetLogReplicatedCallback(absl::bind_front(&EngineCore::OnFsmLogReplicated, this));
 }
@@ -140,7 +141,7 @@ void EngineCore::AddWaitForReplication(uint64_t tag, uint64_t localid) {
     pending_entries_[localid] = AllocLogEntry(tag, localid, std::span<const char>());
 }
 
-void EngineCore::OnFsmNewView(const Fsm::View* view) {
+void EngineCore::OnFsmNewView(uint32_t record_seqnum, const Fsm::View* view) {
     auto iter = pending_entries_.begin();
     while (iter != pending_entries_.end()) {
         if (LocalIdToViewId(iter->first) >= view->id()) {
@@ -159,6 +160,7 @@ void EngineCore::OnFsmNewView(const Fsm::View* view) {
             AdvanceLogProgress(view, node_id);
         });
     }
+    tag_index_->OnNewView(record_seqnum, view->id());
 }
 
 void EngineCore::OnFsmLogReplicated(uint64_t start_localid, uint64_t start_seqnum,
@@ -177,6 +179,11 @@ void EngineCore::OnFsmLogReplicated(uint64_t start_localid, uint64_t start_seqnu
         log_persisted_cb_(log_entry->localid, log_entry->seqnum);
         persisted_entries_[log_entry->seqnum] = log_entry;
     }
+}
+
+void EngineCore::OnFsmGlobalCut(uint32_t record_seqnum, uint64_t start_seqnum,
+                                uint64_t end_seqnum) {
+    tag_index_->OnNewGlobalCut(record_seqnum, start_seqnum, end_seqnum);
 }
 
 void EngineCore::AdvanceLogProgress(const Fsm::View* view, uint16_t node_id) {
