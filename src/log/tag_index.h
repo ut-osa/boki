@@ -44,14 +44,14 @@ private:
     uint64_t committed_seqnum_;
     uint64_t applied_seqnum_;
 
-    std::map</* start_seqnum */ uint64_t, std::pair<uint32_t, TagVec>> pending_tag_data_;
+    std::map</* start_seqnum */ uint64_t, std::pair<uint16_t, TagVec>> pending_tag_data_;
 
     uint32_t fsm_progress_;
     std::deque</* end_seqnum */ uint64_t> cuts_;
 
     uint64_t learned_seqnum() const;
     void Advance();
-    void ApplyTagData(uint32_t primary_node_id, uint64_t start_seqnum, const TagVec& tags);
+    void ApplyTagData(uint16_t primary_node_id, uint64_t start_seqnum, const TagVec& tags);
 
     DISALLOW_COPY_AND_ASSIGN(TagIndex);
 };

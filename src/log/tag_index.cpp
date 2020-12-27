@@ -63,7 +63,7 @@ void TagIndex::Advance() {
         if (start_seqnum > applied_seqnum_ || start_seqnum >= learned_seqnum()) {
             break;
         }
-        uint32_t primary_node_id = iter->second.first;
+        uint16_t primary_node_id = iter->second.first;
         const TagVec& tag_vec = iter->second.second;
         ApplyTagData(primary_node_id, start_seqnum, tag_vec);
         iter = pending_tag_data_.erase(iter);
