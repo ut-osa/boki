@@ -70,21 +70,18 @@ void MessageConnection::ScheduleClose() {
     HLOG(INFO) << "Start closing";
     current_io_uring()->StopReadOrRecv(sockfd_);
     URING_DCHECK_OK(current_io_uring()->Close(sockfd_, [this] () {
-        URING_DCHECK_OK(current_io_uring()->UnregisterFd(sockfd_));
         sockfd_ = -1;
         OnFdClosed();
     }));
     if (in_fifo_fd_ != -1) {
         current_io_uring()->StopReadOrRecv(in_fifo_fd_);
         URING_DCHECK_OK(current_io_uring()->Close(in_fifo_fd_, [this] () {
-            URING_DCHECK_OK(current_io_uring()->UnregisterFd(in_fifo_fd_));
             in_fifo_fd_ = -1;
             OnFdClosed();
         }));
     }
     if (out_fifo_fd_ != -1) {
         URING_DCHECK_OK(current_io_uring()->Close(out_fifo_fd_, [this] () {
-            URING_DCHECK_OK(current_io_uring()->UnregisterFd(out_fifo_fd_));
             out_fifo_fd_ = -1;
             pipe_for_write_fd_.store(-1);
             OnFdClosed();

@@ -52,7 +52,6 @@ void Timer::ScheduleClose() {
     state_ = kClosing;
     current_io_uring()->StopReadOrRecv(timerfd_);
     URING_DCHECK_OK(current_io_uring()->Close(timerfd_, [this] () {
-        URING_DCHECK_OK(current_io_uring()->UnregisterFd(timerfd_));
         timerfd_ = -1;
         state_ = kClosed;
         io_worker_->OnConnectionClose(this);

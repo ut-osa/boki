@@ -17,7 +17,6 @@ public:
 
     void PrepareBuffers(uint16_t gid, size_t buf_size);
     bool RegisterFd(int fd);
-    bool UnregisterFd(int fd);
 
     typedef std::function<void(int /* status */)> ConnectCallback;
     bool Connect(int fd, const struct sockaddr* addr, size_t addrlen, ConnectCallback cb);
@@ -47,11 +46,12 @@ private:
     struct io_uring ring_;
     struct __kernel_timespec cqe_wait_timeout_;
 
+    std::string log_header_;
+
     std::vector<int> fds_;
     absl::flat_hash_map</* fd */ int, /* index */ size_t> fd_indices_;
 
     absl::flat_hash_map</* gid */ uint16_t, std::unique_ptr<utils::BufferPool>> buf_pools_;
-    std::vector<int> ref_counts_;
 
     enum OpType { kConnect, kRead, kWrite, kSendAll, kClose, kCancel };
     enum {
@@ -85,6 +85,7 @@ private:
 
     std::vector<Op*> read_ops_;
     std::vector<Op*> last_send_op_;
+    std::vector<Op*> last_known_op_;
 
     absl::flat_hash_map</* op_id */ uint64_t, ConnectCallback> connect_cbs_;
     absl::flat_hash_map</* op_id */ uint64_t, ReadCallback> read_cbs_;
@@ -111,15 +112,15 @@ private:
     Op* AllocCloseOp(size_t fd_idx);
     Op* AllocCancelOp(uint64_t op_id);
 
+    void UnregisterFd(size_t fd_idx);
     void EnqueueOp(Op* op);
     void OnOpComplete(Op* op, struct io_uring_cqe* cqe);
-    void RefFd(size_t fd_idx);
-    void UnrefFd(size_t fd_idx);
 
     void HandleConnectComplete(Op* op, int res);
     void HandleReadOpComplete(Op* op, int res);
     void HandleWriteOpComplete(Op* op, int res);
-    void HandleSendallOpComplete(Op* op, int res);
+    void HandleSendallOpComplete(Op* op, int res, Op** next_op);
+    void HandleCloseOpComplete(Op* op, int res);
 
     DISALLOW_COPY_AND_ASSIGN(IOUring);
 };

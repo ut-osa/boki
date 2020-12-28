@@ -12,6 +12,7 @@ std::atomic<int> IOUring::next_uring_id_{0};
 
 IOUring::IOUring()
     : uring_id_(next_uring_id_.fetch_add(1, std::memory_order_relaxed)),
+      log_header_(fmt::format("io_uring[{}]: ", uring_id_)),
       next_op_id_(1),
       ev_loop_counter_(stat::Counter::StandardReportCallback(
           fmt::format("io_uring[{}] ev_loop", uring_id_))),
@@ -52,14 +53,14 @@ IOUring::IOUring()
     }
     int n_fd_slots = absl::GetFlag(FLAGS_io_uring_fd_slots);
     fds_.resize(n_fd_slots, -1);
-    LOG(INFO) << fmt::format("io_uring[{}]: register {} fd slots", uring_id_, n_fd_slots);
+    HLOG(INFO) << fmt::format("register {} fd slots", n_fd_slots);
     ret = io_uring_register_files(&ring_, fds_.data(), n_fd_slots);
     if (ret != 0) {
         LOG(FATAL) << "io_uring_register_files failed: " << ERRNO_LOGSTR(-ret);
     }
-    ref_counts_.resize(n_fd_slots, 0);
     read_ops_.resize(n_fd_slots, nullptr);
     last_send_op_.resize(n_fd_slots, nullptr);
+    last_known_op_.resize(n_fd_slots, nullptr);
     close_cbs_.resize(n_fd_slots);
 }
 
@@ -94,8 +95,8 @@ bool IOUring::RegisterFd(int fd) {
     }
     fds_[index] = fd;
     fd_indices_[fd] = index;
-    LOG(INFO) << fmt::format("io_uring[{}]: register fd {}, {} registered fds in total",
-                             uring_id_, fd, fd_indices_.size());
+    HLOG(INFO) << fmt::format("register fd {}, {} registered fds in total",
+                              fd, fd_indices_.size());
     return true;
 }
 
@@ -109,30 +110,13 @@ bool IOUring::RegisterFd(int fd) {
 
 #define CHECK_IF_CLOSED(FD_IDX_VAR)                                 \
     do {                                                            \
-        if (close_cbs_[FD_IDX_VAR]) {                               \
+        Op* op = last_known_op_[FD_IDX_VAR];                        \
+        if (op != nullptr && op_type(op) == kClose) {               \
             LOG(WARNING) << fmt::format("fd {} already closed",     \
                                         fds_[FD_IDX_VAR]);          \
             return false;                                           \
         }                                                           \
     } while (0)
-
-bool IOUring::UnregisterFd(int fd) {
-    CHECK_AND_GET_FD_INDEX(fd, index);
-    int value = -1;
-    int ret = io_uring_register_files_update(&ring_, index, &value, 1);
-    if (ret < 0) {
-        LOG(FATAL) << "io_uring_register_files_update failed: " << ERRNO_LOGSTR(-ret);
-    }
-    DCHECK_EQ(ref_counts_[index], 0);
-    DCHECK(read_ops_[index] == nullptr);
-    DCHECK(last_send_op_[index] == nullptr);
-    DCHECK(!close_cbs_[index]);
-    fds_[index] = -1;
-    fd_indices_.erase(fd);
-    LOG(INFO) << fmt::format("io_uring[{}]: unregister fd {}, {} registered fds in total",
-                             uring_id_, fd, fd_indices_.size());
-    return true;
-}
 
 bool IOUring::Connect(int fd, const struct sockaddr* addr, size_t addrlen, ConnectCallback cb) {
     CHECK_AND_GET_FD_INDEX(fd, fd_idx);
@@ -140,6 +124,7 @@ bool IOUring::Connect(int fd, const struct sockaddr* addr, size_t addrlen, Conne
     Op* op = AllocConnectOp(fd_idx, addr, addrlen);
     connect_cbs_[op->id] = cb;
     EnqueueOp(op);
+    last_known_op_[fd_idx] = op;
     return true;
 }
 
@@ -159,6 +144,7 @@ bool IOUring::StartReadInternal(int fd, uint16_t buf_gid, uint16_t flags, ReadCa
     Op* op = AllocReadOp(fd_idx, buf_gid, buf, flags);
     read_cbs_[op->id] = cb;
     EnqueueOp(op);
+    last_known_op_[fd_idx] = op;
     return true;
 }
 
@@ -172,15 +158,15 @@ bool IOUring::StartRecv(int fd, uint16_t buf_gid, ReadCallback cb) {
 
 bool IOUring::StopReadOrRecv(int fd) {
     CHECK_AND_GET_FD_INDEX(fd, fd_idx);
-    if (read_ops_[fd_idx] != nullptr) {
-        Op* read_op = read_ops_[fd_idx];
-        read_op->flags |= kOpFlagCancelled;
-        Op* op = AllocCancelOp(read_op->id);
-        EnqueueOp(op);
-        return true;
-    } else {
+    if (read_ops_[fd_idx] == nullptr) {
         return false;
     }
+    Op* read_op = read_ops_[fd_idx];
+    read_op->flags |= kOpFlagCancelled;
+    Op* op = AllocCancelOp(read_op->id);
+    EnqueueOp(op);
+    last_known_op_[fd_idx] = op;
+    return true;
 }
 
 bool IOUring::Write(int fd, std::span<const char> data, WriteCallback cb) {
@@ -189,6 +175,7 @@ bool IOUring::Write(int fd, std::span<const char> data, WriteCallback cb) {
     Op* op = AllocWriteOp(fd_idx, data);
     write_cbs_[op->id] = cb;
     EnqueueOp(op);
+    last_known_op_[fd_idx] = op;
     return true;
 }
 
@@ -206,6 +193,7 @@ bool IOUring::SendAll(int fd, std::span<const char> data, SendAllCallback cb) {
         EnqueueOp(op);
     }
     last_send_op_[fd_idx] = op;
+    last_known_op_[fd_idx] = op;
     return true;
 }
 
@@ -214,15 +202,14 @@ bool IOUring::Close(int fd, CloseCallback cb) {
     CHECK_IF_CLOSED(fd_idx);
     Op* op = AllocCloseOp(fd_idx);
     close_cbs_[fd_idx].swap(cb);
-    if (last_send_op_[fd_idx] != nullptr) {
-        Op* last_op = last_send_op_[fd_idx];
-        DCHECK_EQ(op_type(last_op), kSendAll);
+    if (last_known_op_[fd_idx] != nullptr) {
+        Op* last_op = last_known_op_[fd_idx];
         DCHECK_EQ(last_op->next_op, kInvalidOpId);
         last_op->next_op = op->id;
-        last_send_op_[fd_idx] = nullptr;
     } else {
         EnqueueOp(op);
     }
+    last_known_op_[fd_idx] = op;
     return true;
 }
 
@@ -312,7 +299,6 @@ IOUring::Op* IOUring::AllocConnectOp(size_t fd_idx, const struct sockaddr* addr,
     op->fd_idx = fd_idx;
     op->addr = addr;
     op->addrlen = addrlen;
-    RefFd(fd_idx);
     return op;
 }
 
@@ -324,7 +310,6 @@ IOUring::Op* IOUring::AllocReadOp(size_t fd_idx, uint16_t buf_gid, std::span<cha
     op->flags = flags;
     op->buf = buf.data();
     op->buf_len = buf.size();
-    RefFd(fd_idx);
     read_ops_[fd_idx] = op;
     return op;
 }
@@ -334,7 +319,6 @@ IOUring::Op* IOUring::AllocWriteOp(size_t fd_idx, std::span<const char> data) {
     op->fd_idx = fd_idx;
     op->data = data.data();
     op->data_len = data.size();
-    RefFd(fd_idx);
     return op;
 }
 
@@ -343,14 +327,12 @@ IOUring::Op* IOUring::AllocSendAllOp(size_t fd_idx, std::span<const char> data) 
     op->fd_idx = fd_idx;
     op->data = data.data();
     op->data_len = data.size();
-    RefFd(fd_idx);
     return op;
 }
 
 IOUring::Op* IOUring::AllocCloseOp(size_t fd_idx) {
     ALLOC_OP(kClose, op);
     op->fd_idx = fd_idx;
-    RefFd(fd_idx);
     return op;
 }
 
@@ -361,6 +343,23 @@ IOUring::Op* IOUring::AllocCancelOp(uint64_t op_id) {
 }
 
 #undef ALLOC_OP
+
+void IOUring::UnregisterFd(size_t fd_idx) {
+    int fd = fds_[fd_idx];
+    DCHECK(fd != -1);
+    int value = -1;
+    int ret = io_uring_register_files_update(&ring_, fd_idx, &value, 1);
+    if (ret < 0) {
+        LOG(FATAL) << "io_uring_register_files_update failed: " << ERRNO_LOGSTR(-ret);
+    }
+    DCHECK(read_ops_[fd_idx] == nullptr);
+    DCHECK(last_send_op_[fd_idx] == nullptr);
+    DCHECK(!close_cbs_[fd_idx]);
+    fds_[fd_idx] = -1;
+    fd_indices_.erase(fd);
+    HLOG(INFO) << fmt::format("unregister fd {}, {} registered fds in total",
+                              fd, fd_indices_.size());
+}
 
 void IOUring::EnqueueOp(Op* op) {
     VLOG(2) << fmt::format("EnqueueOp: id={}, type={}, fd={}",
@@ -401,6 +400,7 @@ void IOUring::OnOpComplete(Op* op, struct io_uring_cqe* cqe) {
     int res = cqe->res;
     VLOG(2) << fmt::format("Op completed: id={}, type={}, fd={}, res={}",
                            op->id, op_type(op), fds_[op->fd_idx], res);
+    Op* next_op = nullptr;
     switch (op_type(op)) {
     case kConnect:
         HandleConnectComplete(op, res);
@@ -412,37 +412,26 @@ void IOUring::OnOpComplete(Op* op, struct io_uring_cqe* cqe) {
         HandleWriteOpComplete(op, res);
         break;
     case kSendAll:
-        HandleSendallOpComplete(op, res);
+        HandleSendallOpComplete(op, res, &next_op);
         break;
     case kClose:
-        // Close callback will be called in UnrefFd
-        if (res < 0) {
-            LOG(ERROR) << fmt::format("Failed to close fd {}: ", fds_[op->fd_idx])
-                       << ERRNO_LOGSTR(-res);
-        }
+        HandleCloseOpComplete(op, res);
         break;
     case kCancel:
         if (res < 0 && res != -EALREADY) {
-            LOG(ERROR) << fmt::format("Cancel Op failed with res={}", res);
+            LOG(ERROR) << "Cancel Op failed: " << ERRNO_LOGSTR(-res);
         }
         break;
     }
-    if (op->fd_idx != kInvalidFdIndex) {
-        UnrefFd(op->fd_idx);
+    if (next_op == nullptr && op->next_op != kInvalidOpId) {
+        DCHECK(ops_.contains(op->next_op));
+        next_op = ops_[op->next_op];
     }
-}
-
-void IOUring::RefFd(size_t fd_idx) {
-    ref_counts_[fd_idx]++;
-}
-
-void IOUring::UnrefFd(size_t fd_idx) {
-    ref_counts_[fd_idx]--;
-    if (ref_counts_[fd_idx] == 0 && close_cbs_[fd_idx]) {
-        CloseCallback cb;
-        cb.swap(close_cbs_[fd_idx]);
-        DCHECK(!close_cbs_[fd_idx]);
-        cb();
+    if (op->fd_idx != kInvalidFdIndex && last_known_op_[op->fd_idx] == op) {
+        last_known_op_[op->fd_idx] = nullptr;
+    }
+    if (next_op != nullptr) {
+        EnqueueOp(next_op);
     }
 }
 
@@ -498,46 +487,47 @@ void IOUring::HandleWriteOpComplete(Op* op, int res) {
     write_cbs_.erase(op->id);
 }
 
-void IOUring::HandleSendallOpComplete(Op* op, int res) {
+void IOUring::HandleSendallOpComplete(Op* op, int res, Op** next_op) {
     DCHECK_EQ(op_type(op), kSendAll);
     DCHECK(sendall_cbs_.contains(op->id));
     size_t fd_idx = op->fd_idx;
-    Op* new_op = nullptr;
     if (res >= 0) {
         size_t nwrite = gsl::narrow_cast<size_t>(res);
         if (nwrite == op->buf_len) {
             sendall_cbs_[op->id](0);
         } else {
             std::span<const char> remaining_data(op->buf + nwrite, op->buf_len - nwrite);
-            new_op = AllocSendAllOp(fd_idx, remaining_data);
+            Op* new_op = AllocSendAllOp(fd_idx, remaining_data);
             new_op->next_op = op->next_op;
             sendall_cbs_[new_op->id].swap(sendall_cbs_[op->id]);
             if (last_send_op_[fd_idx] == op) {
                 last_send_op_[fd_idx] = new_op;
             }
+            *next_op = new_op;
         }
     } else {
         errno = -res;
         sendall_cbs_[op->id](-1);
     }
     sendall_cbs_.erase(op->id);
-    if (new_op == nullptr) {
-        if (op->next_op != kInvalidOpId) {
-            DCHECK(ops_.contains(op->next_op));
-            new_op = ops_[op->next_op];
-            if (op_type(new_op) == kClose) {
-                DCHECK(last_send_op_[fd_idx] == nullptr);
-            } else {
-                DCHECK(op_type(new_op) == kSendAll);
-            }
-        } else {
-            DCHECK_EQ(last_send_op_[fd_idx], op);
-            last_send_op_[fd_idx] = nullptr;
-        }
+    if (last_send_op_[fd_idx] == op) {
+        last_send_op_[fd_idx] = nullptr;
     }
-    if (new_op != nullptr) {
-        EnqueueOp(new_op);
+}
+
+void IOUring::HandleCloseOpComplete(Op* op, int res) {
+    DCHECK_EQ(op_type(op), kClose);
+    size_t fd_idx = op->fd_idx;
+    DCHECK_EQ(last_known_op_[fd_idx], op);
+    if (res < 0) {
+        LOG(FATAL) << fmt::format("Failed to close fd {}: ", fds_[fd_idx])
+                   << ERRNO_LOGSTR(-res);
     }
+    DCHECK(close_cbs_[fd_idx]);
+    CloseCallback cb;
+    cb.swap(close_cbs_[fd_idx]);
+    cb();
+    UnregisterFd(fd_idx);
 }
 
 }  // namespace engine

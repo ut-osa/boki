@@ -66,7 +66,6 @@ void SequencerConnection::ScheduleClose() {
     current_io_uring()->StopReadOrRecv(sockfd_);
     URING_DCHECK_OK(current_io_uring()->Close(sockfd_, [this] () {
         DCHECK(state_ == kClosing);
-        URING_DCHECK_OK(current_io_uring()->UnregisterFd(sockfd_));
         state_ = kClosed;
         io_worker_->OnConnectionClose(this);
     }));

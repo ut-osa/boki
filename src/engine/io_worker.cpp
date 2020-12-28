@@ -250,12 +250,10 @@ void IOWorker::CloseWorkerFds() {
     HLOG(INFO) << "Close worker fds";
     io_uring_.StopReadOrRecv(eventfd_);
     URING_DCHECK_OK(io_uring_.Close(eventfd_, [this] () {
-        URING_DCHECK_OK(io_uring_.UnregisterFd(eventfd_));
         eventfd_ = -1;
     }));
     io_uring_.StopReadOrRecv(pipe_to_server_fd_);
     URING_DCHECK_OK(io_uring_.Close(pipe_to_server_fd_, [this] () {
-        URING_DCHECK_OK(io_uring_.UnregisterFd(pipe_to_server_fd_));
         pipe_to_server_fd_ = -1;
     }));
 }
