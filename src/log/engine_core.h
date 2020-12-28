@@ -45,10 +45,12 @@ public:
     void OnRecvTagData(uint16_t primary_node_id, uint64_t start_seqnum,
                        const TagIndex::TagVec& tags);
 
-    bool LogTagToPrimaryNode(uint64_t tag, uint16_t* primary_node_id);
+    bool PickPrimaryNodeForNewLog(uint64_t tag, uint16_t* primary_node_id);
     bool StoreLogAsPrimaryNode(uint64_t tag, std::span<const char> data, uint64_t* localid);
     bool StoreLogAsBackupNode(uint64_t tag, std::span<const char> data, uint64_t localid);
     void AddWaitForReplication(uint64_t tag, uint64_t localid);
+
+    bool ReadLogData(uint64_t seqnum, LogRecord* record) const;
 
     void DoStateCheck(std::ostringstream& stream) const;
 

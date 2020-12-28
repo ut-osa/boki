@@ -40,7 +40,7 @@ inline std::string SeqNumHexStr(uint64_t seqnum) {
     return fmt::format("{:016x}", seqnum);
 }
 
-struct LogEntry {
+struct LogRecord {
     uint64_t localid;
     uint64_t seqnum;
     uint64_t tag;

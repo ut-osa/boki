@@ -6,6 +6,8 @@
 
 #define log_header_ "LogEngineCore: "
 
+ABSL_FLAG(bool, slog_engine_sharding_by_tag, false, "");
+
 namespace faas {
 namespace log {
 
@@ -74,13 +76,15 @@ void EngineCore::OnRecvTagData(uint16_t primary_node_id, uint64_t start_seqnum,
     tag_index_.RecvTagData(primary_node_id, start_seqnum, tags);
 }
 
-bool EngineCore::LogTagToPrimaryNode(uint64_t tag, uint16_t* primary_node_id) {
+bool EngineCore::PickPrimaryNodeForNewLog(uint64_t tag, uint16_t* primary_node_id) {
     const Fsm::View* current_view = fsm_.current_view();
     if (current_view == nullptr) {
         HLOG(ERROR) << "No view message from sequencer!";
         return false;
     }
-    if (tag == kEmptyLogTag) {
+    if (absl::GetFlag(FLAGS_slog_engine_sharding_by_tag) && tag != kEmptyLogTag) {
+        *primary_node_id = current_view->LogTagToPrimaryNode(tag);
+    } else {
         if (current_view->has_node(my_node_id_)) {
             *primary_node_id = my_node_id_;
         } else {
@@ -88,8 +92,6 @@ bool EngineCore::LogTagToPrimaryNode(uint64_t tag, uint16_t* primary_node_id) {
                           << "will choose a random node for this log";
             *primary_node_id = current_view->PickOneNode();
         }
-    } else {
-        *primary_node_id = current_view->LogTagToPrimaryNode(tag);
     }
     return true;
 }
@@ -115,10 +117,12 @@ bool EngineCore::StoreLogAsPrimaryNode(uint64_t tag, std::span<const char> data,
         HLOG(ERROR) << "Current view does not contain myself!";
         return false;
     }
-    if (tag != kEmptyLogTag && my_node_id_ != current_view->LogTagToPrimaryNode(tag)) {
-        HLOG(ERROR) << fmt::format("This node is not the primary node of log tag {} "
-                                   "in the current view", tag, current_view->id());
-        return false;
+    if (absl::GetFlag(FLAGS_slog_engine_sharding_by_tag) && tag != kEmptyLogTag) {
+        if (my_node_id_ != current_view->LogTagToPrimaryNode(tag)) {
+            HLOG(ERROR) << fmt::format("This node is not the primary node of log tag {} "
+                                       "in the current view", tag, current_view->id());
+            return false;
+        }
     }
     HVLOG(1) << fmt::format("NewLocalLog: tag={}, data_size={}", tag, data.size());
     LogEntry* log_entry = AllocLogEntry(
@@ -155,6 +159,20 @@ bool EngineCore::StoreLogAsBackupNode(uint64_t tag, std::span<const char> data,
 
 void EngineCore::AddWaitForReplication(uint64_t tag, uint64_t localid) {
     pending_entries_[localid] = AllocLogEntry(tag, localid, std::span<const char>());
+}
+
+bool EngineCore::ReadLogData(uint64_t seqnum, LogRecord* record) const {
+    if (persisted_entries_.count(seqnum) == 0) {
+        return false;
+    }
+    const LogEntry* log_entry = persisted_entries_.at(seqnum);
+    record->localid = log_entry->localid;
+    record->seqnum = log_entry->seqnum;
+    record->tag = log_entry->tag;
+    record->data.clear();
+    std::span<const char> s = log_entry->data.to_span();
+    record->data.assign(s.data(), s.size());
+    return true;
 }
 
 void EngineCore::OnFsmNewView(uint32_t record_seqnum, const Fsm::View* view) {

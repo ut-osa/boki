@@ -51,7 +51,6 @@ private:
     absl::Mutex mu_;
 
     log::EngineCore core_ ABSL_GUARDED_BY(mu_);
-    std::unique_ptr<log::StorageInterface> storage_;
 
     enum LogOpType : uint16_t {
         kAppend   = 0,
@@ -138,7 +137,7 @@ private:
     void HandleRemoteReplicate(const protocol::Message& message);
     void HandleRemoteIndexData(const protocol::Message& message);
     void HandleRemoteReadAt(const protocol::Message& message);
-    void HandleRemoteRead(const protocol::Message& message);
+    // void HandleRemoteRead(const protocol::Message& message);
 
     void HandleLocalRequest(const FuncCallContext& ctx,
                             const protocol::Message& message);
@@ -161,11 +160,11 @@ private:
     void ForwardLogOp(LogOp* op, uint16_t dst_node_id, protocol::Message* message);
     void NewAppendLogOp(LogOp* op, std::span<const char> data);
     void NewReadAtLogOp(LogOp* op, const log::Fsm::View* view, uint16_t primary_node_id);
-    void NewReadLogOp(LogOp* op);
+    // void NewReadLogOp(LogOp* op);
 
     void ReplicateLog(const log::Fsm::View* view, uint64_t tag, uint64_t localid,
                       std::span<const char> data);
-    void ReadLogFromStorage(uint64_t seqnum, protocol::Message* response);
+    void ReadLogData(uint64_t seqnum, uint32_t fsm_progress, protocol::Message* response);
     void RetryAppendOpIfDoable(LogOp* op);
     void RecordLogOpCompletion(LogOp* op);
 
