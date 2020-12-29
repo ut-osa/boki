@@ -48,12 +48,38 @@ private:
 
     std::string log_header_;
 
-    std::vector<int> fds_;
-    absl::flat_hash_map</* fd */ int, /* index */ size_t> fd_indices_;
-
     absl::flat_hash_map</* gid */ uint16_t, std::unique_ptr<utils::BufferPool>> buf_pools_;
 
-    enum OpType { kConnect, kRead, kWrite, kSendAll, kClose, kCancel };
+    struct Op;
+    struct Descriptor {
+        int fd;
+        size_t index;
+        size_t op_count;
+        Op* active_read_op;
+        Op* last_send_op;
+        Op* close_op;
+    };
+    std::vector<Descriptor> fds_;
+    std::vector<size_t> free_fd_slots_;
+    absl::flat_hash_map</* fd */ int, /* index */ size_t> fd_indices_;
+
+    enum OpType {
+        kConnect = 0,
+        kRead    = 1,
+        kWrite   = 2,
+        kSendAll = 3,
+        kClose   = 4,
+        kCancel  = 5
+    };
+    static constexpr const char* kOpTypeStr[] = {
+        "Connect",
+        "Read",
+        "Write",
+        "SendAll",
+        "Close",
+        "Cancel"
+    };
+
     enum {
         kOpFlagRepeat    = 1 << 0,
         kOpFlagUseRecv   = 1 << 1,
@@ -63,7 +89,8 @@ private:
     static constexpr size_t kInvalidFdIndex = std::numeric_limits<size_t>::max();
     struct Op {
         uint64_t id;         // Lower 8-bit stores type
-        size_t   fd_idx;     // Used by kConnect, kRead, kWrite, kSendAll, kClose
+        int fd;              // Used by kClose
+        Descriptor* desc;    // Used by kConnect, kRead, kWrite, kSendAll
         uint16_t buf_gid;    // Used by kRead
         uint16_t flags;
         union {
@@ -76,22 +103,18 @@ private:
             size_t data_len;  // Used by kWrite, kSendAll
             size_t addrlen;   // Used by kConnect
         };
-        uint64_t next_op;    // Used by kSendAll
+        uint64_t next_op;    // Used by kSendAll, kCancel
     };
 
     uint64_t next_op_id_;
     utils::SimpleObjectPool<Op> op_pool_;
     absl::flat_hash_map</* op_id */ uint64_t, Op*> ops_;
 
-    std::vector<Op*> read_ops_;
-    std::vector<Op*> last_send_op_;
-    std::vector<Op*> last_known_op_;
-
     absl::flat_hash_map</* op_id */ uint64_t, ConnectCallback> connect_cbs_;
     absl::flat_hash_map</* op_id */ uint64_t, ReadCallback> read_cbs_;
     absl::flat_hash_map</* op_id */ uint64_t, WriteCallback> write_cbs_;
     absl::flat_hash_map</* op_id */ uint64_t, SendAllCallback> sendall_cbs_;
-    std::vector<CloseCallback> close_cbs_;
+    absl::flat_hash_map</* op_id */ uint64_t, CloseCallback> close_cbs_;
 
     stat::Counter ev_loop_counter_;
     stat::Counter wait_timeout_counter_;
@@ -102,22 +125,33 @@ private:
     stat::StatisticsCollector<int> average_op_time_stat_;
 
     inline OpType op_type(const Op* op) { return gsl::narrow_cast<OpType>(op->id & 0xff); }
+    inline int op_fd(const Op* op) {
+        if (op->fd != -1) {
+            return op->fd;
+        } else if (op->desc != nullptr) {
+            return op->desc->fd;
+        }
+        return -1;
+    }
+    inline size_t op_fd_idx(const Op* op) {
+        return DCHECK_NOTNULL(op->desc)->index;
+    }
 
     bool StartReadInternal(int fd, uint16_t buf_gid, uint16_t flags, ReadCallback cb);
 
-    Op* AllocConnectOp(size_t fd_idx, const struct sockaddr* addr, size_t addrlen);
-    Op* AllocReadOp(size_t fd_idx, uint16_t buf_gid, std::span<char> buf, uint16_t flags);
-    Op* AllocWriteOp(size_t fd_idx, std::span<const char> data);
-    Op* AllocSendAllOp(size_t fd_idx, std::span<const char> data);
-    Op* AllocCloseOp(size_t fd_idx);
+    Op* AllocConnectOp(Descriptor* desc, const struct sockaddr* addr, size_t addrlen);
+    Op* AllocReadOp(Descriptor* desc, uint16_t buf_gid, std::span<char> buf, uint16_t flags);
+    Op* AllocWriteOp(Descriptor* desc, std::span<const char> data);
+    Op* AllocSendAllOp(Descriptor* desc, std::span<const char> data);
+    Op* AllocCloseOp(int fd);
     Op* AllocCancelOp(uint64_t op_id);
 
-    void UnregisterFd(size_t fd_idx);
+    void UnregisterFd(Descriptor* desc);
     void EnqueueOp(Op* op);
     void OnOpComplete(Op* op, struct io_uring_cqe* cqe);
 
     void HandleConnectComplete(Op* op, int res);
-    void HandleReadOpComplete(Op* op, int res);
+    void HandleReadOpComplete(Op* op, int res, Op** next_op);
     void HandleWriteOpComplete(Op* op, int res);
     void HandleSendallOpComplete(Op* op, int res, Op** next_op);
     void HandleCloseOpComplete(Op* op, int res);
