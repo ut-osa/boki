@@ -180,9 +180,10 @@ func NewFuncCallFailedMessage(funcCall FuncCall) []byte {
 	return buffer
 }
 
-func NewSharedLogAppendMessage(myClientId uint16, tag uint64, clientData uint64) []byte {
+func NewSharedLogAppendMessage(currentCallId uint64, myClientId uint16, tag uint64, clientData uint64) []byte {
 	buffer := NewEmptyMessage()
-	binary.LittleEndian.PutUint64(buffer[0:8], uint64(MessageType_SHARED_LOG_OP))
+	tmp := (currentCallId << MessageTypeBits) + uint64(MessageType_SHARED_LOG_OP)
+	binary.LittleEndian.PutUint64(buffer[0:8], tmp)
 	binary.LittleEndian.PutUint16(buffer[32:34], SharedLogOpType_APPEND)
 	binary.LittleEndian.PutUint16(buffer[34:36], myClientId)
 	binary.LittleEndian.PutUint64(buffer[40:48], tag)
@@ -190,9 +191,10 @@ func NewSharedLogAppendMessage(myClientId uint16, tag uint64, clientData uint64)
 	return buffer
 }
 
-func NewSharedLogReadMessage(myClientId uint16, tag uint64, seqNum uint64, direction int, clientData uint64) []byte {
+func NewSharedLogReadMessage(currentCallId uint64, myClientId uint16, tag uint64, seqNum uint64, direction int, clientData uint64) []byte {
 	buffer := NewEmptyMessage()
-	binary.LittleEndian.PutUint64(buffer[0:8], uint64(MessageType_SHARED_LOG_OP))
+	tmp := (currentCallId << MessageTypeBits) + uint64(MessageType_SHARED_LOG_OP)
+	binary.LittleEndian.PutUint64(buffer[0:8], tmp)
 	if direction > 0 {
 		binary.LittleEndian.PutUint16(buffer[32:34], SharedLogOpType_READ_NEXT)
 	} else {

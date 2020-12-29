@@ -8,6 +8,7 @@ namespace engine {
 
 Timer::Timer(int timer_type, Callback cb)
     : ConnectionBase(timer_type),
+      periodic_(false),
       cb_(cb), io_worker_(nullptr), state_(kCreated),
       timerfd_(-1) {}
 
@@ -32,7 +33,12 @@ void Timer::Start(IOWorker* io_worker) {
     URING_DCHECK_OK(current_io_uring()->RegisterFd(timerfd_));
     state_ = kIdle;
     if (periodic_) {
-        CHECK(io_utils::SetupTimerFdPeriodic(timerfd_, initial_, duration_));
+        absl::Duration initial_duration = initial_ - absl::Now();
+        if (initial_duration < absl::ZeroDuration()) {
+            initial_duration = absl::Microseconds(1);
+        }
+        CHECK(io_utils::SetupTimerFdPeriodic(timerfd_, initial_duration, duration_));
+        state_ = kScheduled;
     }
     URING_DCHECK_OK(current_io_uring()->StartRead(
         timerfd_, IOWorker::kOctaBufGroup,
@@ -40,7 +46,9 @@ void Timer::Start(IOWorker* io_worker) {
             if (state_ != kScheduled) {
                 return false;
             }
-            state_ = kIdle;
+            if (!periodic_) {
+                state_ = kIdle;
+            }
             cb_();
             return true;
         }

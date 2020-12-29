@@ -519,7 +519,8 @@ func (w *FuncWorker) SharedLogAppend(ctx context.Context, tag uint64, data []byt
 	}
 
 	id := atomic.AddUint64(&w.nextLogOpId, 1)
-	message := protocol.NewSharedLogAppendMessage(w.clientId, tag, id)
+	currentCallId := atomic.LoadUint64(&w.currentCall)
+	message := protocol.NewSharedLogAppendMessage(currentCallId, w.clientId, tag, id)
 	protocol.FillInlineDataInMessage(message, data)
 
 	w.mux.Lock()
@@ -568,14 +569,16 @@ func (w *FuncWorker) sharedLogReadCommon(message []byte, opId uint64) (*types.Lo
 // Implement types.Environment
 func (w *FuncWorker) SharedLogReadNext(ctx context.Context, tag uint64, seqNum uint64) (*types.LogEntry, error) {
 	id := atomic.AddUint64(&w.nextLogOpId, 1)
-	message := protocol.NewSharedLogReadMessage(w.clientId, tag, seqNum, /* direction= */ 1, id)
+	currentCallId := atomic.LoadUint64(&w.currentCall)
+	message := protocol.NewSharedLogReadMessage(currentCallId, w.clientId, tag, seqNum, /* direction= */ 1, id)
 	return w.sharedLogReadCommon(message, id)
 }
 
 // Implement types.Environment
 func (w *FuncWorker) SharedLogReadPrev(ctx context.Context, tag uint64, seqNum uint64) (*types.LogEntry, error) {
 	id := atomic.AddUint64(&w.nextLogOpId, 1)
-	message := protocol.NewSharedLogReadMessage(w.clientId, tag, seqNum, /* direction= */ -1, id)
+	currentCallId := atomic.LoadUint64(&w.currentCall)
+	message := protocol.NewSharedLogReadMessage(currentCallId, w.clientId, tag, seqNum, /* direction= */ -1, id)
 	return w.sharedLogReadCommon(message, id)
 }
 

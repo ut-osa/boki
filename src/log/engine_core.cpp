@@ -53,7 +53,8 @@ bool EngineCore::BuildLocalCutMessage(LocalCutMsgProto* message) {
     if (!log_progress_dirty_) {
         return false;
     }
-    log_progress_dirty_ = true;
+    HVLOG(1) << "Build local cut sending to sequencer";
+    log_progress_dirty_ = false;
     const Fsm::View* view = fsm_.current_view();
     message->Clear();
     message->set_view_id(view->id());

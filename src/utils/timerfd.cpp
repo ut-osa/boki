@@ -26,33 +26,11 @@ bool SetupTimerFdOneTime(int fd, absl::Duration duration) {
     return true;
 }
 
-bool SetupTimerFdOneTime(int fd, absl::Time time) {
-    struct itimerspec spec;
-    memset(&spec, 0, sizeof(spec));
-    spec.it_value = absl::ToTimespec(time);
-    if (timerfd_settime(fd, TFD_TIMER_ABSTIME, &spec, nullptr) != 0) {
-        PLOG(ERROR) << "timerfd_settime failed";
-        return false;
-    }
-    return true;
-}
-
 bool SetupTimerFdPeriodic(int fd, absl::Duration initial, absl::Duration duration) {
     struct itimerspec spec;
     spec.it_value = absl::ToTimespec(initial);
     spec.it_interval = absl::ToTimespec(duration);
     if (timerfd_settime(fd, 0, &spec, nullptr) != 0) {
-        PLOG(ERROR) << "timerfd_settime failed";
-        return false;
-    }
-    return true;
-}
-
-bool SetupTimerFdPeriodic(int fd, absl::Time initial, absl::Duration duration) {
-    struct itimerspec spec;
-    spec.it_value = absl::ToTimespec(initial);
-    spec.it_interval = absl::ToTimespec(duration);
-    if (timerfd_settime(fd, TFD_TIMER_ABSTIME, &spec, nullptr) != 0) {
         PLOG(ERROR) << "timerfd_settime failed";
         return false;
     }

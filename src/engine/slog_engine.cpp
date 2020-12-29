@@ -31,6 +31,7 @@ SLogEngine::SLogEngine(Engine* engine)
       sequencer_config_(&engine->sequencer_config_),
       core_(engine->node_id()),
       next_op_id_(1),
+      completed_actions_(nullptr),
       statecheck_timer_(nullptr) {
     core_.SetLogPersistedCallback(
         absl::bind_front(&SLogEngine::LogPersisted, this));
@@ -152,7 +153,6 @@ void SLogEngine::SetupTimers() {
 
 void SLogEngine::LocalCutTimerTriggered() {
     mu_.AssertNotHeld();
-    HVLOG(1) << "LocalCutTimerTriggered";
     log::LocalCutMsgProto message;
     {
         absl::MutexLock lk(&mu_);
@@ -168,7 +168,6 @@ void SLogEngine::LocalCutTimerTriggered() {
 
 void SLogEngine::StateCheckTimerTriggered() {
     mu_.AssertNotHeld();
-    HVLOG(1) << "StateCheckTimerTriggered";
     DoStateCheck();
 }
 

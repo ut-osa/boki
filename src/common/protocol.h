@@ -253,7 +253,8 @@ public:
 
     static FuncCall GetFuncCall(const Message& message) {
         DCHECK(IsInvokeFunc(message) || IsDispatchFuncCall(message)
-                || IsFuncCallComplete(message) || IsFuncCallFailed(message));
+                || IsFuncCallComplete(message) || IsFuncCallFailed(message)
+                || IsSharedLogOp(message));
         FuncCall func_call;
         func_call.func_id = message.func_id;
         func_call.method_id = message.method_id;
