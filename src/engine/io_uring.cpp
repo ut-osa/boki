@@ -204,8 +204,7 @@ bool IOUring::Close(int fd, CloseCallback cb) {
     return true;
 }
 
-#undef CHECK_AND_GET_FD_INDEX
-#undef CHECK_IF_CLOSED
+#undef GET_AND_CHECK_DESC
 
 void IOUring::EventLoopRunOnce(int* inflight_ops) {
     struct io_uring_cqe* cqe = nullptr;

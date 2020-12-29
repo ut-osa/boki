@@ -92,6 +92,9 @@ void TagIndex::Advance() {
 void TagIndex::ApplyTagData(uint16_t primary_node_id, uint64_t start_seqnum,
                             const TagVec& tags) {
     DCHECK_EQ(start_seqnum, applied_seqnum_);
+    HVLOG(1) << fmt::format("ApplyTagData: node_id={}, start_seqnum={:#018x}, "
+                            "end_seqnum={:#018x}",
+                            primary_node_id, start_seqnum, start_seqnum + tags.size());
     for (size_t i = 0; i < tags.size(); i++) {
         storage_->Add(tags.at(i), start_seqnum + i, primary_node_id);
     }
@@ -121,6 +124,25 @@ void TagIndex::DoStateCheck(std::ostringstream& stream) const {
             stream << fmt::format("{:#018x}", cuts_.at(i));
         }
         stream << "]\n";
+    }
+    if (!pending_tag_data_.empty()) {
+        stream << fmt::format("There are {} pending tag data\n",
+                              pending_tag_data_.size());
+        int counter = 0;
+        for (const auto& entry : pending_tag_data_) {
+            uint64_t start_seqnum = entry.first;
+            uint16_t primary_node_id = entry.second.first;
+            const TagVec& tag_vec = entry.second.second;
+            uint64_t end_seqnum = start_seqnum + tag_vec.size();
+            counter++;
+            stream << fmt::format("--[{}] NodeId={} StartSeqNum={:#018x} EndSeqNum={:#018x}",
+                                  counter, primary_node_id, start_seqnum, end_seqnum);
+            stream << "\n";
+            if (counter >= 32) {
+                stream << "...more...\n";
+                break;
+            }
+        }
     }
 }
 

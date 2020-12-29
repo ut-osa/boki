@@ -534,6 +534,7 @@ void SLogEngine::LogPersisted(uint64_t localid, uint64_t seqnum) {
     mu_.AssertHeld();
     DCHECK(completed_actions_ != nullptr);
     completed_actions_->push_back(CompletionAction {
+        .type = CompletionAction::kLogPersisted,
         .localid = localid,
         .seqnum = seqnum,
         .op = GrabLogOp(append_ops_, localid)
@@ -544,6 +545,7 @@ void SLogEngine::LogDiscarded(uint64_t localid) {
     mu_.AssertHeld();
     DCHECK(completed_actions_ != nullptr);
     completed_actions_->push_back(CompletionAction {
+        .type = CompletionAction::kLogDiscarded,
         .localid = localid,
         .op = GrabLogOp(append_ops_, localid)
     });
@@ -554,6 +556,7 @@ void SLogEngine::SendTagVec(const log::Fsm::View* view, uint64_t start_seqnum,
     mu_.AssertHeld();
     DCHECK(completed_actions_ != nullptr);
     completed_actions_->push_back(CompletionAction {
+        .type = CompletionAction::kSendTagVec,
         .seqnum = start_seqnum,
         .view = view,
         .tags = tags

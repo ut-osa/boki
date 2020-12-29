@@ -18,6 +18,7 @@ EngineCore::EngineCore(uint16_t my_node_id)
       log_progress_dirty_(false) {
     fsm_.SetNewViewCallback(absl::bind_front(&EngineCore::OnFsmNewView, this));
     fsm_.SetLogReplicatedCallback(absl::bind_front(&EngineCore::OnFsmLogReplicated, this));
+    fsm_.SetGlobalCutCallback(absl::bind_front(&EngineCore::OnFsmGlobalCut, this));
 }
 
 EngineCore::~EngineCore() {}
