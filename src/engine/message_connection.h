@@ -5,14 +5,14 @@
 #include "common/stat.h"
 #include "utils/appendable_buffer.h"
 #include "utils/object_pool.h"
-#include "engine/io_worker.h"
+#include "server/io_worker.h"
 
 namespace faas {
 namespace engine {
 
 class Engine;
 
-class MessageConnection final : public ConnectionBase {
+class MessageConnection final : public server::ConnectionBase {
 public:
     static constexpr size_t kBufSize = __FAAS_MESSAGE_SIZE * 4;
 
@@ -25,7 +25,7 @@ public:
     bool is_launcher_connection() const { return client_id_ == 0; }
     bool is_func_worker_connection() const { return client_id_ > 0; }
 
-    void Start(IOWorker* io_worker) override;
+    void Start(server::IOWorker* io_worker) override;
     void ScheduleClose() override;
 
     // Must be thread-safe
@@ -35,7 +35,7 @@ private:
     enum State { kCreated, kHandshake, kRunning, kClosing, kClosed };
 
     Engine* engine_;
-    IOWorker* io_worker_;
+    server::IOWorker* io_worker_;
     State state_;
     uint16_t func_id_;
     uint16_t client_id_;

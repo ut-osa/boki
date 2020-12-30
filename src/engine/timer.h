@@ -1,12 +1,12 @@
 #pragma once
 
 #include "base/common.h"
-#include "engine/io_worker.h"
+#include "server/io_worker.h"
 
 namespace faas {
 namespace engine {
 
-class Timer final : public ConnectionBase {
+class Timer final : public server::ConnectionBase {
 public:
     typedef std::function<void()> Callback;
     Timer(int timer_type, Callback cb);
@@ -14,7 +14,7 @@ public:
 
     void SetPeriodic(absl::Time initial, absl::Duration duration);
 
-    void Start(IOWorker* io_worker) override;
+    void Start(server::IOWorker* io_worker) override;
     void ScheduleClose() override;
 
     bool TriggerIn(absl::Duration d);
@@ -27,7 +27,7 @@ private:
     absl::Duration duration_;
 
     Callback cb_;
-    IOWorker* io_worker_;
+    server::IOWorker* io_worker_;
     State state_;
     int timerfd_;
 

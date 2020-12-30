@@ -2,6 +2,7 @@
 
 #include "common/time.h"
 #include "common/http_status.h"
+#include "gateway/constants.h"
 #include "gateway/server.h"
 
 #include <arpa/inet.h>
@@ -73,11 +74,15 @@ struct GrpcConnection::H2StreamContext {
     }
 };
 
-GrpcConnection::GrpcConnection(Server* server, int connection_id)
-    : server::ConnectionBase(kTypeId), server_(server),
-      state_(kCreated), log_header_(fmt::format("GrpcConnection[{}]: ", connection_id)),
-      h2_session_(nullptr), h2_error_code_(NGHTTP2_NO_ERROR),
-      uv_write_for_mem_send_ongoing_(false) {
+GrpcConnection::GrpcConnection(Server* server, int connection_id, int sockfd)
+    : server::ConnectionBase(kGrpcConnectionTypeId),
+      server_(server),
+      state_(kCreated),
+      sockfd_(sockfd),
+      log_header_(fmt::format("GrpcConnection[{}]: ", connection_id)),
+      h2_session_(nullptr),
+      h2_error_code_(NGHTTP2_NO_ERROR),
+      mem_send_ongoing_(false) {
     nghttp2_session_callbacks* callbacks;
     H2_CHECK_OK(nghttp2_session_callbacks_new(&callbacks));
     nghttp2_session_callbacks_set_error_callback2(
@@ -104,24 +109,21 @@ GrpcConnection::~GrpcConnection() {
     nghttp2_session_del(h2_session_);
 }
 
-uv_stream_t* GrpcConnection::InitUVHandle(uv_loop_t* uv_loop) {
-    UV_DCHECK_OK(uv_tcp_init(uv_loop, &uv_tcp_handle_));
-    return UV_AS_STREAM(&uv_tcp_handle_);
-}
-
-void GrpcConnection::Start() {
+void GrpcConnection::Start(server::IOWorker* io_worker) {
     DCHECK(state_ == kCreated);
-    DCHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
-    uv_tcp_handle_.data = this;
-    UV_DCHECK_OK(uv_read_start(UV_AS_STREAM(&uv_tcp_handle_),
-                               &GrpcConnection::BufferAllocCallback,
-                               &GrpcConnection::RecvDataCallback));
+    DCHECK(io_worker->WithinMyEventLoopThread());
+    io_worker_ = io_worker;
+    current_io_uring()->PrepareBuffers(kGrpcConnectionBufGroup, kBufSize);
+    URING_DCHECK_OK(current_io_uring()->RegisterFd(sockfd_));
     state_ = kRunning;
+    URING_DCHECK_OK(current_io_uring()->StartRecv(
+        sockfd_, kGrpcConnectionBufGroup,
+        absl::bind_front(&GrpcConnection::OnRecvData, this)));
     H2SendSettingsFrame();
 }
 
 void GrpcConnection::ScheduleClose() {
-    DCHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
+    DCHECK(io_worker_->WithinMyEventLoopThread());
     if (state_ == kClosing) {
         HLOG(INFO) << "Already scheduled for closing";
         return;
@@ -131,38 +133,33 @@ void GrpcConnection::ScheduleClose() {
         server_->DiscardFuncCall(entry.second);
     }
     grpc_calls_.clear();
-    uv_close(UV_AS_HANDLE(&uv_tcp_handle_), &GrpcConnection::CloseCallback);
+    URING_DCHECK_OK(current_io_uring()->Close(sockfd_, [this] () {
+        DCHECK(state_ == kClosing);
+        state_ = kClosed;
+        io_worker_->OnConnectionClose(this);
+    }));
     state_ = kClosing;
 }
 
-UV_READ_CB_FOR_CLASS(GrpcConnection, RecvData) {
-    auto reclaim_worker_resource = gsl::finally([this, buf] {
-        if (buf->base != 0) {
-            io_worker_->ReturnReadBuffer(buf);
-        }
-    });
-    if (nread < 0) {
-        if (nread == UV_EOF || nread == UV_ECONNRESET) {
-            HLOG(INFO) << "gRPC connection closed by client";
-        } else {
-            HLOG(WARNING) << "Read error, will close the connection: "
-                          << uv_strerror(nread);
-        }
+bool GrpcConnection::OnRecvData(int status, std::span<const char> data) {
+    DCHECK(io_worker_->WithinMyEventLoopThread());
+    if (status != 0) {
+        HPLOG(ERROR) << "Read error, will close this connection";
         ScheduleClose();
-        return;
+        return false;
+    } else if (data.size() == 0) {
+        HLOG(INFO) << "gRPC connection closed by client";
+        ScheduleClose();
+        return false;
     }
-    if (nread == 0) {
-        HLOG(WARNING) << "nread=0, will do nothing";
-        return;
-    }
-    const uint8_t* data = reinterpret_cast<const uint8_t*>(buf->base);
-    size_t length = gsl::narrow_cast<size_t>(nread);
-    ssize_t ret = nghttp2_session_mem_recv(h2_session_, data, length);
+    const uint8_t* ptr = reinterpret_cast<const uint8_t*>(data.data());
+    ssize_t ret = nghttp2_session_mem_recv(h2_session_, ptr, data.size());
     if (ret >= 0) {
-        if (gsl::narrow_cast<size_t>(ret) != length) {
+        if (gsl::narrow_cast<size_t>(ret) != data.size()) {
             HLOG(FATAL) << "nghttp2_session_mem_recv does not consume all input data";
         }
         H2SendPendingDataIfNecessary();
+        return state_ == kRunning;
     } else {
         // ret < 0
         switch (ret) {
@@ -173,40 +170,12 @@ UV_READ_CB_FOR_CLASS(GrpcConnection, RecvData) {
             HLOG(WARNING) << "nghttp2 failed with error: " << nghttp2_strerror(ret)
                             << ", will close the connection";
             ScheduleClose();
-            break;
+            return false;
         default:
             HLOG(FATAL) << "nghttp2 call returns with error: " << nghttp2_strerror(ret);
         }
     }
-}
-
-UV_WRITE_CB_FOR_CLASS(GrpcConnection, DataWritten) {
-    auto reclaim_worker_resource = gsl::finally([this, req] {
-        if (req != &write_req_for_mem_send_) {
-            io_worker_->ReturnWriteBuffer(reinterpret_cast<char*>(req->data));
-            io_worker_->ReturnWriteRequest(req);
-        }
-    });
-    if (status != 0) {
-        HLOG(ERROR) << "Failed to write data, will close this connection: "
-                    << uv_strerror(status);
-        ScheduleClose();
-        return;
-    }
-    if (req == &write_req_for_mem_send_) {
-        uv_write_for_mem_send_ongoing_ = false;
-        H2SendPendingDataIfNecessary();
-    }
-}
-
-UV_ALLOC_CB_FOR_CLASS(GrpcConnection, BufferAlloc) {
-    io_worker_->NewReadBuffer(suggested_size, buf);
-}
-
-UV_CLOSE_CB_FOR_CLASS(GrpcConnection, Close) {
-    DCHECK(state_ == kClosing);
-    state_ = kClosed;
-    io_worker_->OnConnectionClose(this);
+    return true;
 }
 
 GrpcConnection::H2StreamContext* GrpcConnection::H2NewStreamContext(int stream_id) {
@@ -228,7 +197,7 @@ void GrpcConnection::H2ReclaimStreamContext(H2StreamContext* stream_context) {
 }
 
 void GrpcConnection::H2TerminateWithError(nghttp2_error_code error_code) {
-    DCHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
+    DCHECK(io_worker_->WithinMyEventLoopThread());
     H2_CHECK_OK(nghttp2_session_terminate_session(h2_session_, error_code));
     H2SendPendingDataIfNecessary();
 }
@@ -239,25 +208,26 @@ bool GrpcConnection::H2SessionTerminated() {
 }
 
 void GrpcConnection::H2SendPendingDataIfNecessary() {
-    DCHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
+    DCHECK(io_worker_->WithinMyEventLoopThread());
     if (state_ != kRunning) {
-        HLOG(WARNING) << "GrpcConnection is closing or has closed, will not write pending messages";
+        HLOG(WARNING) << "GrpcConnection is closing or has closed, "
+                         "will not write pending messages";
         return;
     }
-    if (uv_write_for_mem_send_ongoing_) {
+    if (mem_send_ongoing_) {
         return;
     }
     if (H2SessionTerminated()) {
-        LOG(INFO) << "nghttp2_session_want_read() and nghttp2_session_want_write() both return 0, "
-                  << "will close the connection";
+        LOG(INFO) << "nghttp2_session_want_read() and nghttp2_session_want_write() "
+                     "both return 0, will close the connection";
         ScheduleClose();
         return;
     }
     if (nghttp2_session_want_write(h2_session_) == 0) {
         return;
     }
-    const uint8_t* data;
-    ssize_t ret = nghttp2_session_mem_send(h2_session_, &data);
+    const uint8_t* ptr;
+    ssize_t ret = nghttp2_session_mem_send(h2_session_, &ptr);
     if (ret == 0) {
         return;
     }
@@ -265,18 +235,23 @@ void GrpcConnection::H2SendPendingDataIfNecessary() {
         HLOG(FATAL) << "nghttp2_session_mem_send failed with error: "
                     << nghttp2_strerror(ret);
     }
-    uv_buf_t buf = {
-        .base = reinterpret_cast<char*>(const_cast<uint8_t*>(data)),
-        .len = gsl::narrow_cast<size_t>(ret)
-    };
-    uv_write_t* write_req = &write_req_for_mem_send_;
-    uv_write_for_mem_send_ongoing_ = true;
-    UV_DCHECK_OK(uv_write(write_req, UV_AS_STREAM(&uv_tcp_handle_),
-                          &buf, 1, &GrpcConnection::DataWrittenCallback));
+    std::span<const char> data(reinterpret_cast<const char*>(ptr),
+                               gsl::narrow_cast<size_t>(ret));
+    mem_send_ongoing_ = true;
+    URING_DCHECK_OK(current_io_uring()->SendAll(sockfd_, data, [this] (int status) {
+        if (status != 0) {
+            HPLOG(WARNING) << "Write error, will close the connection";
+            ScheduleClose();
+            return;
+        }
+        DCHECK(mem_send_ongoing_);
+        mem_send_ongoing_ = false;
+        H2SendPendingDataIfNecessary();
+    }));
 }
 
 void GrpcConnection::H2SendSettingsFrame() {
-    DCHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
+    DCHECK(io_worker_->WithinMyEventLoopThread());
     nghttp2_settings_entry iv[1] = {
         { NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS, 32 }
     };
@@ -391,7 +366,7 @@ void GrpcConnection::H2SendTrailers(H2StreamContext* context) {
 }
 
 void GrpcConnection::OnNewGrpcCall(H2StreamContext* context) {
-    DCHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
+    DCHECK(io_worker_->WithinMyEventLoopThread());
     DCHECK(context->state == H2StreamContext::kProcessing);
 
     HVLOG(1) << "New request on stream with stream " << context->stream_id;
@@ -417,7 +392,7 @@ void GrpcConnection::OnFuncCallFinished(FuncCallContext* func_call_context) {
 }
 
 void GrpcConnection::OnFuncCallFinishedInternal(int32_t stream_id) {
-    DCHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
+    DCHECK(io_worker_->WithinMyEventLoopThread());
     if (!grpc_calls_.contains(stream_id)) {
         HLOG(WARNING) << "Cannot find gRPC call associated with stream " << stream_id << ", "
                       << "maybe stream " << stream_id << " has already closed";
@@ -600,28 +575,31 @@ int GrpcConnection::H2SendData(H2StreamContext* stream_context, nghttp2_frame* f
     }
     const char* data = stream_context->response_body_buffer.data()
                      + stream_context->response_body_write_pos;
-    uv_buf_t hd_buf;
+    stream_context->response_body_write_pos += length;
+    std::span<char> hd_buf;
     io_worker_->NewWriteBuffer(&hd_buf);
-    DCHECK_GE(hd_buf.len, kH2FrameHeaderByteSize + kGrpcLPMPrefixByteSize);
-    memcpy(hd_buf.base, framehd, kH2FrameHeaderByteSize);
-    hd_buf.len = kH2FrameHeaderByteSize;
+    CHECK_GE(hd_buf.size(), kH2FrameHeaderByteSize + kGrpcLPMPrefixByteSize);
+    memcpy(hd_buf.data(), framehd, kH2FrameHeaderByteSize);
+    size_t hd_len = kH2FrameHeaderByteSize;
     if (stream_context->first_response_frame) {
-        char* buf = hd_buf.base + kH2FrameHeaderByteSize;
+        char* buf = hd_buf.data() + kH2FrameHeaderByteSize;
         buf[0] = '\0';  // Compressed-Flag of '0'
         uint32_t msg_size = stream_context->response_body_buffer.length();
         STORE(uint32_t, buf + 1, htonl(msg_size));
-        hd_buf.len += kGrpcLPMPrefixByteSize;
+        hd_len += kGrpcLPMPrefixByteSize;
         stream_context->first_response_frame = false;
     }
-    uv_buf_t bufs[2] = {
-        hd_buf,
-        { .base = const_cast<char*>(data), .len = length }
-    };
-    stream_context->response_body_write_pos += length;
-    uv_write_t* write_req = io_worker_->NewWriteRequest();
-    write_req->data = hd_buf.base;
-    UV_DCHECK_OK(uv_write(write_req, UV_AS_STREAM(&uv_tcp_handle_),
-                          bufs, 2, &GrpcConnection::DataWrittenCallback));
+    std::span<const char> header(hd_buf.data(), hd_len);
+    std::span<const char> payload(data, length);
+    URING_DCHECK_OK(current_io_uring()->SendAll(
+        sockfd_, {header, payload}, [this, hd_buf] (int status) {
+            io_worker_->ReturnWriteBuffer(hd_buf);
+            if (status != 0) {
+                HPLOG(WARNING) << "Write error, will close the connection";
+                ScheduleClose();
+            }
+        }
+    ));
     return 0;
 }
 

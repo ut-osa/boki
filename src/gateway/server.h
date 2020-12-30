@@ -2,7 +2,6 @@
 
 #include "base/common.h"
 #include "base/thread.h"
-#include "common/uv.h"
 #include "common/stat.h"
 #include "common/protocol.h"
 #include "common/func_config.h"
@@ -55,9 +54,9 @@ private:
     std::string func_config_json_;
     FuncConfig func_config_;
 
-    uv_tcp_t uv_engine_conn_handle_;
-    uv_tcp_t uv_http_handle_;
-    uv_tcp_t uv_grpc_handle_;
+    int engine_sockfd_;
+    int http_sockfd_;
+    int grpc_sockfd_;
     std::vector<server::IOWorker*> io_workers_;
 
     size_t next_http_conn_worker_id_;
@@ -66,13 +65,8 @@ private:
     int next_grpc_connection_id_;
 
     NodeManager node_manager_;
-
-    class OngoingEngineHandshake;
-    friend class OngoingEngineHandshake;
-
-    absl::flat_hash_set<std::unique_ptr<OngoingEngineHandshake>> ongoing_engine_handshakes_;
-    absl::flat_hash_map</* id */ int, std::shared_ptr<server::ConnectionBase>> engine_connections_;
-    utils::BufferPool read_buffer_pool_;
+    absl::flat_hash_map</* id */ int, std::shared_ptr<server::ConnectionBase>>
+        engine_connections_;
 
     std::atomic<uint32_t> next_call_id_;
 
@@ -120,7 +114,7 @@ private:
     void StartInternal() override;
     void StopInternal() override;
     void OnConnectionClose(server::ConnectionBase* connection) override;
-    bool OnEngineHandshake(uv_tcp_t* uv_handle, std::span<const char> data);
+
     void OnNewFuncCallCommon(std::shared_ptr<server::ConnectionBase> parent_connection,
                              FuncCallContext* func_call_context);
     bool DispatchFuncCall(std::shared_ptr<server::ConnectionBase> parent_connection,
@@ -137,10 +131,9 @@ private:
                                                const protocol::GatewayMessage& message,
                                                std::span<const char> payload);
 
-    DECLARE_UV_CONNECTION_CB_FOR_CLASS(HttpConnection);
-    DECLARE_UV_CONNECTION_CB_FOR_CLASS(GrpcConnection);
-    DECLARE_UV_CONNECTION_CB_FOR_CLASS(EngineConnection);
-    DECLARE_UV_READ_CB_FOR_CLASS(ReadEngineHandshake);
+    void OnNewEngineConnection(int sockfd);
+    void OnNewHttpConnection(int sockfd);
+    void OnNewGrpcConnection(int sockfd);
 
     DISALLOW_COPY_AND_ASSIGN(Server);
 };

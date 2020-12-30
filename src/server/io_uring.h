@@ -8,7 +8,7 @@
 #include <liburing.h>
 
 namespace faas {
-namespace engine {
+namespace server {
 
 class IOUring {
 public:
@@ -34,6 +34,8 @@ public:
     // IOUring implementation will correctly order all SendAll writes.
     typedef std::function<void(int /* status */)> SendAllCallback;
     bool SendAll(int sockfd, std::span<const char> data, SendAllCallback cb);
+    bool SendAll(int sockfd, const std::vector<std::span<const char>>& data_vec,
+                 SendAllCallback cb);
 
     typedef std::function<void()> CloseCallback;
     bool Close(int fd, CloseCallback cb);
@@ -103,6 +105,7 @@ private:
             size_t data_len;  // Used by kWrite, kSendAll
             size_t addrlen;   // Used by kConnect
         };
+        uint64_t root_op;    // Used by kSendAll
         uint64_t next_op;    // Used by kSendAll, kCancel
     };
 
@@ -159,7 +162,7 @@ private:
     DISALLOW_COPY_AND_ASSIGN(IOUring);
 };
 
-}  // namespace engine
+}  // namespace server
 }  // namespace faas
 
 #define URING_CHECK_OK(URING_CALL)                     \

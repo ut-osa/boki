@@ -100,7 +100,7 @@ void WorkerManager::OnFuncWorkerDisconnected(MessageConnection* worker_connectio
 }
 
 bool WorkerManager::RequestNewFuncWorker(uint16_t func_id, uint16_t* client_id) {
-    std::shared_ptr<ConnectionBase> connection;
+    std::shared_ptr<server::ConnectionBase> connection;
     {
         absl::MutexLock lk(&mu_);
         if (!launcher_connections_.contains(func_id)) {

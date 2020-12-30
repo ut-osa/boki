@@ -1,27 +1,28 @@
 #include "server/io_worker.h"
 
+#include <sys/eventfd.h>
+
 namespace faas {
 namespace server {
 
-IOWorker::IOWorker(std::string_view worker_name,
-                   size_t read_buffer_size, size_t write_buffer_size)
-    : worker_name_(worker_name), state_(kCreated),
+IOUring* ConnectionBase::current_io_uring() {
+    return IOWorker::current()->io_uring();
+}
+
+thread_local IOWorker* IOWorker::current_ = nullptr;
+
+IOWorker::IOWorker(std::string_view worker_name, size_t write_buffer_size)
+    : worker_name_(worker_name), state_(kCreated), io_uring_(),
+      eventfd_(-1), pipe_to_server_fd_(-1),
       log_header_(fmt::format("{}: ", worker_name)),
       event_loop_thread_(fmt::format("{}/EL", worker_name),
                          absl::bind_front(&IOWorker::EventLoopThreadMain, this)),
-      read_buffer_pool_(fmt::format("{}_Read", worker_name), read_buffer_size),
       write_buffer_pool_(fmt::format("{}_Write", worker_name), write_buffer_size),
       connections_on_closing_(0),
-      async_event_recv_timestamp_(0),
-      uv_async_delay_stat_(stat::StatisticsCollector<int32_t>::StandardReportCallback(
-          fmt::format("uv_async_delay[{}]", worker_name))) {
-    UV_DCHECK_OK(uv_loop_init(&uv_loop_));
-    uv_loop_.data = &event_loop_thread_;
-    UV_DCHECK_OK(uv_async_init(&uv_loop_, &stop_event_, &IOWorker::StopCallback));
-    stop_event_.data = this;
-    UV_DCHECK_OK(uv_async_init(&uv_loop_, &run_fn_event_,
-                               &IOWorker::RunScheduledFunctionsCallback));
-    run_fn_event_.data = this;
+      message_counter_(stat::Counter::StandardReportCallback(
+          fmt::format("{} message_counter", worker_name))),
+      message_processing_time_counter_(stat::Counter::StandardReportCallback(
+          fmt::format("{} message_processing_time", worker_name))) {
 }
 
 IOWorker::~IOWorker() {
@@ -29,33 +30,52 @@ IOWorker::~IOWorker() {
     DCHECK(state == kCreated || state == kStopped);
     DCHECK(connections_.empty());
     DCHECK_EQ(connections_on_closing_, 0);
-    UV_DCHECK_OK(uv_loop_close(&uv_loop_));
-}
-
-thread_local IOWorker* IOWorker::current_ = nullptr;
-
-namespace {
-void PipeReadBufferAllocCallback(uv_handle_t* handle, size_t suggested_size, uv_buf_t* buf) {
-    size_t buf_size = 32;
-    buf->base = reinterpret_cast<char*>(malloc(buf_size));
-    buf->len = buf_size;
-}
 }
 
 void IOWorker::Start(int pipe_to_server_fd) {
     DCHECK(state_.load() == kCreated);
-    UV_DCHECK_OK(uv_pipe_init(&uv_loop_, &pipe_to_server_, 1));
-    pipe_to_server_.data = this;
-    UV_DCHECK_OK(uv_pipe_open(&pipe_to_server_, pipe_to_server_fd));
-    UV_DCHECK_OK(uv_read_start(UV_AS_STREAM(&pipe_to_server_),
-                               &PipeReadBufferAllocCallback,
-                               &IOWorker::NewConnectionCallback));
+    // Setup eventfd for scheduling functions
+    eventfd_ = eventfd(0, 0);
+    PCHECK(eventfd_ >= 0) << "Failed to create eventfd";
+    io_uring_.PrepareBuffers(kOctaBufGroup, 8);
+    URING_DCHECK_OK(io_uring_.RegisterFd(eventfd_));
+    URING_DCHECK_OK(io_uring_.StartRead(
+        eventfd_, kOctaBufGroup,
+        [this] (int status, std::span<const char> data) -> bool {
+            if (state_.load(std::memory_order_consume) != kRunning) {
+                return false;
+            }
+            PCHECK(status == 0);
+            HVLOG(1) << "eventfd triggered";
+            RunScheduledFunctions();
+            return true;
+        }
+    ));
+    // Setup pipe to server for receiving connections
+    pipe_to_server_fd_ = pipe_to_server_fd;
+    URING_DCHECK_OK(io_uring_.RegisterFd(pipe_to_server_fd_));
+    URING_DCHECK_OK(io_uring_.StartRecv(
+        pipe_to_server_fd_, kOctaBufGroup,
+        [this] (int status, std::span<const char> data) -> bool {
+            PCHECK(status == 0);
+            if (data.size() == 0) {
+                HLOG(INFO) << "Pipe to server closed";
+                return false;
+            }
+            CHECK_EQ(data.size(), static_cast<size_t>(__FAAS_PTR_SIZE));
+            ConnectionBase* connection;
+            memcpy(&connection, data.data(), __FAAS_PTR_SIZE);
+            OnNewConnection(connection);
+            return true;
+        }
+    ));
+    // Start event loop thread
     event_loop_thread_.Start();
     state_.store(kRunning);
 }
 
 void IOWorker::ScheduleStop() {
-    UV_DCHECK_OK(uv_async_send(&stop_event_));
+    ScheduleFunction(nullptr, [this] { StopInternal(); });
 }
 
 void IOWorker::WaitForFinish() {
@@ -64,38 +84,58 @@ void IOWorker::WaitForFinish() {
     DCHECK(state_.load() == kStopped);
 }
 
-void IOWorker::NewReadBuffer(size_t suggested_size, uv_buf_t* buf) {
-    DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
-    read_buffer_pool_.Get(&buf->base, &buf->len);
+bool IOWorker::WithinMyEventLoopThread() {
+    return base::Thread::current() == &event_loop_thread_;
 }
 
-void IOWorker::ReturnReadBuffer(const uv_buf_t* buf) {
-    DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
-    read_buffer_pool_.Return(buf->base);
+void IOWorker::OnConnectionClose(ConnectionBase* connection) {
+    DCHECK(WithinMyEventLoopThread());
+    DCHECK(connections_.contains(connection->id()));
+    connections_.erase(connection->id());
+    if (connection->type() >= 0) {
+        DCHECK(connections_by_type_[connection->type()].contains(connection->id()));
+        connections_by_type_[connection->type()].erase(connection->id());
+        if (connections_for_pick_.contains(connection->type())) {
+            connections_for_pick_.erase(connection->type());
+        }
+        HLOG(INFO) << fmt::format("One connection of type {0} closed, total of type {0} is {1}",
+                                  connection->type(),
+                                  connections_by_type_[connection->type()].size());
+    }
+    DCHECK(pipe_to_server_fd_ >= -1);
+    char* buf = connection->pipe_write_buf_for_transfer();
+    memcpy(buf, &connection, __FAAS_PTR_SIZE);
+    std::span<const char> data(buf, __FAAS_PTR_SIZE);
+    connections_on_closing_++;
+    URING_DCHECK_OK(io_uring_.Write(
+        pipe_to_server_fd_, data,
+        [this] (int status, size_t nwrite) {
+            PCHECK(status == 0);
+            CHECK_EQ(nwrite, static_cast<size_t>(__FAAS_PTR_SIZE));
+            DCHECK_GT(connections_on_closing_, 0);
+            connections_on_closing_--;
+            if (state_.load(std::memory_order_consume) == kStopping
+                    && connections_.empty()
+                    && connections_on_closing_ == 0) {
+                // We have returned all Connection objects to Server
+                CloseWorkerFds();
+            }
+        }
+    ));
 }
 
-void IOWorker::NewWriteBuffer(uv_buf_t* buf) {
-    DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
-    write_buffer_pool_.Get(&buf->base, &buf->len);
+void IOWorker::NewWriteBuffer(std::span<char>* buf) {
+    DCHECK(WithinMyEventLoopThread());
+    write_buffer_pool_.Get(buf);
 }
 
-void IOWorker::ReturnWriteBuffer(char* buf) {
-    DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
+void IOWorker::ReturnWriteBuffer(std::span<char> buf) {
+    DCHECK(WithinMyEventLoopThread());
     write_buffer_pool_.Return(buf);
 }
 
-uv_write_t* IOWorker::NewWriteRequest() {
-    DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
-    return write_req_pool_.Get();
-}
-
-void IOWorker::ReturnWriteRequest(uv_write_t* write_req) {
-    DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
-    write_req_pool_.Return(write_req);
-}
-
 ConnectionBase* IOWorker::PickConnection(int type) {
-    DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
+    DCHECK(WithinMyEventLoopThread());
     if (!connections_by_type_.contains(type) || connections_by_type_[type].empty()) {
         return nullptr;
     }
@@ -115,12 +155,23 @@ ConnectionBase* IOWorker::PickConnection(int type) {
     return connections_for_pick_[type][idx];
 }
 
+void IOWorker::EventLoopThreadMain() {
+    current_ = this;
+    HLOG(INFO) << "Event loop starts";
+    int inflight_ops;
+    do {
+        io_uring_.EventLoopRunOnce(&inflight_ops);
+    } while (inflight_ops > 0);
+    HLOG(INFO) << "Event loop finishes";
+    state_.store(kStopped);
+}
+
 void IOWorker::ScheduleFunction(ConnectionBase* owner, std::function<void()> fn) {
     if (state_.load(std::memory_order_consume) != kRunning) {
         HLOG(WARNING) << "Cannot schedule function in non-running state, will ignore it";
         return;
     }
-    if (uv::WithinEventLoop(&uv_loop_)) {
+    if (WithinMyEventLoopThread()) {
         fn();
         return;
     }
@@ -129,76 +180,13 @@ void IOWorker::ScheduleFunction(ConnectionBase* owner, std::function<void()> fn)
     function->fn = fn;
     absl::MutexLock lk(&scheduled_function_mu_);
     scheduled_functions_.push_back(std::move(function));
-    int64_t empty = 0;
-    async_event_recv_timestamp_.compare_exchange_strong(empty, GetMonotonicMicroTimestamp());
-    UV_DCHECK_OK(uv_async_send(&run_fn_event_));
+    DCHECK(eventfd_ >= 0);
+    PCHECK(eventfd_write(eventfd_, 1) == 0) << "eventfd_write failed";
 }
 
-void IOWorker::OnConnectionClose(ConnectionBase* connection) {
-    DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
-    DCHECK(pipe_to_server_.loop == &uv_loop_);
-    DCHECK(connections_.contains(connection->id()));
-    connections_.erase(connection->id());
-    if (connection->type() >= 0) {
-        DCHECK(connections_by_type_[connection->type()].contains(connection->id()));
-        connections_by_type_[connection->type()].erase(connection->id());
-        if (connections_for_pick_.contains(connection->type())) {
-            connections_for_pick_.erase(connection->type());
-        }
-        HLOG(INFO) << fmt::format("One connection of type {0} closed, total of type {0} is {1}",
-                                  connection->type(),
-                                  connections_by_type_[connection->type()].size());
-    }
-    uv_write_t* write_req = connection->uv_write_req_for_back_transfer();
-    char* buf = connection->pipe_write_buf_for_transfer();
-    memcpy(buf, &connection, __FAAS_PTR_SIZE);
-    uv_buf_t uv_buf = uv_buf_init(buf, __FAAS_PTR_SIZE);
-    connections_on_closing_++;
-    UV_DCHECK_OK(uv_write(write_req, UV_AS_STREAM(&pipe_to_server_),
-                          &uv_buf, 1, &IOWorker::PipeWriteCallback));
-}
-
-void IOWorker::EventLoopThreadMain() {
-    current_ = this;
-    HLOG(INFO) << "Event loop starts";
-    int ret = uv_run(&uv_loop_, UV_RUN_DEFAULT);
-    if (ret != 0) {
-        HLOG(WARNING) << "uv_run returns non-zero value: " << ret;
-    }
-    HLOG(INFO) << "Event loop finishes";
-    state_.store(kStopped);
-}
-
-UV_ASYNC_CB_FOR_CLASS(IOWorker, Stop) {
-    if (state_.load(std::memory_order_consume) == kStopping) {
-        HLOG(WARNING) << "Already in stopping state";
-        return;
-    }
-    HLOG(INFO) << "Start stopping process";
-    UV_DCHECK_OK(uv_read_stop(UV_AS_STREAM(&pipe_to_server_)));
-    if (connections_.empty() && connections_on_closing_ == 0) {
-        HLOG(INFO) << "Close pipe to Server";
-        uv_close(UV_AS_HANDLE(&pipe_to_server_), nullptr);
-    } else {
-        for (const auto& entry : connections_) {
-            ConnectionBase* connection = entry.second;
-            connection->ScheduleClose();
-        }
-    }
-    uv_close(UV_AS_HANDLE(&stop_event_), nullptr);
-    uv_close(UV_AS_HANDLE(&run_fn_event_), nullptr);
-    state_.store(kStopping);
-}
-
-UV_READ_CB_FOR_CLASS(IOWorker, NewConnection) {
-    DCHECK_EQ(nread, __FAAS_PTR_SIZE);
-    ConnectionBase* connection;
-    memcpy(&connection, buf->base, __FAAS_PTR_SIZE);
-    free(buf->base);
-    uv_stream_t* client = connection->InitUVHandle(&uv_loop_);
-    UV_DCHECK_OK(uv_accept(UV_AS_STREAM(&pipe_to_server_), client));
-    connection->set_io_worker(this);
-    connection->Start();
+void IOWorker::OnNewConnection(ConnectionBase* connection) {
+    DCHECK(WithinMyEventLoopThread());
+    connection->Start(this);
     DCHECK(connection->id() >= 0);
     DCHECK(!connections_.contains(connection->id()));
     connections_[connection->id()] = connection;
@@ -217,27 +205,10 @@ UV_READ_CB_FOR_CLASS(IOWorker, NewConnection) {
     }
 }
 
-UV_WRITE_CB_FOR_CLASS(IOWorker, PipeWrite) {
-    DCHECK(status == 0) << "Failed to write to pipe: " << uv_strerror(status);
-    DCHECK_GT(connections_on_closing_, 0);
-    connections_on_closing_--;
-    if (state_.load(std::memory_order_consume) == kStopping
-            && connections_.empty()
-            && connections_on_closing_ == 0) {
-        // We have returned all Connection objects to Server
-        HLOG(INFO) << "Close pipe to Server";
-        uv_close(UV_AS_HANDLE(&pipe_to_server_), nullptr);
-    }
-}
-
-UV_ASYNC_CB_FOR_CLASS(IOWorker, RunScheduledFunctions) {
+void IOWorker::RunScheduledFunctions() {
+    DCHECK(WithinMyEventLoopThread());
     if (state_.load(std::memory_order_consume) != kRunning) {
         return;
-    }
-    int64_t async_event_recv_timestamp = async_event_recv_timestamp_.fetch_and(0);
-    if (async_event_recv_timestamp != 0) {
-        uv_async_delay_stat_.AddSample(gsl::narrow_cast<int32_t>(
-            GetMonotonicMicroTimestamp() - async_event_recv_timestamp));
     }
     absl::InlinedVector<std::unique_ptr<ScheduledFunction>, 16> functions;
     {
@@ -252,6 +223,39 @@ UV_ASYNC_CB_FOR_CLASS(IOWorker, RunScheduledFunctions) {
             HLOG(WARNING) << "Owner connection has closed";
         }
     }
+}
+
+void IOWorker::StopInternal() {
+    DCHECK(WithinMyEventLoopThread());
+    if (state_.load(std::memory_order_consume) == kStopping) {
+        HLOG(WARNING) << "Already in stopping state";
+        return;
+    }
+    HLOG(INFO) << "Start stopping process";
+    state_.store(kStopping);
+    if (connections_.empty() && connections_on_closing_ == 0) {
+        CloseWorkerFds();
+    } else {
+        std::vector<ConnectionBase*> running_connections;
+        for (const auto& entry : connections_) {
+            running_connections.push_back(entry.second);
+        }
+        for (ConnectionBase* connection : running_connections) {
+            connection->ScheduleClose();
+        }
+    }
+}
+
+void IOWorker::CloseWorkerFds() {
+    HLOG(INFO) << "Close worker fds";
+    io_uring_.StopReadOrRecv(eventfd_);
+    URING_DCHECK_OK(io_uring_.Close(eventfd_, [this] () {
+        eventfd_ = -1;
+    }));
+    io_uring_.StopReadOrRecv(pipe_to_server_fd_);
+    URING_DCHECK_OK(io_uring_.Close(pipe_to_server_fd_, [this] () {
+        pipe_to_server_fd_ = -1;
+    }));
 }
 
 }  // namespace server

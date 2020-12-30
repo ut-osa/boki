@@ -1,11 +1,9 @@
 #pragma once
 
 #include "base/common.h"
-#include "common/uv.h"
 #include "utils/appendable_buffer.h"
 #include "utils/object_pool.h"
 #include "server/io_worker.h"
-#include "server/connection_base.h"
 #include "gateway/func_call_context.h"
 
 #include <nghttp2/nghttp2.h>
@@ -17,16 +15,15 @@ class Server;
 
 class GrpcConnection final : public server::ConnectionBase {
 public:
-    static constexpr int kTypeId = 1;
+    static constexpr size_t kBufSize = 65536;
 
     static constexpr size_t kH2FrameHeaderByteSize = 9;
     static constexpr size_t kGrpcLPMPrefixByteSize = 5;
 
-    GrpcConnection(Server* server, int connection_id);
+    GrpcConnection(Server* server, int connection_id, int sockfd);
     ~GrpcConnection();
 
-    uv_stream_t* InitUVHandle(uv_loop_t* uv_loop) override;
-    void Start() override;
+    void Start(server::IOWorker* io_worker) override;
     void ScheduleClose() override;
 
     void OnFuncCallFinished(FuncCallContext* func_call_context);
@@ -35,27 +32,22 @@ private:
     enum State { kCreated, kRunning, kClosing, kClosed };
 
     Server* server_;
-    uv_tcp_t uv_tcp_handle_;
     State state_;
-    int closed_uv_handles_;
-    int total_uv_handles_;
+    int sockfd_;
+    server::IOWorker* io_worker_;
 
     std::string log_header_;
 
     nghttp2_session* h2_session_;
     nghttp2_error_code h2_error_code_;
-    bool uv_write_for_mem_send_ongoing_;
-    uv_write_t write_req_for_mem_send_;
+    bool mem_send_ongoing_;
 
     struct H2StreamContext;
     utils::SimpleObjectPool<H2StreamContext> h2_stream_context_pool_;
     utils::SimpleObjectPool<FuncCallContext> func_call_contexts_;
     absl::flat_hash_map</* stream_id */ int32_t, FuncCallContext*> grpc_calls_;
 
-    DECLARE_UV_READ_CB_FOR_CLASS(RecvData);
-    DECLARE_UV_WRITE_CB_FOR_CLASS(DataWritten);
-    DECLARE_UV_ALLOC_CB_FOR_CLASS(BufferAlloc);
-    DECLARE_UV_CLOSE_CB_FOR_CLASS(Close);
+    bool OnRecvData(int status, std::span<const char> data);
 
     H2StreamContext* H2NewStreamContext(int stream_id);
     H2StreamContext* H2GetStreamContext(int stream_id);
@@ -99,8 +91,8 @@ private:
                                         void* user_data);
     static int H2OnDataChunkRecvCallback(nghttp2_session* session, uint8_t flags, int32_t stream_id,
                                          const uint8_t* data, size_t len, void* user_data);
-    static ssize_t H2DataSourceReadCallback(nghttp2_session* session, int32_t stream_id, uint8_t* buf,
-                                            size_t length, uint32_t* data_flags,
+    static ssize_t H2DataSourceReadCallback(nghttp2_session* session, int32_t stream_id,
+                                            uint8_t* buf, size_t length, uint32_t* data_flags,
                                             nghttp2_data_source* source, void* user_data);
     static int H2SendDataCallback(nghttp2_session* session, nghttp2_frame* frame,
                                   const uint8_t* framehd, size_t length,

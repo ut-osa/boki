@@ -3,7 +3,7 @@
 #include "base/common.h"
 #include "common/protocol.h"
 #include "utils/appendable_buffer.h"
-#include "server/connection_base.h"
+#include "server/io_worker.h"
 
 namespace faas {
 namespace gateway {

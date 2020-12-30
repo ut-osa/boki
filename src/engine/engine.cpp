@@ -97,9 +97,9 @@ void Engine::SetupGatewayConnections() {
             HLOG(FATAL) << fmt::format("Failed to connect to gateway {}:{}",
                                        gateway_addr_, gateway_port_);
         }
-        std::shared_ptr<ConnectionBase> connection(
+        std::shared_ptr<server::ConnectionBase> connection(
             new GatewayConnection(this, gsl::narrow_cast<uint16_t>(i), sockfd));
-        IOWorker* io_worker = io_workers_[i % num_io_workers_];
+        server::IOWorker* io_worker = io_workers_[i % num_io_workers_];
         RegisterConnection(io_worker, connection.get());
         DCHECK_GE(connection->id(), 0);
         DCHECK(!gateway_connections_.contains(connection->id()));
@@ -161,16 +161,16 @@ void Engine::SetupSharedLog() {
                 HLOG(FATAL) << fmt::format("Failed to connect to sequencer {}:{}",
                                            peer->host_addr, peer->engine_conn_port);
             }
-            std::shared_ptr<ConnectionBase> connection(
+            std::shared_ptr<server::ConnectionBase> connection(
                 new SequencerConnection(this, slog_engine_.get(), peer->id, sockfd));
-            IOWorker* io_worker = io_workers_[i % num_io_workers_];
+            server::IOWorker* io_worker = io_workers_[i % num_io_workers_];
             RegisterConnection(io_worker, connection.get());
             DCHECK_GE(connection->id(), 0);
             DCHECK(!sequencer_connections_.contains(connection->id()));
             sequencer_connections_[connection->id()] = std::move(connection);
         }
     });
-    // Setup SharedLogMessageHub for each IOWorker
+    // Setup SharedLogMessageHub for each server::IOWorker
     for (size_t i = 0; i < io_workers_.size(); i++) {
         auto hub = std::make_unique<SLogMessageHub>(slog_engine_.get());
         RegisterConnection(io_workers_[i], hub.get());
@@ -187,14 +187,14 @@ void Engine::StopInternal() {
     }
 }
 
-Timer* Engine::CreateTimer(int timer_type, IOWorker* io_worker, Timer::Callback cb) {
+Timer* Engine::CreateTimer(int timer_type, server::IOWorker* io_worker, Timer::Callback cb) {
     Timer* timer = new Timer(timer_type, cb);
     RegisterConnection(io_worker, timer);
     timers_.insert(std::unique_ptr<Timer>(timer));
     return timer;
 }
 
-Timer* Engine::CreatePeriodicTimer(int timer_type, IOWorker* io_worker,
+Timer* Engine::CreatePeriodicTimer(int timer_type, server::IOWorker* io_worker,
                                    absl::Time initial, absl::Duration duration,
                                    Timer::Callback cb) {
     Timer* timer = new Timer(timer_type, cb);
@@ -204,7 +204,7 @@ Timer* Engine::CreatePeriodicTimer(int timer_type, IOWorker* io_worker,
     return timer;
 }
 
-void Engine::OnConnectionClose(ConnectionBase* connection) {
+void Engine::OnConnectionClose(server::ConnectionBase* connection) {
     DCHECK(WithinMyEventLoopThread());
     int conn_type = (connection->type() & kConnectionTypeMask);
     if (conn_type == kMessageConnectionTypeId) {
@@ -573,11 +573,11 @@ void Engine::OnRecvMessage(MessageConnection* connection, const Message& message
 }
 
 void Engine::SendGatewayMessage(const GatewayMessage& message, std::span<const char> payload) {
-    IOWorker* io_worker = IOWorker::current();
+    server::IOWorker* io_worker = server::IOWorker::current();
     DCHECK(io_worker != nullptr);
-    ConnectionBase* conn = io_worker->PickConnection(kGatewayConnectionTypeId);
+    server::ConnectionBase* conn = io_worker->PickConnection(kGatewayConnectionTypeId);
     if (conn == nullptr) {
-        HLOG(ERROR) << "There is not GatewayConnection associated with current IOWorker";
+        HLOG(ERROR) << "There is not GatewayConnection associated with current server::IOWorker";
         return;
     }
     conn->as_ptr<GatewayConnection>()->SendMessage(message, payload);
@@ -671,9 +671,9 @@ void Engine::ProcessDiscardedFuncCallIfNecessary() {
 
 void Engine::OnNewMessageConnection(int sockfd) {
     HLOG(INFO) << "New message connection";
-    std::shared_ptr<ConnectionBase> connection(new MessageConnection(this, sockfd));
+    std::shared_ptr<server::ConnectionBase> connection(new MessageConnection(this, sockfd));
     DCHECK_LT(next_ipc_conn_worker_id_, io_workers_.size());
-    IOWorker* io_worker = io_workers_[next_ipc_conn_worker_id_];
+    server::IOWorker* io_worker = io_workers_[next_ipc_conn_worker_id_];
     next_ipc_conn_worker_id_ = (next_ipc_conn_worker_id_ + 1) % io_workers_.size();
     RegisterConnection(io_worker, connection.get());
     DCHECK_GE(connection->id(), 0);
@@ -684,10 +684,10 @@ void Engine::OnNewMessageConnection(int sockfd) {
 void Engine::OnNewSLogConnection(int sockfd) {
     HLOG(INFO) << "New shared log connection";
     DCHECK(slog_engine_ != nullptr);
-    std::shared_ptr<ConnectionBase> connection(
+    std::shared_ptr<server::ConnectionBase> connection(
         new IncomingSLogConnection(slog_engine_.get(), sockfd));
     DCHECK_LT(next_shared_log_conn_worker_id_, io_workers_.size());
-    IOWorker* io_worker = io_workers_[next_shared_log_conn_worker_id_];
+    server::IOWorker* io_worker = io_workers_[next_shared_log_conn_worker_id_];
     next_shared_log_conn_worker_id_ = (next_shared_log_conn_worker_id_ + 1) % io_workers_.size();
     RegisterConnection(io_worker, connection.get());
     DCHECK_GE(connection->id(), 0);

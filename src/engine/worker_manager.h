@@ -30,7 +30,7 @@ private:
     std::atomic<uint16_t> next_client_id_;
 
     absl::Mutex mu_;
-    absl::flat_hash_map</* func_id */ uint16_t, std::shared_ptr<ConnectionBase>>
+    absl::flat_hash_map</* func_id */ uint16_t, std::shared_ptr<server::ConnectionBase>>
         launcher_connections_ ABSL_GUARDED_BY(mu_);
     absl::flat_hash_map</* client_id */ uint16_t, std::shared_ptr<FuncWorker>>
         func_workers_ ABSL_GUARDED_BY(mu_);
@@ -54,7 +54,7 @@ public:
 private:
     uint16_t func_id_;
     uint16_t client_id_;
-    std::shared_ptr<ConnectionBase> message_connection_;
+    std::shared_ptr<server::ConnectionBase> message_connection_;
 
     DISALLOW_COPY_AND_ASSIGN(FuncWorker);
 };

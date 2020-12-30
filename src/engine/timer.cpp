@@ -7,7 +7,7 @@ namespace faas {
 namespace engine {
 
 Timer::Timer(int timer_type, Callback cb)
-    : ConnectionBase(timer_type),
+    : server::ConnectionBase(timer_type),
       periodic_(false),
       cb_(cb), io_worker_(nullptr), state_(kCreated),
       timerfd_(-1) {}
@@ -24,7 +24,7 @@ void Timer::SetPeriodic(absl::Time initial, absl::Duration duration) {
     duration_ = duration;
 }
 
-void Timer::Start(IOWorker* io_worker) {
+void Timer::Start(server::IOWorker* io_worker) {
     DCHECK(io_worker->WithinMyEventLoopThread());
     io_worker_ = io_worker;
     timerfd_ = io_utils::CreateTimerFd();
@@ -41,7 +41,7 @@ void Timer::Start(IOWorker* io_worker) {
         state_ = kScheduled;
     }
     URING_DCHECK_OK(current_io_uring()->StartRead(
-        timerfd_, IOWorker::kOctaBufGroup,
+        timerfd_, server::IOWorker::kOctaBufGroup,
         [this] (int status, std::span<const char> data) -> bool {
             if (state_ != kScheduled) {
                 return false;

@@ -9,7 +9,7 @@ namespace faas {
 namespace engine {
 
 IncomingSLogConnection::IncomingSLogConnection(SLogEngine* slog_engine, int sockfd)
-    : ConnectionBase(kIncomingSLogConnectionTypeId),
+    : server::ConnectionBase(kIncomingSLogConnectionTypeId),
       slog_engine_(slog_engine), state_(kCreated), sockfd_(sockfd),
       log_header_("IncomingSLogConnection: ") {}
 
@@ -17,7 +17,7 @@ IncomingSLogConnection::~IncomingSLogConnection() {
     DCHECK(state_ == kCreated || state_ == kClosed);
 }
 
-void IncomingSLogConnection::Start(IOWorker* io_worker) {
+void IncomingSLogConnection::Start(server::IOWorker* io_worker) {
     DCHECK(state_ == kCreated);
     DCHECK(io_worker->WithinMyEventLoopThread());
     io_worker_ = io_worker;
@@ -79,7 +79,7 @@ bool IncomingSLogConnection::OnRecvData(int status, std::span<const char> data) 
 }
 
 SLogMessageHub::SLogMessageHub(SLogEngine* slog_engine)
-    : ConnectionBase(kSLogMessageHubTypeId),
+    : server::ConnectionBase(kSLogMessageHubTypeId),
       slog_engine_(slog_engine), state_(kCreated),
       log_header_("SLogMessageHub: ") {
 }
@@ -88,7 +88,7 @@ SLogMessageHub::~SLogMessageHub() {
     DCHECK(state_ == kCreated || state_ == kClosed);
 }
 
-void SLogMessageHub::Start(IOWorker* io_worker) {
+void SLogMessageHub::Start(server::IOWorker* io_worker) {
     io_worker_ = io_worker;
     state_ = kRunning;
 }
@@ -102,7 +102,7 @@ public:
     int id() const { return id_; }
     uint16_t node_id() const { return node_id_; }
 
-    void Start(IOWorker* io_worker);
+    void Start(server::IOWorker* io_worker);
     void ScheduleClose();
 
     void SendMessage(const protocol::Message& message);
@@ -114,7 +114,7 @@ private:
     int id_;
     uint16_t node_id_;
     struct sockaddr_in addr_;
-    IOWorker* io_worker_;
+    server::IOWorker* io_worker_;
     State state_;
     int sockfd_;
 
@@ -135,7 +135,7 @@ SLogMessageHub::Connection::~Connection() {
     DCHECK(state_ == kCreated || state_ == kClosed);
 }
 
-void SLogMessageHub::Connection::Start(IOWorker* io_worker) {
+void SLogMessageHub::Connection::Start(server::IOWorker* io_worker) {
     DCHECK(state_ == kCreated);
     DCHECK(io_worker->WithinMyEventLoopThread());
     io_worker_ = io_worker;

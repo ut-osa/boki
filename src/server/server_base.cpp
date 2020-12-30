@@ -1,5 +1,12 @@
 #include "server/server_base.h"
 
+#include "utils/io.h"
+
+#include <sys/types.h>
+#include <sys/eventfd.h>
+#include <fcntl.h>
+#include <poll.h>
+
 #define log_header_ "Server: "
 
 namespace faas {
@@ -9,16 +16,12 @@ ServerBase::ServerBase()
     : state_(kCreated),
       event_loop_thread_("Server/EL", absl::bind_front(&ServerBase::EventLoopThreadMain, this)),
       next_connection_id_(0) {
-    UV_DCHECK_OK(uv_loop_init(&uv_loop_));
-    uv_loop_.data = &event_loop_thread_;
-    UV_DCHECK_OK(uv_async_init(&uv_loop_, &stop_event_, &ServerBase::StopCallback));
-    stop_event_.data = this;
+    stop_eventfd_ = eventfd(0, 0);
+    PCHECK(stop_eventfd_ >= 0) << "Failed to create eventfd";
 }
 
 ServerBase::~ServerBase() {
-    State state = state_.load();
-    DCHECK(state == kCreated || state == kStopped);
-    UV_DCHECK_OK(uv_loop_close(&uv_loop_));
+    PCHECK(close(stop_eventfd_) == 0) << "Failed to close eventfd";
 }
 
 void ServerBase::Start() {
@@ -31,111 +34,155 @@ void ServerBase::Start() {
 
 void ServerBase::ScheduleStop() {
     HLOG(INFO) << "Scheduled to stop";
-    UV_DCHECK_OK(uv_async_send(&stop_event_));
+    DCHECK(stop_eventfd_ >= 0);
+    PCHECK(eventfd_write(stop_eventfd_, 1) == 0) << "eventfd_write failed";
 }
 
 void ServerBase::WaitForFinish() {
     DCHECK(state_.load() != kCreated);
-    for (const auto& io_worker : io_workers_) {
-        io_worker->WaitForFinish();
-    }
     event_loop_thread_.Join();
     DCHECK(state_.load() == kStopped);
     HLOG(INFO) << "Stopped";
 }
 
+bool ServerBase::WithinMyEventLoopThread() {
+    return base::Thread::current() == &event_loop_thread_;
+}
+
 void ServerBase::EventLoopThreadMain() {
+    std::vector<struct pollfd> pollfds;
+    // Add stop_eventfd_
+    pollfds.push_back({ .fd = stop_eventfd_, .events = POLLIN, .revents = 0 });
+    // Add all pipe fds to workers
+    for (const auto& item : pipes_to_io_worker_) {
+        pollfds.push_back({ .fd = item.second, .events = POLLIN, .revents = 0 });
+    }
+    // Add all fds registered with ListenForNewConnections
+    for (const auto& item : connection_cbs_) {
+        pollfds.push_back({ .fd = item.first, .events = POLLIN, .revents = 0 });
+    }
     HLOG(INFO) << "Event loop starts";
-    int ret = uv_run(&uv_loop_, UV_RUN_DEFAULT);
-    if (ret != 0) {
-        HLOG(WARNING) << "uv_run returns non-zero value: " << ret;
+    bool stopped = false;
+    while (!stopped) {
+        int ret = poll(pollfds.data(), pollfds.size(), /* timeout= */ -1);
+        PCHECK(ret >= 0) << "poll failed";
+        for (const auto& item : pollfds) {
+            if (item.revents == 0) {
+                continue;
+            }
+            CHECK((item.revents & POLLNVAL) == 0) << fmt::format("Invalid fd {}", item.fd);
+            if ((item.revents & POLLERR) != 0 || (item.revents & POLLHUP) != 0) {
+                if (connection_cbs_.contains(item.fd)) {
+                    HLOG(ERROR) << fmt::format("Error happens on server fd {}", item.fd);
+                } else {
+                    HLOG(FATAL) << fmt::format("Error happens on fd {}", item.fd);
+                }
+            } else if (item.revents & POLLIN) {
+                if (item.fd == stop_eventfd_) {
+                    HLOG(INFO) << "Receive stop event";
+                    uint64_t value;
+                    PCHECK(eventfd_read(stop_eventfd_, &value) == 0) << "eventfd_read failed";
+                    DoStop();
+                    stopped = true;
+                    break;
+                } else if (connection_cbs_.contains(item.fd)) {
+                    DoAcceptConnection(item.fd);
+                } else {
+                    DoReadClosedConnection(item.fd);
+                }
+            } else {
+                UNREACHABLE();
+            }
+        }
     }
     HLOG(INFO) << "Event loop finishes";
     state_.store(kStopped);
 }
 
-namespace {
-static void PipeReadBufferAllocCallback(uv_handle_t* handle, size_t suggested_size, uv_buf_t* buf) {
-    size_t buf_size = 256;
-    buf->base = reinterpret_cast<char*>(malloc(buf_size));
-    buf->len = buf_size;
-}
-}
-
-IOWorker* ServerBase::CreateIOWorker(std::string_view worker_name,
-                                     size_t read_buffer_size, size_t write_buffer_size) {
+IOWorker* ServerBase::CreateIOWorker(std::string_view worker_name, size_t write_buffer_size) {
     DCHECK(state_.load() == kCreated);
-    auto io_worker = std::make_unique<IOWorker>(worker_name, read_buffer_size, write_buffer_size);
+    auto io_worker = std::make_unique<IOWorker>(worker_name, write_buffer_size);
     int pipe_fds[2] = { -1, -1 };
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, pipe_fds) < 0) {
         PLOG(FATAL) << "socketpair failed";
     }
-    uv_pipe_t* pipe_to_worker = new uv_pipe_t;
-    UV_CHECK_OK(uv_pipe_init(&uv_loop_, pipe_to_worker, 1));
-    pipe_to_worker->data = this;
-    UV_CHECK_OK(uv_pipe_open(pipe_to_worker, pipe_fds[0]));
-    UV_CHECK_OK(uv_read_start(UV_AS_STREAM(pipe_to_worker),
-                              &PipeReadBufferAllocCallback,
-                              &ServerBase::ReturnConnectionCallback));
     io_worker->Start(pipe_fds[1]);
-    pipes_to_io_worker_[io_worker.get()] = std::unique_ptr<uv_pipe_t>(pipe_to_worker);
+    pipes_to_io_worker_[io_worker.get()] = pipe_fds[0];
     IOWorker* ret = io_worker.get();
     io_workers_.insert(std::move(io_worker));
     return ret;
 }
 
-void ServerBase::RegisterConnection(IOWorker* io_worker, ConnectionBase* connection,
-                                    uv_stream_t* uv_handle) {
-    DCHECK_IN_EVENT_LOOP_THREAD(&uv_loop_);
-    uv_write_t* write_req = connection->uv_write_req_for_transfer();
-    void** buf = reinterpret_cast<void**>(connection->pipe_write_buf_for_transfer());
-    *buf = connection;
-    uv_buf_t uv_buf = uv_buf_init(reinterpret_cast<char*>(buf), __FAAS_PTR_SIZE);
-    uv_pipe_t* pipe_to_worker = pipes_to_io_worker_[io_worker].get();
-    write_req->data = uv_handle;
+void ServerBase::RegisterConnection(IOWorker* io_worker, ConnectionBase* connection) {
     connection->set_id(next_connection_id_++);
-    UV_DCHECK_OK(uv_write2(write_req, UV_AS_STREAM(pipe_to_worker),
-                           &uv_buf, 1, UV_AS_STREAM(uv_handle),
-                           &PipeWrite2Callback));
+    DCHECK(pipes_to_io_worker_.contains(io_worker));
+    int pipe_to_worker = pipes_to_io_worker_[io_worker];
+    ssize_t ret = write(pipe_to_worker, &connection, __FAAS_PTR_SIZE);
+    if (ret < 0) {
+        PLOG(FATAL) << "Write failed on pipe to IOWorker";
+    } else {
+        CHECK_EQ(ret, __FAAS_PTR_SIZE);
+    }
 }
 
-UV_ASYNC_CB_FOR_CLASS(ServerBase, Stop) {
+void ServerBase::ListenForNewConnections(int server_sockfd, ConnectionCallback cb) {
+    DCHECK(state_.load() == kCreated);
+    io_utils::FdSetNonblocking(server_sockfd);
+    connection_cbs_[server_sockfd] = cb;
+}
+
+void ServerBase::DoStop() {
+    DCHECK(WithinMyEventLoopThread());
     if (state_.load(std::memory_order_consume) == kStopping) {
         HLOG(WARNING) << "Already in stopping state";
         return;
     }
+    state_.store(kStopping);
     HLOG(INFO) << "Start stopping process";
     for (const auto& io_worker : io_workers_) {
         io_worker->ScheduleStop();
-        uv_pipe_t* pipe = pipes_to_io_worker_[io_worker.get()].get();
-        UV_DCHECK_OK(uv_read_stop(UV_AS_STREAM(pipe)));
-        uv_close(UV_AS_HANDLE(pipe), nullptr);
     }
-    uv_close(UV_AS_HANDLE(&stop_event_), nullptr);
+    for (const auto& io_worker : io_workers_) {
+        io_worker->WaitForFinish();
+        int pipefd = pipes_to_io_worker_[io_worker.get()];
+        PCHECK(close(pipefd) == 0) << "Failed to close pipe to IOWorker";
+    }
+    HLOG(INFO) << "All IOWorker finish";
     StopInternal();
-    state_.store(kStopping);
 }
 
-UV_READ_CB_FOR_CLASS(ServerBase, ReturnConnection) {
-    if (nread < 0) {
-        if (nread == UV_EOF) {
-            HLOG(WARNING) << "Pipe is closed by the corresponding IO worker";
-        } else {
-            HLOG(ERROR) << "Failed to read from pipe: " << uv_strerror(nread);
+void ServerBase::DoReadClosedConnection(int pipefd) {
+    DCHECK(WithinMyEventLoopThread());
+    while (true) {
+        ConnectionBase* connection;
+        ssize_t ret = recv(pipefd, &connection, __FAAS_PTR_SIZE, MSG_DONTWAIT);
+        if (ret < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                break;
+            } else {
+                PLOG(FATAL) << "Read failed on pipe to IOWorker";
+            }
         }
-    } else if (nread > 0) {
-        utils::ReadMessages<ConnectionBase*>(
-            &return_connection_read_buffer_, buf->base, nread,
-            [this] (ConnectionBase** connection) {
-                OnConnectionClose(*connection);
-            });
+        CHECK_EQ(ret, __FAAS_PTR_SIZE);
+        OnConnectionClose(connection);
     }
-    free(buf->base);
 }
 
-UV_WRITE_CB_FOR_CLASS(ServerBase, PipeWrite2) {
-    DCHECK(status == 0) << "Failed to write to pipe: " << uv_strerror(status);
-    uv_close(UV_AS_HANDLE(req->data), uv::HandleFreeCallback);
+void ServerBase::DoAcceptConnection(int server_sockfd) {
+    DCHECK(WithinMyEventLoopThread());
+    DCHECK(connection_cbs_.contains(server_sockfd));
+    while (true) {
+        int client_sockfd = accept4(server_sockfd, nullptr, nullptr, 0);
+        if (client_sockfd < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                break;
+            } else {
+                PLOG(ERROR) << fmt::format("Accept failed on server fd {}", server_sockfd);
+            }
+        } else {
+            connection_cbs_[server_sockfd](client_sockfd);
+        }
+    }
 }
 
 }  // namespace server

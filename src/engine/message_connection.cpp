@@ -15,7 +15,7 @@ using protocol::Message;
 using protocol::MessageHelper;
 
 MessageConnection::MessageConnection(Engine* engine, int sockfd)
-    : ConnectionBase(kMessageConnectionTypeId),
+    : server::ConnectionBase(kMessageConnectionTypeId),
       engine_(engine), io_worker_(nullptr), state_(kCreated),
       func_id_(0), client_id_(0), handshake_done_(false),
       sockfd_(sockfd), in_fifo_fd_(-1), out_fifo_fd_(-1), pipe_for_write_fd_(-1),
@@ -26,7 +26,7 @@ MessageConnection::~MessageConnection() {
     DCHECK(state_ == kCreated || state_ == kClosed);
 }
 
-void MessageConnection::Start(IOWorker* io_worker) {
+void MessageConnection::Start(server::IOWorker* io_worker) {
     DCHECK(state_ == kCreated);
     DCHECK(io_worker->WithinMyEventLoopThread());
     io_worker_ = io_worker;
@@ -271,10 +271,10 @@ bool MessageConnection::OnRecvData(int status, std::span<const char> data) {
         &message_buffer_, data.data(), data.size(),
         [this] (Message* message) {
             engine_->OnRecvMessage(this, *message);
-            IOWorker::current()->message_counter()->Tick();
+            server::IOWorker::current()->message_counter()->Tick();
         });
     int64_t elasped_time = GetMonotonicNanoTimestamp() - start_timestamp;
-    IOWorker::current()->message_processing_time_counter()->Tick(
+    server::IOWorker::current()->message_processing_time_counter()->Tick(
         gsl::narrow_cast<int>(elasped_time));
     return true;
 }
@@ -284,7 +284,7 @@ bool MessageConnection::WriteMessageWithFifo(const protocol::Message& message) {
     if (fd == -1) {
         return false;
     }
-    IOWorker* current = IOWorker::current();
+    server::IOWorker* current = server::IOWorker::current();
     if (current == nullptr) {
         return false;
     }

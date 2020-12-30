@@ -1,12 +1,20 @@
-#include "engine/io_uring.h"
+#include "server/io_uring.h"
 
 #include "common/time.h"
-#include "engine/flags.h"
+
+#include <absl/flags/flag.h>
+
+ABSL_FLAG(size_t, io_uring_entries, 2048, "");
+ABSL_FLAG(size_t, io_uring_fd_slots, 1024, "");
+ABSL_FLAG(bool, io_uring_sqpoll, false, "");
+ABSL_FLAG(int, io_uring_sq_thread_idle_ms, 1, "");
+ABSL_FLAG(int, io_uring_cq_nr_wait, 1, "");
+ABSL_FLAG(int, io_uring_cq_wait_timeout_us, 0, "");
 
 #define ERRNO_LOGSTR(errno) fmt::format("{} [{}]", strerror(errno), errno)
 
 namespace faas {
-namespace engine {
+namespace server {
 
 std::atomic<int> IOUring::next_uring_id_{0};
 
@@ -166,6 +174,9 @@ bool IOUring::StopReadOrRecv(int fd) {
 }
 
 bool IOUring::Write(int fd, std::span<const char> data, WriteCallback cb) {
+    if (data.size() == 0) {
+        return false;
+    }
     GET_AND_CHECK_DESC(fd, desc);
     Op* op = AllocWriteOp(desc, data);
     write_cbs_[op->id] = cb;
@@ -174,8 +185,12 @@ bool IOUring::Write(int fd, std::span<const char> data, WriteCallback cb) {
 }
 
 bool IOUring::SendAll(int fd, std::span<const char> data, SendAllCallback cb) {
+    if (data.size() == 0) {
+        return false;
+    }
     GET_AND_CHECK_DESC(fd, desc);
     Op* op = AllocSendAllOp(desc, data);
+    op->root_op = op->id;
     sendall_cbs_[op->id] = cb;
     if (desc->last_send_op != nullptr) {
         Op* last_op = desc->last_send_op;
@@ -186,6 +201,44 @@ bool IOUring::SendAll(int fd, std::span<const char> data, SendAllCallback cb) {
         EnqueueOp(op);
     }
     desc->last_send_op = op;
+    return true;
+}
+
+bool IOUring::SendAll(int fd, const std::vector<std::span<const char>>& data_vec,
+                      SendAllCallback cb) {
+    GET_AND_CHECK_DESC(fd, desc);
+    Op* first_op = nullptr;
+    Op* last_op = desc->last_send_op;
+    for (std::span<const char> data : data_vec) {
+        if (data.size() > 0) {
+            Op* op = AllocSendAllOp(desc, data);
+            if (first_op == nullptr) {
+                first_op = op;
+            }
+            if (last_op != nullptr) {
+                DCHECK_EQ(op_type(last_op), kSendAll);
+                DCHECK_EQ(last_op->next_op, kInvalidOpId);
+                last_op->next_op = op->id;
+            }
+            last_op = op;
+        }
+    }
+    if (first_op == nullptr) {
+        return false;
+    }
+    DCHECK(last_op != desc->last_send_op);
+    Op* op = first_op;
+    while (op != last_op) {
+        op->root_op = last_op->id;
+        DCHECK_NE(op->next_op, kInvalidOpId);
+        DCHECK(ops_.contains(op->next_op));
+        op = ops_[op->next_op];
+    }
+    sendall_cbs_[first_op->id] = cb;
+    if (desc->last_send_op == nullptr) {
+        EnqueueOp(first_op);
+    }
+    desc->last_send_op = last_op;
     return true;
 }
 
@@ -283,6 +336,7 @@ void IOUring::EventLoopRunOnce(int* inflight_ops) {
     OP_VAR->flags = 0;                \
     OP_VAR->buf = nullptr;            \
     OP_VAR->buf_len = 0;              \
+    OP_VAR->root_op = kInvalidOpId;   \
     OP_VAR->next_op = kInvalidOpId;   \
     ops_[op->id] = op
 
@@ -334,7 +388,7 @@ IOUring::Op* IOUring::AllocCloseOp(int fd) {
 
 IOUring::Op* IOUring::AllocCancelOp(uint64_t op_id) {
     ALLOC_OP(kCancel, op);
-    op->next_op = op_id;
+    op->root_op = op_id;
     return op;
 }
 
@@ -387,7 +441,7 @@ void IOUring::EnqueueOp(Op* op) {
         io_uring_prep_close(sqe, op->fd);
         break;
     case kCancel:
-        io_uring_prep_cancel(sqe, reinterpret_cast<void*>(op->next_op), 0);
+        io_uring_prep_cancel(sqe, reinterpret_cast<void*>(op->root_op), 0);
         break;
     default:
         UNREACHABLE();
@@ -420,7 +474,6 @@ void IOUring::OnOpComplete(Op* op, struct io_uring_cqe* cqe) {
         if (res < 0 && res != -EALREADY) {
             LOG(WARNING) << "Cancel Op failed: " << ERRNO_LOGSTR(-res);
         }
-        op->next_op = kInvalidOpId;
         break;
     default:
         UNREACHABLE();
@@ -498,27 +551,65 @@ void IOUring::HandleSendallOpComplete(Op* op, int res, Op** next_op) {
     DCHECK_EQ(op_type(op), kSendAll);
     DCHECK(sendall_cbs_.contains(op->id));
     DCHECK(op->desc != nullptr);
+    SendAllCallback cb;
+    cb.swap(sendall_cbs_[op->id]);
+    sendall_cbs_.erase(op->id);
     if (res >= 0) {
         size_t nwrite = gsl::narrow_cast<size_t>(res);
         if (nwrite == op->buf_len) {
-            sendall_cbs_[op->id](0);
+            if (op->root_op == kInvalidOpId) {
+                cb(0);
+                if (op->desc->last_send_op == op) {
+                    DCHECK_EQ(op->next_op, kInvalidOpId);
+                    op->desc->last_send_op = nullptr;
+                }
+            } else {
+                DCHECK_NE(op->next_op, kInvalidOpId);
+                sendall_cbs_[op->next_op].swap(cb);
+            }
         } else {
             std::span<const char> remaining_data(op->buf + nwrite, op->buf_len - nwrite);
             Op* new_op = AllocSendAllOp(op->desc, remaining_data);
+            new_op->root_op = op->root_op;
             new_op->next_op = op->next_op;
-            sendall_cbs_[new_op->id].swap(sendall_cbs_[op->id]);
+            sendall_cbs_[new_op->id].swap(cb);
             if (op->desc->last_send_op == op) {
+                DCHECK_EQ(op->next_op, kInvalidOpId);
                 op->desc->last_send_op = new_op;
             }
             *next_op = new_op;
         }
     } else {
         errno = -res;
-        sendall_cbs_[op->id](-1);
-    }
-    sendall_cbs_.erase(op->id);
-    if (op->desc->last_send_op == op) {
-        op->desc->last_send_op = nullptr;
+        cb(-1);
+        if (op->root_op != kInvalidOpId) {
+            uint64_t final = op->root_op;
+            DCHECK(ops_.contains(final));
+            Op* final_op = ops_[final];
+            DCHECK_EQ(final_op->root_op, kInvalidOpId);
+            uint64_t cur = op->next_op;
+            while (cur != final) {
+                DCHECK_NE(cur, kInvalidOpId);
+                DCHECK(ops_.contains(cur));
+                Op* tmp_op = ops_[cur];
+                DCHECK_EQ(tmp_op->desc, op->desc);
+                op->desc->op_count--;
+                op_pool_.Return(tmp_op);
+                cur = tmp_op->next_op;
+            }
+            op->next_op = final_op->next_op;
+            if (op->desc->last_send_op == final_op) {
+                DCHECK_EQ(final_op->next_op, kInvalidOpId);
+                op->desc->last_send_op = nullptr;
+            }
+            op->desc->op_count--;
+            op_pool_.Return(final_op);
+        } else {
+            if (op->desc->last_send_op == op) {
+                DCHECK_EQ(op->next_op, kInvalidOpId);
+                op->desc->last_send_op = nullptr;
+            }
+        }
     }
 }
 
@@ -533,5 +624,5 @@ void IOUring::HandleCloseOpComplete(Op* op, int res) {
     close_cbs_.erase(op->id);
 }
 
-}  // namespace engine
+}  // namespace server
 }  // namespace faas

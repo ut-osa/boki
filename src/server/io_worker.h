@@ -2,21 +2,55 @@
 
 #include "base/common.h"
 #include "base/thread.h"
-#include "common/uv.h"
-#include "common/stat.h"
 #include "utils/buffer_pool.h"
-#include "utils/object_pool.h"
-#include "server/connection_base.h"
+#include "common/stat.h"
+#include "server/io_uring.h"
 
 namespace faas {
 namespace server {
 
-class IOWorker final : public uv::Base {
+class IOWorker;
+
+class ConnectionBase : public std::enable_shared_from_this<ConnectionBase> {
 public:
-    IOWorker(std::string_view worker_name, size_t read_buffer_size, size_t write_buffer_size);
+    explicit ConnectionBase(int type = -1) : type_(type), id_(-1) {}
+    virtual ~ConnectionBase() {}
+
+    int type() const { return type_; }
+    int id() const { return id_; }
+
+    template<class T>
+    T* as_ptr() { return static_cast<T*>(this); }
+    std::shared_ptr<ConnectionBase> ref_self() { return shared_from_this(); }
+
+    virtual void Start(IOWorker* io_worker) = 0;
+    virtual void ScheduleClose() = 0;
+
+    // Only used for transferring connection from Server to IOWorker
+    void set_id(int id) { id_ = id; }
+    char* pipe_write_buf_for_transfer() { return pipe_write_buf_for_transfer_; }
+
+protected:
+    int type_;
+    int id_;
+
+    static IOUring* current_io_uring();
+
+private:
+    char pipe_write_buf_for_transfer_[__FAAS_PTR_SIZE];
+
+    DISALLOW_COPY_AND_ASSIGN(ConnectionBase);
+};
+
+class IOWorker final {
+public:
+    IOWorker(std::string_view worker_name, size_t write_buffer_size);
     ~IOWorker();
 
+    static constexpr uint16_t kOctaBufGroup = 255;  // 8-byte buffer group
+
     std::string_view worker_name() const { return worker_name_; }
+    IOUring* io_uring() { return &io_uring_; }
 
     // Return current IOWorker within event loop thread
     static IOWorker* current() { return current_; }
@@ -24,17 +58,14 @@ public:
     void Start(int pipe_to_server_fd);
     void ScheduleStop();
     void WaitForFinish();
+    bool WithinMyEventLoopThread();
 
     // Called by Connection for ONLY once
     void OnConnectionClose(ConnectionBase* connection);
 
-    // Can only be called from uv_loop_
-    void NewReadBuffer(size_t suggested_size, uv_buf_t* buf);
-    void ReturnReadBuffer(const uv_buf_t* buf);
-    void NewWriteBuffer(uv_buf_t* buf);
-    void ReturnWriteBuffer(char* buf);
-    uv_write_t* NewWriteRequest();
-    void ReturnWriteRequest(uv_write_t* write_req);
+    // Can only be called from this worker's event loop
+    void NewWriteBuffer(std::span<char>* buf);
+    void ReturnWriteBuffer(std::span<char> buf);
     // Pick a connection of given type managed by this IOWorker
     ConnectionBase* PickConnection(int type);
 
@@ -45,29 +76,32 @@ public:
     // if it is closed.
     void ScheduleFunction(ConnectionBase* owner, std::function<void()> fn);
 
+    stat::Counter* message_counter() { return &message_counter_; }
+    stat::Counter* message_processing_time_counter() { return &message_processing_time_counter_; }
+
 private:
     enum State { kCreated, kRunning, kStopping, kStopped };
 
     std::string worker_name_;
     std::atomic<State> state_;
+    IOUring io_uring_;
     static thread_local IOWorker* current_;
 
-    std::string log_header_;
+    int eventfd_;
+    int pipe_to_server_fd_;
 
-    uv_loop_t uv_loop_;
-    uv_async_t stop_event_;
-    uv_pipe_t pipe_to_server_;
-    uv_async_t run_fn_event_;
+    std::string log_header_;
 
     base::Thread event_loop_thread_;
     absl::flat_hash_map</* id */ int, ConnectionBase*> connections_;
     absl::flat_hash_map</* type */ int, absl::flat_hash_set</* id */ int>> connections_by_type_;
     absl::flat_hash_map</* type */ int, std::vector<ConnectionBase*>> connections_for_pick_;
     absl::flat_hash_map</* type */ int, size_t> connections_for_pick_rr_;
-    utils::BufferPool read_buffer_pool_;
     utils::BufferPool write_buffer_pool_;
-    utils::SimpleObjectPool<uv_write_t> write_req_pool_;
     int connections_on_closing_;
+
+    stat::Counter message_counter_;
+    stat::Counter message_processing_time_counter_;
 
     struct ScheduledFunction {
         int owner_id;
@@ -76,16 +110,12 @@ private:
     absl::Mutex scheduled_function_mu_;
     absl::InlinedVector<std::unique_ptr<ScheduledFunction>, 16>
         scheduled_functions_ ABSL_GUARDED_BY(scheduled_function_mu_);
-    std::atomic<int64_t> async_event_recv_timestamp_;
-
-    stat::StatisticsCollector<int32_t> uv_async_delay_stat_;
 
     void EventLoopThreadMain();
-
-    DECLARE_UV_ASYNC_CB_FOR_CLASS(Stop);
-    DECLARE_UV_READ_CB_FOR_CLASS(NewConnection);
-    DECLARE_UV_WRITE_CB_FOR_CLASS(PipeWrite);
-    DECLARE_UV_ASYNC_CB_FOR_CLASS(RunScheduledFunctions);
+    void OnNewConnection(ConnectionBase* connection);
+    void RunScheduledFunctions();
+    void StopInternal();
+    void CloseWorkerFds();
 
     DISALLOW_COPY_AND_ASSIGN(IOWorker);
 };

@@ -145,7 +145,7 @@ bool NodeManager::SendMessage(uint16_t node_id, const protocol::GatewayMessage& 
         payload_copy = std::span<const char>(buf, payload.size());
     }
     EngineConnection* engine_connection = connection->as_ptr<EngineConnection>();
-    connection->io_worker()->ScheduleFunction(
+    engine_connection->io_worker()->ScheduleFunction(
         connection.get(), [engine_connection, message_copy, payload_copy, buf] () {
             engine_connection->SendMessage(message_copy, payload_copy);
             if (buf != nullptr) {

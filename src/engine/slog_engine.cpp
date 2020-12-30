@@ -135,7 +135,7 @@ void SLogEngine::SetupTimers() {
     size_t n_workers = engine_->io_workers_.size();
     absl::Duration duration = EngineCore::local_cut_interval();
     absl::Time initial = absl::Now() + absl::Milliseconds(200);
-    for (IOWorker* io_worker : engine_->io_workers_) {
+    for (server::IOWorker* io_worker : engine_->io_workers_) {
         engine_->CreatePeriodicTimer(
             kSLogLocalCutTimerTypeId, io_worker,
             initial, duration * n_workers,
@@ -756,7 +756,7 @@ void SLogEngine::ReplicateLog(const log::Fsm::View* view, uint64_t tag,
     Message message = MessageHelper::NewSharedLogReplicate(tag, localid);
     message.src_node_id = my_node_id();
     MessageHelper::SetInlineData(&message, data);
-    IOWorker* io_worker = IOWorker::current();
+    server::IOWorker* io_worker = server::IOWorker::current();
     DCHECK(io_worker != nullptr);
     SLogMessageHub* hub = DCHECK_NOTNULL(
         io_worker->PickConnection(kSLogMessageHubTypeId))->as_ptr<SLogMessageHub>();
@@ -880,16 +880,16 @@ void SLogEngine::SendFailedResponse(const protocol::Message& request,
 
 void SLogEngine::SendSequencerMessage(const protocol::SequencerMessage& message,
                                       std::span<const char> payload) {
-    IOWorker* io_worker = IOWorker::current();
+    server::IOWorker* io_worker = server::IOWorker::current();
     DCHECK(io_worker != nullptr);
     sequencer_config_->ForEachPeer([io_worker, &message, payload]
                                    (const SequencerConfig::Peer* peer) {
-        ConnectionBase* conn = io_worker->PickConnection(SequencerConnection::type_id(peer->id));
+        server::ConnectionBase* conn = io_worker->PickConnection(SequencerConnection::type_id(peer->id));
         if (conn != nullptr) {
             conn->as_ptr<SequencerConnection>()->SendMessage(message, payload);
         } else {
             HLOG(ERROR) << fmt::format("No connection for sequencer {} associated with "
-                                       "current IOWorker", peer->id);
+                                       "current server::IOWorker", peer->id);
         }
     });
 }
@@ -900,7 +900,7 @@ void SLogEngine::SendMessageToEngine(uint16_t node_id, protocol::Message* messag
 
 void SLogEngine::SendMessageToEngine(uint16_t src_node_id, uint16_t dst_node_id,
                                      protocol::Message* message) {
-    IOWorker* io_worker = IOWorker::current();
+    server::IOWorker* io_worker = server::IOWorker::current();
     DCHECK(io_worker != nullptr);
     SLogMessageHub* hub = DCHECK_NOTNULL(
         io_worker->PickConnection(kSLogMessageHubTypeId))->as_ptr<SLogMessageHub>();

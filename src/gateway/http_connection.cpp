@@ -1,6 +1,7 @@
 #include "gateway/http_connection.h"
 
 #include "common/time.h"
+#include "gateway/constants.h"
 #include "gateway/server.h"
 
 #include <nlohmann/json.hpp>
@@ -9,8 +10,11 @@ using json = nlohmann::json;
 namespace faas {
 namespace gateway {
 
-HttpConnection::HttpConnection(Server* server, int connection_id)
-    : server::ConnectionBase(kTypeId), server_(server), state_(kCreated),
+HttpConnection::HttpConnection(Server* server, int connection_id, int sockfd)
+    : server::ConnectionBase(kHttpConnectionTypeId),
+      server_(server),
+      state_(kCreated),
+      sockfd_(sockfd),
       log_header_(fmt::format("HttpConnection[{}]: ", connection_id)) {
     http_parser_init(&http_parser_, HTTP_REQUEST);
     http_parser_.data = this;
@@ -28,98 +32,72 @@ HttpConnection::~HttpConnection() {
     DCHECK(state_ == kCreated || state_ == kClosed);
 }
 
-uv_stream_t* HttpConnection::InitUVHandle(uv_loop_t* uv_loop) {
-    UV_DCHECK_OK(uv_tcp_init(uv_loop, &uv_tcp_handle_));
-    return UV_AS_STREAM(&uv_tcp_handle_);
-}
-
-void HttpConnection::Start() {
+void HttpConnection::Start(server::IOWorker* io_worker) {
     DCHECK(state_ == kCreated);
-    DCHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
-    uv_tcp_handle_.data = this;
-    response_write_req_.data = this;
+    DCHECK(io_worker->WithinMyEventLoopThread());
+    io_worker_ = io_worker;
+    current_io_uring()->PrepareBuffers(kHttpConnectionBufGroup, kBufSize);
+    URING_DCHECK_OK(current_io_uring()->RegisterFd(sockfd_));
     state_ = kRunning;
     StartRecvData();
 }
 
 void HttpConnection::ScheduleClose() {
-    DCHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
+    DCHECK(io_worker_->WithinMyEventLoopThread());
     if (state_ == kClosing) {
         HLOG(INFO) << "Already scheduled for closing";
         return;
     }
     DCHECK(state_ == kRunning);
-    uv_close(UV_AS_HANDLE(&uv_tcp_handle_), &HttpConnection::CloseCallback);
+    URING_DCHECK_OK(current_io_uring()->Close(sockfd_, [this] () {
+        DCHECK(state_ == kClosing);
+        state_ = kClosed;
+        io_worker_->OnConnectionClose(this);
+    }));
     state_ = kClosing;
 }
 
 void HttpConnection::StartRecvData() {
-    DCHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
+    DCHECK(io_worker_->WithinMyEventLoopThread());
     if (state_ != kRunning) {
         HLOG(WARNING) << "HttpConnection is closing or has closed, will not enable read event";
         return;
     }
-    UV_DCHECK_OK(uv_read_start(UV_AS_STREAM(&uv_tcp_handle_),
-                               &HttpConnection::BufferAllocCallback,
-                               &HttpConnection::RecvDataCallback));
+    URING_DCHECK_OK(current_io_uring()->StartRecv(
+        sockfd_, kHttpConnectionBufGroup,
+        absl::bind_front(&HttpConnection::OnRecvData, this)));
 }
 
 void HttpConnection::StopRecvData() {
-    DCHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
+    DCHECK(io_worker_->WithinMyEventLoopThread());
     if (state_ != kRunning) {
         HLOG(WARNING) << "HttpConnection is closing or has closed, will not enable read event";
         return;
     }
-    UV_DCHECK_OK(uv_read_stop(UV_AS_STREAM(&uv_tcp_handle_)));
+    URING_DCHECK_OK(current_io_uring()->StopReadOrRecv(sockfd_));
 }
 
-UV_READ_CB_FOR_CLASS(HttpConnection, RecvData) {
-    auto reclaim_worker_resource = gsl::finally([this, buf] {
-        if (buf->base != 0) {
-            io_worker_->ReturnReadBuffer(buf);
-        }
-    });
-    if (nread < 0) {
-        if (nread == UV_EOF || nread == UV_ECONNRESET) {
-            VLOG(1) << "HttpConnection closed by client";
-        } else {
-            HLOG(WARNING) << "Read error, will close the connection: " << uv_strerror(nread);
-        }
+bool HttpConnection::OnRecvData(int status, std::span<const char> data) {
+    DCHECK(io_worker_->WithinMyEventLoopThread());
+    if (status != 0) {
+        HPLOG(ERROR) << "Read error, will close this connection";
         ScheduleClose();
-        return;
-    }
-    if (nread == 0) {
-        HLOG(WARNING) << "nread=0, will do nothing";
-        return;
-    }
-    const char* data = buf->base;
-    size_t length = gsl::narrow_cast<size_t>(nread);
-    size_t parsed = http_parser_execute(&http_parser_, &http_parser_settings_, data, length);
-    if (parsed < length) {
-        HLOG(WARNING) << fmt::format("HTTP parsing failed: {}, will close the connection",
-                                     http_errno_name(static_cast<http_errno>(http_parser_.http_errno)));
+        return false;
+    } else if (data.size() == 0) {
+        HLOG(INFO) << "Connection closed remotely";
         ScheduleClose();
+        return false;
     }
-}
-
-UV_WRITE_CB_FOR_CLASS(HttpConnection, DataWritten) {
-    HVLOG(1) << "Successfully write response, will resume receiving new data";
-    if (status == 0) {
-        StartRecvData();
-    } else {
-        HLOG(WARNING) << "Write error, will close the connection: " << uv_strerror(status);
+    size_t parsed = http_parser_execute(&http_parser_, &http_parser_settings_,
+                                        data.data(), data.size());
+    if (parsed < data.size()) {
+        const char* err_str = http_errno_name(static_cast<http_errno>(http_parser_.http_errno));
+        HLOG(WARNING) << fmt::format("HTTP parsing failed: {}, "
+                                     "will close the connection", err_str);
         ScheduleClose();
+        return false;
     }
-}
-
-UV_ALLOC_CB_FOR_CLASS(HttpConnection, BufferAlloc) {
-    io_worker_->NewReadBuffer(suggested_size, buf);
-}
-
-UV_CLOSE_CB_FOR_CLASS(HttpConnection, Close) {
-    DCHECK(state_ == kClosing);
-    state_ = kClosed;
-    io_worker_->OnConnectionClose(this);
+    return true;
 }
 
 void HttpConnection::HttpParserOnMessageBegin() {
@@ -286,7 +264,7 @@ void HttpConnection::ResetHttpParser() {
 
 void HttpConnection::OnNewHttpRequest(std::string_view method, std::string_view path,
                                       std::string_view qs) {
-    DCHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
+    DCHECK(io_worker_->WithinMyEventLoopThread());
     HVLOG(1) << "New HTTP request: " << method << " " << path;
 
     if (!(method == "GET" || method == "POST")) {
@@ -333,7 +311,7 @@ void HttpConnection::OnFuncCallFinished(FuncCallContext* func_call_context) {
 }
 
 void HttpConnection::SendHttpResponse(HttpStatus status, std::span<const char> body) {
-    DCHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
+    DCHECK(io_worker_->WithinMyEventLoopThread());
     response_header_ = fmt::format(
         "HTTP/1.1 {}\r\n"
         "Date: {}\r\n"
@@ -348,25 +326,21 @@ void HttpConnection::SendHttpResponse(HttpStatus status, std::span<const char> b
         kResponseContentType,
         body.size()
     );
-    if (body.size() > 0) {
-        uv_buf_t bufs[] = {
-            { .base = const_cast<char*>(response_header_.data()), .len = response_header_.length() },
-            { .base = const_cast<char*>(body.data()), .len = body.size() }
-        };
-        UV_DCHECK_OK(uv_write(&response_write_req_, UV_AS_STREAM(&uv_tcp_handle_),
-                              bufs, 2, &HttpConnection::DataWrittenCallback));
-    } else {
-        uv_buf_t buf = {
-            .base = const_cast<char*>(response_header_.data()),
-            .len = response_header_.length()
-        };
-        UV_DCHECK_OK(uv_write(&response_write_req_, UV_AS_STREAM(&uv_tcp_handle_),
-                              &buf, 1, &HttpConnection::DataWrittenCallback));
-    }
+    std::span<const char> header(response_header_.data(), response_header_.size());
+    URING_DCHECK_OK(current_io_uring()->SendAll(
+        sockfd_, {header, body}, [this] (int status) {
+            if (status != 0) {
+                HPLOG(WARNING) << "Write error, will close the connection";
+                ScheduleClose();
+                return;
+            }
+            StartRecvData();
+        }
+    ));
 }
 
 void HttpConnection::OnFuncCallFinishedInternal() {
-    DCHECK_IN_EVENT_LOOP_THREAD(uv_tcp_handle_.loop);
+    DCHECK(io_worker_->WithinMyEventLoopThread());
     if (state_ != kRunning) {
         HLOG(WARNING) << "HttpConnection is closing or has closed, will not send response";
         return;
@@ -376,11 +350,10 @@ void HttpConnection::OnFuncCallFinishedInternal() {
         if (func_call_context_.is_async()) {
             uint64_t call_id = func_call_context_.func_call().full_call_id;
             std::string response = fmt::format("{:016x}\n", call_id);
-            SendHttpResponse(HttpStatus::OK,
-                             std::span<const char>(response.data(), response.size()));
-        } else {
-            SendHttpResponse(HttpStatus::OK, func_call_context_.output());
+            func_call_context_.append_output(
+                std::span<const char>(response.data(), response.size()));
         }
+        SendHttpResponse(HttpStatus::OK, func_call_context_.output());
         break;
     case FuncCallContext::kNotFound:
         SendHttpResponse(HttpStatus::NOT_FOUND);
@@ -401,19 +374,22 @@ int HttpConnection::HttpParserOnMessageBeginCallback(http_parser* http_parser) {
     return 0;
 }
 
-int HttpConnection::HttpParserOnUrlCallback(http_parser* http_parser, const char* data, size_t length) {
+int HttpConnection::HttpParserOnUrlCallback(http_parser* http_parser,
+                                            const char* data, size_t length) {
     HttpConnection* self = reinterpret_cast<HttpConnection*>(http_parser->data);
     self->HttpParserOnUrl(data, length);
     return 0;
 }
 
-int HttpConnection::HttpParserOnHeaderFieldCallback(http_parser* http_parser, const char* data, size_t length) {
+int HttpConnection::HttpParserOnHeaderFieldCallback(http_parser* http_parser,
+                                                    const char* data, size_t length) {
     HttpConnection* self = reinterpret_cast<HttpConnection*>(http_parser->data);
     self->HttpParserOnHeaderField(data, length);
     return 0;
 }
 
-int HttpConnection::HttpParserOnHeaderValueCallback(http_parser* http_parser, const char* data, size_t length) {
+int HttpConnection::HttpParserOnHeaderValueCallback(http_parser* http_parser,
+                                                    const char* data, size_t length) {
     HttpConnection* self = reinterpret_cast<HttpConnection*>(http_parser->data);
     self->HttpParserOnHeaderValue(data, length);
     return 0;
@@ -425,7 +401,8 @@ int HttpConnection::HttpParserOnHeadersCompleteCallback(http_parser* http_parser
     return 0;
 }
 
-int HttpConnection::HttpParserOnBodyCallback(http_parser* http_parser, const char* data, size_t length) {
+int HttpConnection::HttpParserOnBodyCallback(http_parser* http_parser,
+                                             const char* data, size_t length) {
     HttpConnection* self = reinterpret_cast<HttpConnection*>(http_parser->data);
     self->HttpParserOnBody(data, length);
     return 0;

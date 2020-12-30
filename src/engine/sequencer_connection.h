@@ -4,7 +4,7 @@
 #include "common/protocol.h"
 #include "utils/appendable_buffer.h"
 #include "engine/constants.h"
-#include "engine/io_worker.h"
+#include "server/io_worker.h"
 
 namespace faas {
 namespace engine {
@@ -12,7 +12,7 @@ namespace engine {
 class Engine;
 class SLogEngine;
 
-class SequencerConnection final : public ConnectionBase {
+class SequencerConnection final : public server::ConnectionBase {
 public:
     static constexpr size_t kBufSize = 65536;
 
@@ -26,7 +26,7 @@ public:
 
     uint16_t sequencer_id() const { return sequencer_id_; }
 
-    void Start(IOWorker* io_worker) override;
+    void Start(server::IOWorker* io_worker) override;
     void ScheduleClose() override;
 
     void SendMessage(const protocol::SequencerMessage& message,
@@ -37,7 +37,7 @@ private:
 
     Engine* engine_;
     SLogEngine* slog_engine_;
-    IOWorker* io_worker_;
+    server::IOWorker* io_worker_;
     State state_;
     uint16_t sequencer_id_;
     int sockfd_;

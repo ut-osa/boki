@@ -13,7 +13,7 @@ using protocol::SequencerMessageHelper;
 
 SequencerConnection::SequencerConnection(Engine* engine, SLogEngine* slog_engine,
                                          uint16_t sequencer_id, int sockfd)
-    : ConnectionBase(type_id(sequencer_id)),
+    : server::ConnectionBase(type_id(sequencer_id)),
       engine_(engine), slog_engine_(slog_engine), state_(kCreated),
       sequencer_id_(sequencer_id), sockfd_(sockfd),
       log_header_(fmt::format("SequencerConnection[{}]: ", sequencer_id)) {}
@@ -22,7 +22,7 @@ SequencerConnection::~SequencerConnection() {
     DCHECK(state_ == kCreated || state_ == kClosed);
 }
 
-void SequencerConnection::Start(IOWorker* io_worker) {
+void SequencerConnection::Start(server::IOWorker* io_worker) {
     DCHECK(state_ == kCreated);
     DCHECK(io_worker->WithinMyEventLoopThread());
     io_worker_ = io_worker;

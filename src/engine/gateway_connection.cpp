@@ -12,7 +12,7 @@ using protocol::GatewayMessage;
 using protocol::GatewayMessageHelper;
 
 GatewayConnection::GatewayConnection(Engine* engine, uint16_t conn_id, int sockfd)
-    : ConnectionBase(kGatewayConnectionTypeId),
+    : server::ConnectionBase(kGatewayConnectionTypeId),
       engine_(engine), conn_id_(conn_id), state_(kCreated), sockfd_(sockfd),
       log_header_(fmt::format("GatewayConnection[{}]: ", conn_id)) {}
 
@@ -20,7 +20,7 @@ GatewayConnection::~GatewayConnection() {
     DCHECK(state_ == kCreated || state_ == kClosed);
 }
 
-void GatewayConnection::Start(IOWorker* io_worker) {
+void GatewayConnection::Start(server::IOWorker* io_worker) {
     DCHECK(state_ == kCreated);
     DCHECK(io_worker->WithinMyEventLoopThread());
     io_worker_ = io_worker;

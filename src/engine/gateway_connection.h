@@ -3,14 +3,14 @@
 #include "base/common.h"
 #include "common/protocol.h"
 #include "utils/appendable_buffer.h"
-#include "engine/io_worker.h"
+#include "server/io_worker.h"
 
 namespace faas {
 namespace engine {
 
 class Engine;
 
-class GatewayConnection final : public ConnectionBase {
+class GatewayConnection final : public server::ConnectionBase {
 public:
     static constexpr size_t kBufSize = 65536;
 
@@ -19,7 +19,7 @@ public:
 
     uint16_t conn_id() const { return conn_id_; }
 
-    void Start(IOWorker* io_worker) override;
+    void Start(server::IOWorker* io_worker) override;
     void ScheduleClose() override;
 
     void SendMessage(const protocol::GatewayMessage& message,
@@ -30,7 +30,7 @@ private:
 
     Engine* engine_;
     uint16_t conn_id_;
-    IOWorker* io_worker_;
+    server::IOWorker* io_worker_;
     State state_;
     int sockfd_;
 

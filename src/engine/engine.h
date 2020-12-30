@@ -5,7 +5,7 @@
 #include "common/func_config.h"
 #include "common/sequencer_config.h"
 #include "ipc/shm_region.h"
-#include "engine/server_base.h"
+#include "server/server_base.h"
 #include "engine/gateway_connection.h"
 #include "engine/message_connection.h"
 #include "engine/dispatcher.h"
@@ -19,7 +19,7 @@
 namespace faas {
 namespace engine {
 
-class Engine final : public ServerBase {
+class Engine final : public server::ServerBase {
 public:
     static constexpr int kDefaultNumIOWorkers = 1;
 
@@ -90,14 +90,14 @@ private:
     int server_sockfd_;
     int shared_log_sockfd_;
 
-    std::vector<IOWorker*> io_workers_;
+    std::vector<server::IOWorker*> io_workers_;
     size_t next_ipc_conn_worker_id_;
     size_t next_shared_log_conn_worker_id_;
 
-    absl::flat_hash_map</* id */ int, std::shared_ptr<ConnectionBase>> message_connections_;
-    absl::flat_hash_map</* id */ int, std::shared_ptr<ConnectionBase>> gateway_connections_;
-    absl::flat_hash_map</* id */ int, std::shared_ptr<ConnectionBase>> sequencer_connections_;
-    absl::flat_hash_map</* id */ int, std::shared_ptr<ConnectionBase>> slog_connections_;
+    absl::flat_hash_map</* id */ int, std::shared_ptr<server::ConnectionBase>> message_connections_;
+    absl::flat_hash_map</* id */ int, std::shared_ptr<server::ConnectionBase>> gateway_connections_;
+    absl::flat_hash_map</* id */ int, std::shared_ptr<server::ConnectionBase>> sequencer_connections_;
+    absl::flat_hash_map</* id */ int, std::shared_ptr<server::ConnectionBase>> slog_connections_;
     absl::flat_hash_set<std::unique_ptr<SLogMessageHub>> slog_message_hubs_;
     absl::flat_hash_set<std::unique_ptr<Timer>> timers_;
 
@@ -136,14 +136,14 @@ private:
 
     void StartInternal() override;
     void StopInternal() override;
-    void OnConnectionClose(ConnectionBase* connection) override;
+    void OnConnectionClose(server::ConnectionBase* connection) override;
 
     void SetupGatewayConnections();
     void SetupLocalIpc();
     void SetupSharedLog();
 
-    Timer* CreateTimer(int timer_type, IOWorker* io_worker, Timer::Callback cb);
-    Timer* CreatePeriodicTimer(int timer_type, IOWorker* io_worker,
+    Timer* CreateTimer(int timer_type, server::IOWorker* io_worker, Timer::Callback cb);
+    Timer* CreatePeriodicTimer(int timer_type, server::IOWorker* io_worker,
                                absl::Time initial, absl::Duration duration,
                                Timer::Callback cb);
 

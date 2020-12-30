@@ -3,28 +3,28 @@
 #include "base/common.h"
 #include "common/protocol.h"
 #include "utils/appendable_buffer.h"
-#include "engine/io_worker.h"
+#include "server/io_worker.h"
 
 namespace faas {
 namespace engine {
 
 class SLogEngine;
 
-class IncomingSLogConnection final : public ConnectionBase {
+class IncomingSLogConnection final : public server::ConnectionBase {
 public:
     static constexpr size_t kBufSize = __FAAS_MESSAGE_SIZE * 4;
 
     IncomingSLogConnection(SLogEngine* slog_engine, int sockfd);
     ~IncomingSLogConnection();
 
-    void Start(IOWorker* io_worker) override;
+    void Start(server::IOWorker* io_worker) override;
     void ScheduleClose() override;
 
 private:
     enum State { kCreated, kRunning, kClosing, kClosed };
 
     SLogEngine* slog_engine_;
-    IOWorker* io_worker_;
+    server::IOWorker* io_worker_;
     State state_;
     int sockfd_;
 
@@ -38,12 +38,12 @@ private:
     DISALLOW_COPY_AND_ASSIGN(IncomingSLogConnection);
 };
 
-class SLogMessageHub final : public ConnectionBase {
+class SLogMessageHub final : public server::ConnectionBase {
 public:
     explicit SLogMessageHub(SLogEngine* slog_engine);
     ~SLogMessageHub();
 
-    void Start(IOWorker* io_worker) override;
+    void Start(server::IOWorker* io_worker) override;
     void ScheduleClose() override;
 
     void SendMessage(uint16_t node_id, const protocol::Message& message);
@@ -52,7 +52,7 @@ private:
     enum State { kCreated, kRunning, kClosing, kClosed };
 
     SLogEngine* slog_engine_;
-    IOWorker* io_worker_;
+    server::IOWorker* io_worker_;
     State state_;
 
     std::string log_header_;
