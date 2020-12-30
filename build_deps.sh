@@ -70,6 +70,12 @@ cd $BASE_DIR/deps/raft && autoreconf -i && \
       ./configure --prefix=${DEPS_INSTALL_PATH} --enable-debug=${ENABLE_DEBUG} && \
   make clean && make -j$(nproc) install && make clean
 
+# Build zookeeper-client-c
+cd $BASE_DIR/deps/zookeeper-client-c && autoreconf -if && \
+  ./configure --prefix=${DEPS_INSTALL_PATH} --enable-debug=${ENABLE_DEBUG} \
+              --without-cppunit --without-openssl && \
+  make -j$(nproc) install && make clean
+
 # Build rocksdb
 cd $BASE_DIR/deps/rocksdb && rm -rf build && mkdir -p build && cd build && \
   cmake -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DCMAKE_CXX_STANDARD=17 \
