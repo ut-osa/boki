@@ -190,7 +190,6 @@ bool IOUring::SendAll(int fd, std::span<const char> data, SendAllCallback cb) {
     }
     GET_AND_CHECK_DESC(fd, desc);
     Op* op = AllocSendAllOp(desc, data);
-    op->root_op = op->id;
     sendall_cbs_[op->id] = cb;
     if (desc->last_send_op != nullptr) {
         Op* last_op = desc->last_send_op;
@@ -441,6 +440,8 @@ void IOUring::EnqueueOp(Op* op) {
         io_uring_prep_close(sqe, op->fd);
         break;
     case kCancel:
+        VLOG(1) << fmt::format("Going to cancel op {} (type {}): ",
+                               (op->root_op >> 8), kOpTypeStr[op->root_op & 0xff]);
         io_uring_prep_cancel(sqe, reinterpret_cast<void*>(op->root_op), 0);
         break;
     default:
@@ -472,7 +473,9 @@ void IOUring::OnOpComplete(Op* op, struct io_uring_cqe* cqe) {
         break;
     case kCancel:
         if (res < 0 && res != -EALREADY) {
-            LOG(WARNING) << "Cancel Op failed: " << ERRNO_LOGSTR(-res);
+            LOG(WARNING) << fmt::format("Failed to cancel op {} (type {}): ",
+                                        (op->root_op >> 8), kOpTypeStr[op->root_op & 0xff])
+                         << ERRNO_LOGSTR(-res);
         }
         break;
     default:
@@ -509,16 +512,18 @@ void IOUring::HandleConnectComplete(Op* op, int res) {
 void IOUring::HandleReadOpComplete(Op* op, int res, Op** next_op) {
     DCHECK_EQ(op_type(op), kRead);
     DCHECK(read_cbs_.contains(op->id));
+    DCHECK_NOTNULL(op->desc)->active_read_op = nullptr;
     bool repeat = false;
     if (res >= 0) {
         repeat = read_cbs_[op->id](0, std::span<const char>(op->buf, res));
     } else if (res == -EAGAIN || res == -EINTR) {
         repeat = true;
-    } else if (res != -ECANCELED) {
+    } else if (res == -ECANCELED) {
+        LOG(INFO) << "ReadOp cancelled";
+    } else {
         errno = -res;
         repeat = read_cbs_[op->id](-1, std::span<const char>());
     }
-    DCHECK_NOTNULL(op->desc)->active_read_op = nullptr;
     if ((op->flags & kOpFlagRepeat) != 0
             && (op->flags & kOpFlagCancelled) == 0
             && op->desc->close_op == nullptr

@@ -15,7 +15,8 @@ HttpConnection::HttpConnection(Server* server, int connection_id, int sockfd)
       server_(server),
       state_(kCreated),
       sockfd_(sockfd),
-      log_header_(fmt::format("HttpConnection[{}]: ", connection_id)) {
+      log_header_(fmt::format("HttpConnection[{}]: ", connection_id)),
+      keep_recv_data_(false) {
     http_parser_init(&http_parser_, HTTP_REQUEST);
     http_parser_.data = this;
     http_parser_settings_init(&http_parser_settings_);
@@ -63,6 +64,8 @@ void HttpConnection::StartRecvData() {
         HLOG(WARNING) << "HttpConnection is closing or has closed, will not enable read event";
         return;
     }
+    DCHECK(!keep_recv_data_);
+    keep_recv_data_ = true;
     URING_DCHECK_OK(current_io_uring()->StartRecv(
         sockfd_, kHttpConnectionBufGroup,
         absl::bind_front(&HttpConnection::OnRecvData, this)));
@@ -97,7 +100,7 @@ bool HttpConnection::OnRecvData(int status, std::span<const char> data) {
         ScheduleClose();
         return false;
     }
-    return true;
+    return keep_recv_data_;
 }
 
 void HttpConnection::HttpParserOnMessageBegin() {
@@ -224,7 +227,7 @@ static std::string QueryStringToJSON(std::string_view qs) {
 }
 
 void HttpConnection::HttpParserOnMessageComplete() {
-    StopRecvData();
+    keep_recv_data_ = false;
     HVLOG(1) << "Start parsing URL: " << std::string(url_buffer_.data(), url_buffer_.length());
     http_parser_url parsed_url;
     if (http_parser_parse_url(url_buffer_.data(), url_buffer_.length(), 0, &parsed_url) != 0) {

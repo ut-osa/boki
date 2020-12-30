@@ -91,7 +91,7 @@ void Server::StartInternal() {
     if (grpc_port_ != -1) {
         grpc_sockfd_ = utils::TcpSocketBindAndListen(
             address_, grpc_port_, listen_backlog);
-        CHECK(http_sockfd_ != -1)
+        CHECK(grpc_sockfd_ != -1)
             << fmt::format("Failed to listen on {}:{}", address_, grpc_port_);
         HLOG(INFO) << fmt::format("Listen on {}:{} for gRPC requests", address_, grpc_port_);
         ListenForNewConnections(
@@ -453,7 +453,7 @@ void Server::OnNewEngineConnection(int sockfd) {
 
 void Server::OnNewHttpConnection(int sockfd) {
     std::shared_ptr<server::ConnectionBase> connection(
-        new GrpcConnection(this, next_http_connection_id_++, sockfd));
+        new HttpConnection(this, next_http_connection_id_++, sockfd));
     DCHECK_LT(next_http_conn_worker_id_, io_workers_.size());
     server::IOWorker* io_worker = io_workers_[next_http_conn_worker_id_];
     next_http_conn_worker_id_ = (next_http_conn_worker_id_ + 1) % io_workers_.size();

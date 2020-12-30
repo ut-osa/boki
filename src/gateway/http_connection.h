@@ -42,6 +42,7 @@ private:
     http_parser_settings http_parser_settings_;
     http_parser http_parser_;
     int header_field_value_flag_;
+    bool keep_recv_data_;
 
     // For request
     utils::AppendableBuffer url_buffer_;
