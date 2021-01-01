@@ -73,7 +73,7 @@ cd $BASE_DIR/deps/raft && autoreconf -i && \
 # Build zookeeper-client-c
 cd $BASE_DIR/deps/zookeeper-client-c && autoreconf -if && \
   ./configure --prefix=${DEPS_INSTALL_PATH} --enable-debug=${ENABLE_DEBUG} \
-              --without-cppunit --without-openssl && \
+              --without-syncapi --without-cppunit --without-openssl && \
   make -j$(nproc) install && make clean
 
 # Build rocksdb
