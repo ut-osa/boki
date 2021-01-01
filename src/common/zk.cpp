@@ -420,24 +420,24 @@ void ZKSession::EventLoopThreadMain() {
 
 ZKResult ZKSession::EmptyResult() {
     return ZKResult {
-        .value = "",
-        .values = std::vector<std::string_view>(),
-        .data = std::span<const char>(),
-        .stat = nullptr,
+        .path  = "",
+        .paths = std::vector<std::string_view>(),
+        .data  = std::span<const char>(),
+        .stat  = nullptr,
     };
 }
 
 ZKResult ZKSession::StringResult(const char* string) {
     ZKResult result = EmptyResult();
-    result.value = string;
+    result.path = string;
     return result;
 }
 
 ZKResult ZKSession::StringsResult(const struct String_vector* strings) {
     ZKResult result = EmptyResult();
-    result.values.resize(strings->count);
+    result.paths.resize(strings->count);
     for (int i = 0; i < strings->count; i++) {
-        result.values[i] = std::string_view(strings->data[i]);
+        result.paths[i] = std::string_view(strings->data[i]);
     }
     return result;
 }

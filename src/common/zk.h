@@ -15,8 +15,8 @@ namespace faas {
 namespace zk {
 
 struct ZKResult {
-    std::string_view              value;
-    std::vector<std::string_view> values;
+    std::string_view              path;
+    std::vector<std::string_view> paths;
     std::span<const char>         data;
     const struct Stat*            stat;
 };
@@ -31,14 +31,20 @@ public:
     void WaitForFinish();
 
     typedef std::function<void(int /* type */, std::string_view /* path */)> WatcherFn;
-    typedef std::function<void(int /* status */, const ZKResult&,
+    typedef std::function<void(int /* status */, const ZKResult& /* result */,
                                bool* /* remove_watch */)> Callback;
 
+    // If succeeded, `result.path` is set to the path of newly created node
     void Create(std::string_view path, std::span<const char> value, int mode, Callback cb);
+    // Nothing is set in result
     void Delete(std::string_view path, int version, Callback cb);
+    // If node exists, `result.stat` is set
     void Exists(std::string_view path, WatcherFn watcher_fn, Callback cb);
+    // If node exists, both `result.data` and `result.stat` are set
     void Get(std::string_view path, WatcherFn watcher_fn, Callback cb);
+    // If succeeded, `result.stat` is set
     void Set(std::string_view path, std::span<const char> value, int version, Callback cb);
+    // If succeeded, `result.paths` is set to paths of children
     void GetChildren(std::string_view path, WatcherFn watcher_fn, Callback cb);
 
     bool GetOrWait(std::string_view path, std::string* value);
