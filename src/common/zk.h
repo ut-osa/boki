@@ -30,18 +30,16 @@ public:
     void ScheduleStop();
     void WaitForFinish();
 
-    typedef std::function<void(int /* type */, int /* state */,
-                               std::string_view /* path */)> WatcherFn;
-
-    typedef std::function<void(int /* status */, const ZKResult&)> Callback;
+    typedef std::function<void(int /* type */, std::string_view /* path */)> WatcherFn;
+    typedef std::function<void(int /* status */, const ZKResult&,
+                               bool* /* remove_watch */)> Callback;
 
     void Create(std::string_view path, std::span<const char> value, int mode, Callback cb);
     void Delete(std::string_view path, int version, Callback cb);
-    void Exists(std::string_view path, WatcherFn wathcer_fn, Callback cb);
-    void Get(std::string_view path, WatcherFn wathcer_fn, Callback cb);
+    void Exists(std::string_view path, WatcherFn watcher_fn, Callback cb);
+    void Get(std::string_view path, WatcherFn watcher_fn, Callback cb);
     void Set(std::string_view path, std::span<const char> value, int version, Callback cb);
-    void GetChildren(std::string_view path, WatcherFn wathcer_fn, Callback cb);
-    void RemoveAllWatches(std::string_view path, Callback cb = nullptr);
+    void GetChildren(std::string_view path, WatcherFn watcher_fn, Callback cb);
 
 private:
     enum State { kCreated, kRunning, kStopped };
@@ -53,8 +51,17 @@ private:
     int stop_eventfd_;
     int new_op_eventfd_;
 
-    enum OpType { kCreate, kDelete, kExists, kGet, kSet,
-                  kGetChildren, kRemoveAllWatches };
+    struct Op;
+    struct Watch {
+        ZKSession*  sess;
+        Op*         op;
+        std::string path;
+        WatcherFn   cb;
+        bool        removed;
+        bool        triggered;
+    };
+
+    enum OpType { kCreate, kDelete, kExists, kGet, kSet, kGetChildren };
     struct Op {
         ZKSession*              sess;
         OpType                  type;
@@ -62,24 +69,26 @@ private:
         utils::AppendableBuffer value;
         int                     create_mode;
         int                     data_version;
-        WatcherFn*              watcher_fn;
+        Watch*                  watch;
         Callback                cb;
     };
 
     absl::Mutex mu_;
-    utils::SimpleObjectPool<Op>        op_pool_         ABSL_GUARDED_BY(mu_);
-    std::vector<Op*>                   pending_ops_     ABSL_GUARDED_BY(mu_);
-    utils::SimpleObjectPool<WatcherFn> watcher_fn_pool_ ABSL_GUARDED_BY(mu_);
+    utils::SimpleObjectPool<Op>     op_pool_     ABSL_GUARDED_BY(mu_);
+    std::vector<Op*>                pending_ops_ ABSL_GUARDED_BY(mu_);
+    utils::SimpleObjectPool<Watch>  watch_pool_  ABSL_GUARDED_BY(mu_);
 
-    std::vector<Op*> completed_ops_;
+    std::vector<Op*>    completed_ops_;
+    std::vector<Watch*> completed_watches_;
 
     void EnqueueNewOp(OpType type, std::string_view path,
                       WatcherFn watcher_fn, Callback cb,
                       std::function<void(Op*)> setup_fn);
     void ProcessPendingOps();
     void DoOp(Op* op);
-    void ReclaimCompletedOps();
     void OpCompleted(Op* op, int rc, const ZKResult& result);
+    void OnWatchTriggered(Watch* watch, int type, int state, std::string_view path);
+    void ReclaimResource();
 
     void EventLoopThreadMain();
     bool WithinMyEventLoopThread();

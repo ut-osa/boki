@@ -13,18 +13,18 @@
 ABSL_FLAG(int, zk_recv_timeout_ms, 2000, "");
 ABSL_FLAG(std::string, zk_logfile, "", "");
 
-#define ZK_CHECK_OK(ZK_CALL)                                  \
-    do {                                                      \
-        int ret = ZK_CALL;                                    \
-        LOG_IF(FATAL, ret != 0) << "zookeeper call failed: "  \
-                                << zerror(ret);               \
+#define ZK_CHECK_OK(ZK_CALL)                                    \
+    do {                                                        \
+        int ret = ZK_CALL;                                      \
+        LOG_IF(FATAL, ret != ZOK) << "zookeeper call failed: "  \
+                                  << zerror(ret);               \
     } while (0)
 
-#define ZK_DCHECK_OK(ZK_CALL)                                 \
-    do {                                                      \
-        int ret = ZK_CALL;                                    \
-        DLOG_IF(FATAL, ret != 0) << "zookeeper call failed: " \
-                                 << zerror(ret);              \
+#define ZK_DCHECK_OK(ZK_CALL)                                   \
+    do {                                                        \
+        int ret = ZK_CALL;                                      \
+        DLOG_IF(FATAL, ret != ZOK) << "zookeeper call failed: " \
+                                   << zerror(ret);              \
     } while (0)
 
 namespace faas {
@@ -35,7 +35,9 @@ ZKSession::ZKSession(std::string_view host)
       host_(host),
       handle_(nullptr),
       event_loop_thread_("ZK/EL",
-                         absl::bind_front(&ZKSession::EventLoopThreadMain, this)) {
+                         absl::bind_front(&ZKSession::EventLoopThreadMain, this)),
+      stop_eventfd_(-1),
+      new_op_eventfd_(-1) {
     stop_eventfd_ = eventfd(0, 0);
     PCHECK(stop_eventfd_ >= 0) << "Failed to create eventfd";
     new_op_eventfd_ = eventfd(0, 0);
@@ -117,12 +119,12 @@ void ZKSession::Delete(std::string_view path, int version, Callback cb) {
     });
 }
 
-void ZKSession::Exists(std::string_view path, WatcherFn wathcer_fn, Callback cb) {
-    EnqueueNewOp(kExists, path, wathcer_fn, cb, nullptr);
+void ZKSession::Exists(std::string_view path, WatcherFn watcher_fn, Callback cb) {
+    EnqueueNewOp(kExists, path, watcher_fn, cb, nullptr);
 }
 
-void ZKSession::Get(std::string_view path, WatcherFn wathcer_fn, Callback cb) {
-    EnqueueNewOp(kGet, path, wathcer_fn, cb, nullptr);
+void ZKSession::Get(std::string_view path, WatcherFn watcher_fn, Callback cb) {
+    EnqueueNewOp(kGet, path, watcher_fn, cb, nullptr);
 }
 
 void ZKSession::Set(std::string_view path, std::span<const char> value,
@@ -133,17 +135,14 @@ void ZKSession::Set(std::string_view path, std::span<const char> value,
     });
 }
 
-void ZKSession::GetChildren(std::string_view path, WatcherFn wathcer_fn, Callback cb) {
-    EnqueueNewOp(kGetChildren, path, wathcer_fn, cb, nullptr);
-}
-
-void ZKSession::RemoveAllWatches(std::string_view path, Callback cb) {
-    EnqueueNewOp(kRemoveAllWatches, path, nullptr, cb, nullptr);
+void ZKSession::GetChildren(std::string_view path, WatcherFn watcher_fn, Callback cb) {
+    EnqueueNewOp(kGetChildren, path, watcher_fn, cb, nullptr);
 }
 
 void ZKSession::EnqueueNewOp(OpType type, std::string_view path,
                              WatcherFn watcher_fn, Callback cb,
                              std::function<void(Op*)> setup_fn) {
+    bool should_notify = false;
     {
         absl::MutexLock lk(&mu_);
         Op* op = op_pool_.Get();
@@ -153,20 +152,31 @@ void ZKSession::EnqueueNewOp(OpType type, std::string_view path,
         op->value.Reset();
         op->create_mode = -1;
         op->data_version = -1;
-        op->watcher_fn = nullptr;
+        op->watch = nullptr;
         op->cb.swap(cb);
         if (watcher_fn) {
-            op->watcher_fn = watcher_fn_pool_.Get();
-            op->watcher_fn->swap(watcher_fn);
+            Watch* watch = watch_pool_.Get();
+            watch->sess = this;
+            watch->op = op;
+            watch->path = op->path;
+            watch->cb.swap(watcher_fn);
+            watch->removed = false;
+            watch->triggered = false;
+            op->watch = watch;
         }
         if (setup_fn) {
             setup_fn(op);
         }
+        if (pending_ops_.empty()) {
+            should_notify = true;
+        }
         pending_ops_.push_back(op);
     }
-    DCHECK(new_op_eventfd_ >= 0);
-    PCHECK(eventfd_write(new_op_eventfd_, 1) == 0)
-        << "eventfd_write failed";
+    if (should_notify) {
+        DCHECK(new_op_eventfd_ >= 0);
+        PCHECK(eventfd_write(new_op_eventfd_, 1) == 0)
+            << "eventfd_write failed";
+    }
 }
 
 void ZKSession::ProcessPendingOps() {
@@ -195,11 +205,11 @@ void ZKSession::DoOp(Op* op) {
             &ZKSession::VoidCompletionCallback, /* data= */ op));
         break;
     case kExists:
-        if (op->watcher_fn != nullptr) {
+        if (op->watch != nullptr) {
             ZK_DCHECK_OK(zoo_awexists(
                 handle_, /* path= */ op->path.c_str(),
                 /* watcher= */ &ZKSession::WatcherCallback,
-                /* watcherCtx= */ op->watcher_fn,
+                /* watcherCtx= */ op->watch,
                 &ZKSession::StatCompletionCallback, /* data= */ op));
         } else {
             ZK_DCHECK_OK(zoo_aexists(
@@ -208,11 +218,11 @@ void ZKSession::DoOp(Op* op) {
         }
         break;
     case kGet:
-        if (op->watcher_fn != nullptr) {
+        if (op->watch != nullptr) {
             ZK_DCHECK_OK(zoo_awget(
                 handle_, /* path= */ op->path.c_str(),
                 /* watcher= */ &ZKSession::WatcherCallback,
-                /* watcherCtx= */ op->watcher_fn,
+                /* watcherCtx= */ op->watch,
                 &ZKSession::DataCompletionCallback, /* data= */ op));
         } else {
             ZK_DCHECK_OK(zoo_aget(
@@ -228,11 +238,11 @@ void ZKSession::DoOp(Op* op) {
             &ZKSession::StatCompletionCallback, /* data= */ op));
         break;
     case kGetChildren:
-        if (op->watcher_fn != nullptr) {
+        if (op->watch != nullptr) {
             ZK_DCHECK_OK(zoo_awget_children(
                 handle_, /* path= */ op->path.c_str(),
                 /* watcher= */ &ZKSession::WatcherCallback,
-                /* watcherCtx= */ op->watcher_fn,
+                /* watcherCtx= */ op->watch,
                 &ZKSession::StringsCompletionCallback, /* data= */ op));
         } else {
             ZK_DCHECK_OK(zoo_aget_children(
@@ -240,34 +250,53 @@ void ZKSession::DoOp(Op* op) {
                 &ZKSession::StringsCompletionCallback, /* data= */ op));
         }
         break;
-    case kRemoveAllWatches:
-        ZK_DCHECK_OK(zoo_aremove_all_watches(
-            handle_, /* path= */ op->path.c_str(),
-            /* wtype= */ ZWATCHTYPE_ANY, /* local= */ 1,
-            /* completion= */ nullptr, /* data= */ nullptr));
-        OpCompleted(op, ZOK, EmptyResult());
     default:
         UNREACHABLE();
     }
 }
 
-void ZKSession::ReclaimCompletedOps() {
+void ZKSession::OpCompleted(Op* op, int rc, const ZKResult& result) {
+    DCHECK(WithinMyEventLoopThread());
+    if (op->cb) {
+        bool remove_watch = false;
+        op->cb(rc, result, &remove_watch);
+        if (remove_watch && op->watch != nullptr) {
+            HVLOG(1) << fmt::format("Going to remove watch (path {})", op->watch->path);
+            DCHECK_EQ(op->watch->op, op);
+            DCHECK(!op->watch->triggered);
+            op->watch->removed = true;
+        }
+    }
+    completed_ops_.push_back(op);
+}
+
+void ZKSession::OnWatchTriggered(Watch* watch, int type, int state, std::string_view path) {
+    DCHECK(WithinMyEventLoopThread());
+    if (state != ZOO_CONNECTED_STATE) {
+        HLOG(FATAL) << "Not in connected state: " << state;
+    }
+    if (watch->removed) {
+        HVLOG(1) << fmt::format("Removed watch (path {}) triggered", path);
+    } else {
+        watch->cb(type, path);
+    }
+    watch->triggered = true;
+    completed_watches_.push_back(watch);
+}
+
+void ZKSession::ReclaimResource() {
     DCHECK(WithinMyEventLoopThread());
     {
         absl::MutexLock lk(&mu_);
         for (Op* op : completed_ops_) {
             op_pool_.Return(op);
         }
+        for (Watch* watch : completed_watches_) {
+            watch_pool_.Return(watch);
+        }
     }
     completed_ops_.clear();
-}
-
-void ZKSession::OpCompleted(Op* op, int rc, const ZKResult& result) {
-    DCHECK(WithinMyEventLoopThread());
-    if (op->cb) {
-        op->cb(rc, result);
-    }
-    completed_ops_.push_back(op);
+    completed_watches_.clear();
 }
 
 bool ZKSession::WithinMyEventLoopThread() {
@@ -342,7 +371,7 @@ void ZKSession::EventLoopThreadMain() {
                 UNREACHABLE();
             }
         }
-        ReclaimCompletedOps();
+        ReclaimResource();
     }
     state_.store(kStopped);
 }
@@ -387,8 +416,10 @@ ZKResult ZKSession::StatResult(const struct Stat* stat) {
 
 void ZKSession::WatcherCallback(zhandle_t* handle, int type, int state,
                                 const char* path, void* watcher_ctx) {
-    WatcherFn* fn = reinterpret_cast<WatcherFn*>(DCHECK_NOTNULL(watcher_ctx));
-    (*fn)(type, state, path);
+    ZKSession* sess = reinterpret_cast<ZKSession*>(const_cast<void*>(zoo_get_context(handle)));
+    Watch* watch = reinterpret_cast<Watch*>(DCHECK_NOTNULL(watcher_ctx));
+    DCHECK_EQ(sess, watch->sess);
+    sess->OnWatchTriggered(watch, type, state, path);
 }
 
 void ZKSession::VoidCompletionCallback(int rc, const void* data) {
