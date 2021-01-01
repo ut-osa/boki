@@ -139,6 +139,48 @@ void ZKSession::GetChildren(std::string_view path, WatcherFn watcher_fn, Callbac
     EnqueueNewOp(kGetChildren, path, watcher_fn, cb, nullptr);
 }
 
+bool ZKSession::GetOrWait(std::string_view path, std::string* value) {
+    if (WithinMyEventLoopThread()) {
+        HLOG(ERROR) << "GetOrWait cannot be called from ZKSession's event loop thread!";
+        return false;
+    }
+    bool success = false;
+    absl::Notification finished;
+    auto get_cb = [&] (int status, const ZKResult& result, bool*) {
+        if (status == ZOK) {
+            value->assign(result.data.data(), result.data.size());
+            success = true;
+        } else {
+            success = false;
+        }
+        finished.Notify();
+    };
+    auto exists_cb = [&] (int status, const ZKResult&, bool* remove_watch) {
+        if (status == ZOK) {
+            Get(path, nullptr, get_cb);
+            *remove_watch = true;
+        } else if (status == ZNONODE) {
+            HVLOG(1) << "Node not exists, will rely on watch";
+        } else {
+            HLOG(ERROR) << "Failed with error: " << zerror(status);
+            success = false;
+            *remove_watch = true;
+            finished.Notify();
+        }
+    };
+    auto watcher_fn = [&] (int type, std::string_view) {
+        if (type == ZOO_CREATED_EVENT) {
+            Get(path, nullptr, get_cb);
+        } else {
+            success = false;
+            finished.Notify();
+        }
+    };
+    Exists(path, watcher_fn, exists_cb);
+    finished.WaitForNotification();
+    return success;
+}
+
 void ZKSession::EnqueueNewOp(OpType type, std::string_view path,
                              WatcherFn watcher_fn, Callback cb,
                              std::function<void(Op*)> setup_fn) {

@@ -41,6 +41,8 @@ public:
     void Set(std::string_view path, std::span<const char> value, int version, Callback cb);
     void GetChildren(std::string_view path, WatcherFn watcher_fn, Callback cb);
 
+    bool GetOrWait(std::string_view path, std::string* value);
+
 private:
     enum State { kCreated, kRunning, kStopped };
     std::atomic<State> state_;
