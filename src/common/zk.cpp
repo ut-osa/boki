@@ -13,22 +13,17 @@
 ABSL_FLAG(int, zk_recv_timeout_ms, 2000, "");
 ABSL_FLAG(std::string, zk_logfile, "", "");
 
-#define ZK_CHECK_OK(ZK_CALL)                                    \
-    do {                                                        \
-        int ret = ZK_CALL;                                      \
-        LOG_IF(FATAL, ret != ZOK) << "zookeeper call failed: "  \
-                                  << zerror(ret);               \
-    } while (0)
-
-#define ZK_DCHECK_OK(ZK_CALL)                                   \
-    do {                                                        \
-        int ret = ZK_CALL;                                      \
-        DLOG_IF(FATAL, ret != ZOK) << "zookeeper call failed: " \
-                                   << zerror(ret);              \
-    } while (0)
-
 namespace faas {
 namespace zk {
+
+bool ZKParseSequenceNumber(std::string_view created_path, uint64_t* parsed) {
+    static constexpr size_t kSequenceNumberLength = 10;
+    size_t length = created_path.length();
+    if (length < kSequenceNumberLength) {
+        return false;
+    }
+    return absl::SimpleAtoi(created_path.substr(length - kSequenceNumberLength), parsed);
+}
 
 ZKSession::ZKSession(std::string_view host)
     : state_(kCreated),
@@ -46,7 +41,10 @@ ZKSession::ZKSession(std::string_view host)
 
 ZKSession::~ZKSession() {
     if (handle_ != nullptr) {
-        ZK_CHECK_OK(zookeeper_close(handle_));
+        int ret = zookeeper_close(handle_);
+        if (ret != ZOK) {
+            HLOG(FATAL) << "Failed to close zookeeper handle: " << zerror(ret);
+        }
     }
     PCHECK(close(stop_eventfd_) == 0) << "Failed to close eventfd";
     PCHECK(close(new_op_eventfd_) == 0) << "Failed to close eventfd";
@@ -106,14 +104,20 @@ void ZKSession::WaitForFinish() {
 }
 
 void ZKSession::Create(std::string_view path, std::span<const char> value,
-                       int mode, Callback cb) {
+                       ZKCreateMode mode, Callback cb) {
     EnqueueNewOp(kCreate, path, nullptr, cb, [value, mode] (Op* op) {
         op->value.ResetWithData(value);
-        op->create_mode = mode;
+        op->create_mode = static_cast<int>(mode);
     });
 }
 
-void ZKSession::Delete(std::string_view path, int version, Callback cb) {
+void ZKSession::Delete(std::string_view path, Callback cb) {
+    EnqueueNewOp(kDelete, path, nullptr, cb, [] (Op* op) {
+        op->data_version = -1;
+    });
+}
+
+void ZKSession::DeleteWithVersion(std::string_view path, int version, Callback cb) {
     EnqueueNewOp(kDelete, path, nullptr, cb, [version] (Op* op) {
         op->data_version = version;
     });
@@ -127,8 +131,15 @@ void ZKSession::Get(std::string_view path, WatcherFn watcher_fn, Callback cb) {
     EnqueueNewOp(kGet, path, watcher_fn, cb, nullptr);
 }
 
-void ZKSession::Set(std::string_view path, std::span<const char> value,
-                    int version, Callback cb) {
+void ZKSession::Set(std::string_view path, std::span<const char> value, Callback cb) {
+    EnqueueNewOp(kSet, path, nullptr, cb, [value] (Op* op) {
+        op->value.ResetWithData(value);
+        op->data_version = -1;
+    });
+}
+
+void ZKSession::SetWithVersion(std::string_view path, std::span<const char> value,
+                               int version, Callback cb) {
     EnqueueNewOp(kSet, path, nullptr, cb, [value, version] (Op* op) {
         op->value.ResetWithData(value);
         op->data_version = version;
@@ -139,46 +150,81 @@ void ZKSession::GetChildren(std::string_view path, WatcherFn watcher_fn, Callbac
     EnqueueNewOp(kGetChildren, path, watcher_fn, cb, nullptr);
 }
 
-bool ZKSession::GetOrWait(std::string_view path, std::string* value) {
+ZKStatus ZKSession::CreateSync(std::string_view path, std::span<const char> value,
+                               ZKCreateMode mode, std::string* created_path) {
     if (WithinMyEventLoopThread()) {
-        HLOG(ERROR) << "GetOrWait cannot be called from ZKSession's event loop thread!";
-        return false;
+        HLOG(ERROR) << "CreateSync cannot be called from ZKSession's event loop thread!";
+        return ZKStatus(ZBADARGUMENTS);
     }
-    bool success = false;
+    ZKStatus ret_status;
     absl::Notification finished;
-    auto get_cb = [&] (int status, const ZKResult& result, bool*) {
-        if (status == ZOK) {
-            value->assign(result.data.data(), result.data.size());
-            success = true;
-        } else {
-            success = false;
+    Create(path, value, mode, [&] (ZKStatus status, const ZKResult& result, bool*) {
+        if (status.ok()) {
+            *created_path = std::string(result.path);
         }
+        ret_status = status;
+        finished.Notify();
+    });
+    finished.WaitForNotification();
+    DCHECK(!ret_status.undefined());
+    return ret_status;
+}
+
+ZKStatus ZKSession::DeleteSync(std::string_view path) {
+    if (WithinMyEventLoopThread()) {
+        HLOG(ERROR) << "DeleteSync cannot be called from ZKSession's event loop thread!";
+        return ZKStatus(ZBADARGUMENTS);
+    }
+    ZKStatus ret_status;
+    absl::Notification finished;
+    Delete(path, [&] (ZKStatus status, const ZKResult& result, bool*) {
+        ret_status = status;
+        finished.Notify();
+    });
+    finished.WaitForNotification();
+    DCHECK(!ret_status.undefined());
+    return ret_status;
+}
+
+ZKStatus ZKSession::GetOrWaitSync(std::string_view path, std::string* value) {
+    if (WithinMyEventLoopThread()) {
+        HLOG(ERROR) << "GetOrWaitSync cannot be called from ZKSession's event loop thread!";
+        return ZKStatus(ZBADARGUMENTS);
+    }
+    ZKStatus ret_status;
+    absl::Notification finished;
+    auto get_cb = [&] (ZKStatus status, const ZKResult& result, bool*) {
+        if (status.ok()) {
+            value->assign(result.data.data(), result.data.size());
+        }
+        ret_status = status;
         finished.Notify();
     };
-    auto exists_cb = [&] (int status, const ZKResult&, bool* remove_watch) {
-        if (status == ZOK) {
+    auto exists_cb = [&] (ZKStatus status, const ZKResult&, bool* remove_watch) {
+        if (status.ok()) {
             Get(path, nullptr, get_cb);
             *remove_watch = true;
-        } else if (status == ZNONODE) {
+        } else if (status.IsNoNode()) {
             HVLOG(1) << "Node not exists, will rely on watch";
         } else {
-            HLOG(ERROR) << "Failed with error: " << zerror(status);
-            success = false;
             *remove_watch = true;
+            ret_status = status;
             finished.Notify();
         }
     };
-    auto watcher_fn = [&] (int type, std::string_view) {
-        if (type == ZOO_CREATED_EVENT) {
+    auto watcher_fn = [&] (ZKEvent event, std::string_view) {
+        if (event.IsCreated()) {
             Get(path, nullptr, get_cb);
         } else {
-            success = false;
+            HLOG(ERROR) << "Receive watch event other than created: " << event.type;
+            ret_status.code = ZNONODE;
             finished.Notify();
         }
     };
     Exists(path, watcher_fn, exists_cb);
     finished.WaitForNotification();
-    return success;
+    DCHECK(!ret_status.undefined());
+    return ret_status;
 }
 
 void ZKSession::EnqueueNewOp(OpType type, std::string_view path,
@@ -233,67 +279,75 @@ void ZKSession::ProcessPendingOps() {
 }
 
 void ZKSession::DoOp(Op* op) {
+    int ret = ZOK;
     switch (op->type) {
     case kCreate:
-        ZK_DCHECK_OK(zoo_acreate(
+        ret = zoo_acreate(
             handle_, /* path= */ op->path.c_str(),
             /* value= */ op->value.data(), /* valuelen= */ op->value.length(),
             /* acl= */ &ZOO_OPEN_ACL_UNSAFE, /* mode= */ op->create_mode,
-            &ZKSession::StringCompletionCallback, /* data= */ op));
+            &ZKSession::StringCompletionCallback, /* data= */ op);
         break;
     case kDelete:
-        ZK_DCHECK_OK(zoo_adelete(
+        ret = zoo_adelete(
             handle_, /* path= */ op->path.c_str(), /* version= */ op->data_version,
-            &ZKSession::VoidCompletionCallback, /* data= */ op));
+            &ZKSession::VoidCompletionCallback, /* data= */ op);
         break;
     case kExists:
         if (op->watch != nullptr) {
-            ZK_DCHECK_OK(zoo_awexists(
+            ret = zoo_awexists(
                 handle_, /* path= */ op->path.c_str(),
                 /* watcher= */ &ZKSession::WatcherCallback,
                 /* watcherCtx= */ op->watch,
-                &ZKSession::StatCompletionCallback, /* data= */ op));
+                &ZKSession::StatCompletionCallback, /* data= */ op);
         } else {
-            ZK_DCHECK_OK(zoo_aexists(
+            ret = zoo_aexists(
                 handle_, /* path= */ op->path.c_str(), /* watch= */ 0,
-                &ZKSession::StatCompletionCallback, /* data= */ op));
+                &ZKSession::StatCompletionCallback, /* data= */ op);
         }
         break;
     case kGet:
         if (op->watch != nullptr) {
-            ZK_DCHECK_OK(zoo_awget(
+            ret = zoo_awget(
                 handle_, /* path= */ op->path.c_str(),
                 /* watcher= */ &ZKSession::WatcherCallback,
                 /* watcherCtx= */ op->watch,
-                &ZKSession::DataCompletionCallback, /* data= */ op));
+                &ZKSession::DataCompletionCallback, /* data= */ op);
         } else {
-            ZK_DCHECK_OK(zoo_aget(
+            ret = zoo_aget(
                 handle_, /* path= */ op->path.c_str(), /* watch= */ 0,
-                &ZKSession::DataCompletionCallback, /* data= */ op));
+                &ZKSession::DataCompletionCallback, /* data= */ op);
         }
         break;
     case kSet:
-        ZK_DCHECK_OK(zoo_aset(
+        ret = zoo_aset(
             handle_, /* path= */ op->path.c_str(),
             /* buffer= */ op->value.data(), /* buflen= */ op->value.length(),
             /* version= */ op->data_version,
-            &ZKSession::StatCompletionCallback, /* data= */ op));
+            &ZKSession::StatCompletionCallback, /* data= */ op);
         break;
     case kGetChildren:
         if (op->watch != nullptr) {
-            ZK_DCHECK_OK(zoo_awget_children(
+            ret = zoo_awget_children(
                 handle_, /* path= */ op->path.c_str(),
                 /* watcher= */ &ZKSession::WatcherCallback,
                 /* watcherCtx= */ op->watch,
-                &ZKSession::StringsCompletionCallback, /* data= */ op));
+                &ZKSession::StringsCompletionCallback, /* data= */ op);
         } else {
-            ZK_DCHECK_OK(zoo_aget_children(
+            ret = zoo_aget_children(
                 handle_, /* path= */ op->path.c_str(), /* watch= */ 0,
-                &ZKSession::StringsCompletionCallback, /* data= */ op));
+                &ZKSession::StringsCompletionCallback, /* data= */ op);
         }
         break;
     default:
         UNREACHABLE();
+    }
+    if (ret != ZOK) {
+        if (ret == ZBADARGUMENTS) {
+            OpCompleted(op, ret, EmptyResult());
+        } else {
+            HLOG(FATAL) << "Op failed to start: " << zerror(ret);
+        }
     }
 }
 
@@ -301,7 +355,7 @@ void ZKSession::OpCompleted(Op* op, int rc, const ZKResult& result) {
     DCHECK(WithinMyEventLoopThread());
     if (op->cb) {
         bool remove_watch = false;
-        op->cb(rc, result, &remove_watch);
+        op->cb(ZKStatus(rc), result, &remove_watch);
         if (remove_watch && op->watch != nullptr) {
             HVLOG(1) << fmt::format("Going to remove watch (path {})", op->watch->path);
             DCHECK_EQ(op->watch->op, op);
@@ -317,10 +371,15 @@ void ZKSession::OnWatchTriggered(Watch* watch, int type, int state, std::string_
     if (state != ZOO_CONNECTED_STATE) {
         HLOG(FATAL) << "Not in connected state: " << state;
     }
+    if (type == ZOO_SESSION_EVENT) {
+        HLOG(FATAL) << "Receive session event";
+    } else if (type == ZOO_NOTWATCHING_EVENT) {
+        HLOG(FATAL) << "Receive not watching event";
+    }
     if (watch->removed) {
         HVLOG(1) << fmt::format("Removed watch (path {}) triggered", path);
     } else {
-        watch->cb(type, path);
+        watch->cb(ZKEvent(type), path);
     }
     watch->triggered = true;
     completed_watches_.push_back(watch);
@@ -357,7 +416,13 @@ void ZKSession::EventLoopThreadMain() {
         int zk_fd;
         int zk_interest;
         struct timeval zk_timeout;
-        ZK_DCHECK_OK(zookeeper_interest(handle_, &zk_fd, &zk_interest, &zk_timeout));
+        int zk_status = zookeeper_interest(handle_, &zk_fd, &zk_interest, &zk_timeout);
+        if (zk_status == ZSYSTEMERROR) {
+            HPLOG(FATAL) << "System error happens for zookeeper";
+        } else if (zk_status != ZOK) {
+            HLOG(FATAL) << "zookeeper_interest failed: " << zerror(zk_status);
+        }
+        DCHECK_EQ(zk_status, ZOK);
 
         short zk_fd_events = 0;
         if (zk_interest & ZOOKEEPER_READ) {
@@ -396,7 +461,13 @@ void ZKSession::EventLoopThreadMain() {
                 if (item.revents & POLLOUT) {
                     zk_events |= ZOOKEEPER_WRITE;
                 }
-                ZK_DCHECK_OK(zookeeper_process(handle_, zk_events));
+                zk_status = zookeeper_process(handle_, zk_events);
+                if (zk_status == ZSYSTEMERROR) {
+                    HPLOG(FATAL) << "System error happens for zookeeper";
+                } else if (zk_status != ZOK && zk_status != ZNOTHING) {
+                    HLOG(FATAL) << "zookeeper_process failed: " << zerror(zk_status);
+                }
+                DCHECK(zk_status == ZOK || zk_status == ZNOTHING);
             } else if (item.fd == new_op_eventfd_) {
                 uint64_t value;
                 PCHECK(eventfd_read(new_op_eventfd_, &value) == 0)

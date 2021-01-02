@@ -21,6 +21,47 @@ struct ZKResult {
     const struct Stat*            stat;
 };
 
+struct ZKStatus {
+public:
+    static constexpr int kUndefinedValue = -65536;
+    explicit ZKStatus(int code = kUndefinedValue) : code(code) {}
+
+    bool ok() const { return code == ZOK; }
+    bool undefined() const { return code == kUndefinedValue; }
+    bool IsBadArguments() const { return code == ZBADARGUMENTS; }
+    bool IsNoNode() const { return code == ZNONODE; }
+    bool IsNodeExist() const { return code == ZNODEEXISTS; }
+    bool IsNotEmpty() const { return code == ZNOTEMPTY; }
+    bool IsBadVersion() const { return code == ZBADVERSION; }
+    bool IsNoChildrenForEphemerals() const { return code == ZNOCHILDRENFOREPHEMERALS; }
+    std::string_view ToString() const { return std::string_view(zerror(code)); }
+
+    int code;
+};
+
+struct ZKEvent {
+public:
+    explicit ZKEvent(int type) : type(type) {}
+
+    bool IsCreated() const { return type == ZOO_CREATED_EVENT; }
+    bool IsDeleted() const { return type == ZOO_DELETED_EVENT; }
+    bool IsChanged() const { return type == ZOO_CHANGED_EVENT; }
+    bool IsChild() const { return type == ZOO_CHILD_EVENT; }
+
+    int type;
+};
+
+enum class ZKCreateMode : int {
+    // Copied from zookeeper-client-c/src/zookeeper.c
+    kPersistent           = 0,
+    kEphemeral            = 1,
+    kPersistentSequential = 2,
+    kEphemeralSequential  = 3,
+    kContainer            = 4
+};
+
+bool ZKParseSequenceNumber(std::string_view created_path, uint64_t* parsed);
+
 class ZKSession {
 public:
     explicit ZKSession(std::string_view host);
@@ -30,24 +71,37 @@ public:
     void ScheduleStop();
     void WaitForFinish();
 
-    typedef std::function<void(int /* type */, std::string_view /* path */)> WatcherFn;
-    typedef std::function<void(int /* status */, const ZKResult& /* result */,
+    typedef std::function<void(ZKEvent /* event */, std::string_view /* path */)> WatcherFn;
+    typedef std::function<void(ZKStatus /* status */, const ZKResult& /* result */,
                                bool* /* remove_watch */)> Callback;
 
     // If succeeded, `result.path` is set to the path of newly created node
-    void Create(std::string_view path, std::span<const char> value, int mode, Callback cb);
+    void Create(std::string_view path, std::span<const char> value,
+                ZKCreateMode mode, Callback cb);
     // Nothing is set in result
-    void Delete(std::string_view path, int version, Callback cb);
+    void Delete(std::string_view path, Callback cb);
+    void DeleteWithVersion(std::string_view path, int version, Callback cb);
     // If node exists, `result.stat` is set
     void Exists(std::string_view path, WatcherFn watcher_fn, Callback cb);
     // If node exists, both `result.data` and `result.stat` are set
     void Get(std::string_view path, WatcherFn watcher_fn, Callback cb);
     // If succeeded, `result.stat` is set
-    void Set(std::string_view path, std::span<const char> value, int version, Callback cb);
+    void Set(std::string_view path, std::span<const char> value, Callback cb);
+    void SetWithVersion(std::string_view path, std::span<const char> value,
+                        int version, Callback cb);
     // If succeeded, `result.paths` is set to paths of children
     void GetChildren(std::string_view path, WatcherFn watcher_fn, Callback cb);
 
-    bool GetOrWait(std::string_view path, std::string* value);
+    // Synchronous helper APIs
+    // They cannot be called from callbacks of asynchronous APIs above
+    //
+    // Synchronously create a new node
+    ZKStatus CreateSync(std::string_view path, std::span<const char> value,
+                        ZKCreateMode mode, std::string* created_path);
+    // Synchronously delete a node.
+    ZKStatus DeleteSync(std::string_view path);
+    // Get the value of `path`. If `path` not exists, will wait for its creation
+    ZKStatus GetOrWaitSync(std::string_view path, std::string* value);
 
 private:
     enum State { kCreated, kRunning, kStopped };
