@@ -139,7 +139,7 @@ void ServerBase::ListenForNewConnections(int server_sockfd, ConnectionCallback c
 
 void ServerBase::DoStop() {
     DCHECK(WithinMyEventLoopThread());
-    if (state_.load(std::memory_order_consume) == kStopping) {
+    if (state_.load(std::memory_order_acquire) == kStopping) {
         HLOG(WARNING) << "Already in stopping state";
         return;
     }

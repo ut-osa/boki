@@ -18,12 +18,7 @@ IOWorker::IOWorker(std::string_view worker_name, size_t write_buffer_size)
       event_loop_thread_(fmt::format("{}/EL", worker_name),
                          absl::bind_front(&IOWorker::EventLoopThreadMain, this)),
       write_buffer_pool_(fmt::format("{}_Write", worker_name), write_buffer_size),
-      connections_on_closing_(0),
-      message_counter_(stat::Counter::StandardReportCallback(
-          fmt::format("{} message_counter", worker_name))),
-      message_processing_time_counter_(stat::Counter::StandardReportCallback(
-          fmt::format("{} message_processing_time", worker_name))) {
-}
+      connections_on_closing_(0) {}
 
 IOWorker::~IOWorker() {
     State state = state_.load();
@@ -42,7 +37,7 @@ void IOWorker::Start(int pipe_to_server_fd) {
     URING_DCHECK_OK(io_uring_.StartRead(
         eventfd_, kOctaBufGroup,
         [this] (int status, std::span<const char> data) -> bool {
-            if (state_.load(std::memory_order_consume) != kRunning) {
+            if (state_.load(std::memory_order_acquire) != kRunning) {
                 return false;
             }
             PCHECK(status == 0);
@@ -92,15 +87,12 @@ void IOWorker::OnConnectionClose(ConnectionBase* connection) {
     DCHECK(WithinMyEventLoopThread());
     DCHECK(connections_.contains(connection->id()));
     connections_.erase(connection->id());
-    if (connection->type() >= 0) {
-        DCHECK(connections_by_type_[connection->type()].contains(connection->id()));
-        connections_by_type_[connection->type()].erase(connection->id());
-        if (connections_for_pick_.contains(connection->type())) {
-            connections_for_pick_.erase(connection->type());
-        }
+    int conn_type = connection->type();
+    if (conn_type >= 0) {
+        DCHECK(connections_by_type_.contains(conn_type));
+        connections_by_type_[conn_type]->Remove(connection->id());
         HLOG(INFO) << fmt::format("One connection of type {0} closed, total of type {0} is {1}",
-                                  connection->type(),
-                                  connections_by_type_[connection->type()].size());
+                                  conn_type, connections_by_type_[conn_type]->size());
     }
     DCHECK(pipe_to_server_fd_ >= -1);
     char* buf = connection->pipe_write_buf_for_transfer();
@@ -114,7 +106,7 @@ void IOWorker::OnConnectionClose(ConnectionBase* connection) {
             CHECK_EQ(nwrite, static_cast<size_t>(__FAAS_PTR_SIZE));
             DCHECK_GT(connections_on_closing_, 0);
             connections_on_closing_--;
-            if (state_.load(std::memory_order_consume) == kStopping
+            if (state_.load(std::memory_order_acquire) == kStopping
                     && connections_.empty()
                     && connections_on_closing_ == 0) {
                 // We have returned all Connection objects to Server
@@ -136,23 +128,15 @@ void IOWorker::ReturnWriteBuffer(std::span<char> buf) {
 
 ConnectionBase* IOWorker::PickConnection(int type) {
     DCHECK(WithinMyEventLoopThread());
-    if (!connections_by_type_.contains(type) || connections_by_type_[type].empty()) {
+    if (!connections_by_type_.contains(type)) {
         return nullptr;
     }
-    size_t n_conn = connections_by_type_[type].size();
-    if (!connections_for_pick_.contains(type)) {
-        std::vector<ConnectionBase*> conns;
-        for (int id : connections_by_type_[type]) {
-            DCHECK(connections_.contains(id));
-            conns.push_back(connections_[id]);
-        }
-        connections_for_pick_[type] = std::move(conns);
-    } else {
-        DCHECK_EQ(connections_for_pick_[type].size(), n_conn);
+    int conn_id;
+    if (!connections_by_type_[type]->PickNext(&conn_id)) {
+        return nullptr;
     }
-    size_t idx = connections_for_pick_rr_[type] % n_conn;
-    connections_for_pick_rr_[type]++;
-    return connections_for_pick_[type][idx];
+    DCHECK(connections_.contains(conn_id));
+    return connections_[conn_id];
 }
 
 void IOWorker::EventLoopThreadMain() {
@@ -167,7 +151,7 @@ void IOWorker::EventLoopThreadMain() {
 }
 
 void IOWorker::ScheduleFunction(ConnectionBase* owner, std::function<void()> fn) {
-    if (state_.load(std::memory_order_consume) != kRunning) {
+    if (state_.load(std::memory_order_acquire) != kRunning) {
         HLOG(WARNING) << "Cannot schedule function in non-running state, will ignore it";
         return;
     }
@@ -190,16 +174,16 @@ void IOWorker::OnNewConnection(ConnectionBase* connection) {
     DCHECK(connection->id() >= 0);
     DCHECK(!connections_.contains(connection->id()));
     connections_[connection->id()] = connection;
-    if (connection->type() >= 0) {
-        connections_by_type_[connection->type()].insert(connection->id());
-        if (connections_for_pick_.contains(connection->type())) {
-            connections_for_pick_[connection->type()].push_back(connection);
+    int conn_type = connection->type();
+    if (conn_type >= 0) {
+        if (!connections_by_type_.contains(conn_type)) {
+            connections_by_type_[conn_type].reset(new utils::RoundRobinSet<int>());
         }
+        connections_by_type_[conn_type]->Add(connection->id());
         HLOG(INFO) << fmt::format("New connection of type {0}, total of type {0} is {1}",
-                                  connection->type(),
-                                  connections_by_type_[connection->type()].size());
+                                  conn_type, connections_by_type_[conn_type]->size());
     }
-    if (state_.load(std::memory_order_consume) == kStopping) {
+    if (state_.load(std::memory_order_acquire) == kStopping) {
         HLOG(WARNING) << "Receive new connection in stopping state, will close it directly";
         connection->ScheduleClose();
     }
@@ -207,7 +191,7 @@ void IOWorker::OnNewConnection(ConnectionBase* connection) {
 
 void IOWorker::RunScheduledFunctions() {
     DCHECK(WithinMyEventLoopThread());
-    if (state_.load(std::memory_order_consume) != kRunning) {
+    if (state_.load(std::memory_order_acquire) != kRunning) {
         return;
     }
     absl::InlinedVector<std::unique_ptr<ScheduledFunction>, 16> functions;
@@ -227,7 +211,7 @@ void IOWorker::RunScheduledFunctions() {
 
 void IOWorker::StopInternal() {
     DCHECK(WithinMyEventLoopThread());
-    if (state_.load(std::memory_order_consume) == kStopping) {
+    if (state_.load(std::memory_order_acquire) == kStopping) {
         HLOG(WARNING) << "Already in stopping state";
         return;
     }

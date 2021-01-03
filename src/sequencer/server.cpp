@@ -239,7 +239,7 @@ void Server::DoStateCheck() {
 }
 
 UV_ASYNC_CB_FOR_CLASS(Server, Stop) {
-    if (state_.load(std::memory_order_consume) == kStopping) {
+    if (state_.load(std::memory_order_acquire) == kStopping) {
         HLOG(WARNING) << "Already in stopping state";
         return;
     }

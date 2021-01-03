@@ -183,7 +183,7 @@ void Launcher::ReturnWriteRequest(uv_write_t* write_req) {
 }
 
 UV_ASYNC_CB_FOR_CLASS(Launcher, Stop) {
-    if (state_.load(std::memory_order_consume) == kStopping) {
+    if (state_.load(std::memory_order_acquire) == kStopping) {
         HLOG(WARNING) << "Already in stopping state";
         return;
     }
