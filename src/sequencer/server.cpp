@@ -70,7 +70,9 @@ void Server::Start() {
         HLOG(FATAL) << "Cannot find myself in the sequencer config";
     }
     // Setup Raft
-    std::string raft_addr(fmt::format("{}:{}", address_, myself->raft_port));
+    std::string address = absl::GetFlag(FLAGS_listen_addr);
+    CHECK(!address.empty());
+    std::string raft_addr(fmt::format("{}:{}", address, myself->raft_port));
     std::vector<std::pair<uint64_t, std::string>> peers;
     config_.ForEachPeer([this, &peers] (const SequencerConfig::Peer* peer) {
         std::string addr_str;
@@ -116,7 +118,7 @@ void Server::Start() {
             absl::Seconds(absl::GetFlag(FLAGS_slog_statecheck_interval_sec)));
     }
     // Start listening for engine connections
-    node_manager_.Start(&uv_loop_, address_, myself->engine_conn_port);
+    node_manager_.Start(&uv_loop_, address, myself->engine_conn_port);
     // Setup fuzzers
     if (absl::GetFlag(FLAGS_enable_raft_leader_fuzzer)) {
         SetupFuzzer(

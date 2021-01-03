@@ -299,8 +299,7 @@ void HttpConnection::OnNewHttpRequest(std::string_view method, std::string_view 
             HLOG(WARNING) << "Body not empty, but qsAsInput is set for func " << func_name;
         }
         std::string encoded_json(QueryStringToJSON(qs));
-        func_call_context_.append_input(std::span<const char>(encoded_json.data(),
-                                                              encoded_json.length()));
+        func_call_context_.append_input(STRING_TO_SPAN(encoded_json));
     } else {
         func_call_context_.append_input(body_buffer_.to_span());
     }
@@ -353,8 +352,7 @@ void HttpConnection::OnFuncCallFinishedInternal() {
         if (func_call_context_.is_async()) {
             uint64_t call_id = func_call_context_.func_call().full_call_id;
             std::string response = fmt::format("{:016x}\n", call_id);
-            func_call_context_.append_output(
-                std::span<const char>(response.data(), response.size()));
+            func_call_context_.append_output(STRING_TO_SPAN(response));
         }
         SendHttpResponse(HttpStatus::OK, func_call_context_.output());
         break;

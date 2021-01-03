@@ -25,7 +25,6 @@ Server::Server()
     : engine_conn_port_(-1),
       http_port_(-1),
       grpc_port_(-1),
-      num_io_workers_(kDefaultNumIOWorkers),
       engine_sockfd_(-1),
       http_sockfd_(-1),
       grpc_sockfd_(-1),
@@ -55,45 +54,54 @@ Server::~Server() {}
 
 void Server::StartInternal() {
     // Load function config file
+    std::string func_config_json;
     CHECK(!func_config_file_.empty());
-    CHECK(fs_utils::ReadContents(func_config_file_, &func_config_json_))
+    CHECK(fs_utils::ReadContents(func_config_file_, &func_config_json))
         << "Failed to read from file " << func_config_file_;
-    CHECK(func_config_.Load(func_config_json_));
+    CHECK(func_config_.Load(func_config_json));
     // Start IO workers
-    CHECK_GT(num_io_workers_, 0);
-    HLOG(INFO) << fmt::format("Start {} IO workers", num_io_workers_);
-    for (int i = 0; i < num_io_workers_; i++) {
+    int num_io_workers = absl::GetFlag(FLAGS_num_io_workers);
+    CHECK_GT(num_io_workers, 0);
+    HLOG(INFO) << fmt::format("Start {} IO workers", num_io_workers);
+    for (int i = 0; i < num_io_workers; i++) {
         auto io_worker = CreateIOWorker(fmt::format("IO-{}", i));
         io_workers_.push_back(io_worker);
     }
-    CHECK(!address_.empty());
+    std::string address = absl::GetFlag(FLAGS_listen_addr);
+    CHECK(!address.empty());
     CHECK_NE(engine_conn_port_, -1);
     CHECK_NE(http_port_, -1);
     // Listen on address:engine_conn_port for engine connections
     int listen_backlog = absl::GetFlag(FLAGS_socket_listen_backlog);
     engine_sockfd_ = utils::TcpSocketBindAndListen(
-        address_, engine_conn_port_, listen_backlog);
+        address, engine_conn_port_, listen_backlog);
     CHECK(engine_sockfd_ != -1)
-        << fmt::format("Failed to listen on {}:{}", address_, engine_conn_port_);
+        << fmt::format("Failed to listen on {}:{}", address, engine_conn_port_);
     HLOG(INFO) << fmt::format("Listen on {}:{} for engine connections",
-                              address_, engine_conn_port_);
+                              address, engine_conn_port_);
     ListenForNewConnections(
         engine_sockfd_, absl::bind_front(&Server::OnNewEngineConnection, this));
+    // Save gateway host address to ZooKeeper for engines to connect
+    std::string gateway_addr(fmt::format("{}:{}", address, engine_conn_port_));
+    zk::ZKStatus status = zk_session()->CreateSync(
+        "gateway_addr", STRING_TO_SPAN(gateway_addr),
+        zk::ZKCreateMode::kEphemeral, nullptr);
+    CHECK(status.ok()) << "Failed to create ZooKeeper node: " << status.ToString();
     // Listen on address:http_port for HTTP requests
     http_sockfd_ = utils::TcpSocketBindAndListen(
-        address_, http_port_, listen_backlog);
+        address, http_port_, listen_backlog);
     CHECK(http_sockfd_ != -1)
-        << fmt::format("Failed to listen on {}:{}", address_, http_port_);
-    HLOG(INFO) << fmt::format("Listen on {}:{} for HTTP requests", address_, http_port_);
+        << fmt::format("Failed to listen on {}:{}", address, http_port_);
+    HLOG(INFO) << fmt::format("Listen on {}:{} for HTTP requests", address, http_port_);
     ListenForNewConnections(
         http_sockfd_, absl::bind_front(&Server::OnNewHttpConnection, this));
     // Listen on address:grpc_port for gRPC requests
     if (grpc_port_ != -1) {
         grpc_sockfd_ = utils::TcpSocketBindAndListen(
-            address_, grpc_port_, listen_backlog);
+            address, grpc_port_, listen_backlog);
         CHECK(grpc_sockfd_ != -1)
-            << fmt::format("Failed to listen on {}:{}", address_, grpc_port_);
-        HLOG(INFO) << fmt::format("Listen on {}:{} for gRPC requests", address_, grpc_port_);
+            << fmt::format("Failed to listen on {}:{}", address, grpc_port_);
+        HLOG(INFO) << fmt::format("Listen on {}:{} for gRPC requests", address, grpc_port_);
         ListenForNewConnections(
             grpc_sockfd_, absl::bind_front(&Server::OnNewGrpcConnection, this));
     }

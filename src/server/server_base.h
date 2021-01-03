@@ -1,6 +1,7 @@
 #pragma once
 
 #include "base/common.h"
+#include "common/zk.h"
 #include "utils/appendable_buffer.h"
 #include "server/io_worker.h"
 
@@ -22,6 +23,8 @@ protected:
     enum State { kCreated, kRunning, kStopping, kStopped };
     std::atomic<State> state_;
 
+    zk::ZKSession* zk_session() { return &zk_session_; }
+
     bool WithinMyEventLoopThread();
 
     IOWorker* CreateIOWorker(std::string_view worker_name,
@@ -39,6 +42,7 @@ protected:
 private:
     int stop_eventfd_;
     base::Thread event_loop_thread_;
+    zk::ZKSession zk_session_;
 
     absl::flat_hash_set<std::unique_ptr<IOWorker>> io_workers_;
     absl::flat_hash_map<IOWorker*, /* fd */ int> pipes_to_io_worker_;

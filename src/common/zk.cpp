@@ -25,9 +25,10 @@ bool ZKParseSequenceNumber(std::string_view created_path, uint64_t* parsed) {
     return absl::SimpleAtoi(created_path.substr(length - kSequenceNumberLength), parsed);
 }
 
-ZKSession::ZKSession(std::string_view host)
+ZKSession::ZKSession(std::string_view host, std::string_view root_path)
     : state_(kCreated),
       host_(host),
+      root_path_(absl::StripSuffix(root_path, "/")),
       handle_(nullptr),
       event_loop_thread_("ZK/EL",
                          absl::bind_front(&ZKSession::EventLoopThreadMain, this)),
@@ -41,6 +42,7 @@ ZKSession::ZKSession(std::string_view host)
 
 ZKSession::~ZKSession() {
     if (handle_ != nullptr) {
+        DCHECK(state_.load() == kStopped);
         int ret = zookeeper_close(handle_);
         if (ret != ZOK) {
             HLOG(FATAL) << "Failed to close zookeeper handle: " << zerror(ret);
@@ -159,7 +161,7 @@ ZKStatus ZKSession::CreateSync(std::string_view path, std::span<const char> valu
     ZKStatus ret_status;
     absl::Notification finished;
     Create(path, value, mode, [&] (ZKStatus status, const ZKResult& result, bool*) {
-        if (status.ok()) {
+        if (status.ok() && created_path != nullptr) {
             *created_path = std::string(result.path);
         }
         ret_status = status;
@@ -191,6 +193,7 @@ ZKStatus ZKSession::GetOrWaitSync(std::string_view path, std::string* value) {
         HLOG(ERROR) << "GetOrWaitSync cannot be called from ZKSession's event loop thread!";
         return ZKStatus(ZBADARGUMENTS);
     }
+    DCHECK(value != nullptr);
     ZKStatus ret_status;
     absl::Notification finished;
     auto get_cb = [&] (ZKStatus status, const ZKResult& result, bool*) {
@@ -236,7 +239,7 @@ void ZKSession::EnqueueNewOp(OpType type, std::string_view path,
         Op* op = op_pool_.Get();
         op->sess = this;
         op->type = type;
-        op->path = std::string(path);
+        op->path = fmt::format("{}/{}", root_path_, absl::StripPrefix(path, "/"));
         op->value.Reset();
         op->create_mode = -1;
         op->data_version = -1;
@@ -513,8 +516,7 @@ ZKResult ZKSession::StringsResult(const struct String_vector* strings) {
     return result;
 }
 
-ZKResult ZKSession::DataResult(const char* data, int data_len,
-                                        const struct Stat* stat) {
+ZKResult ZKSession::DataResult(const char* data, int data_len, const struct Stat* stat) {
     ZKResult result = EmptyResult();
     result.data = std::span<const char>(data, data_len);
     result.stat = stat;

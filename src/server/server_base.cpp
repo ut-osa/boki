@@ -1,5 +1,6 @@
 #include "server/server_base.h"
 
+#include "common/flags.h"
 #include "utils/io.h"
 
 #include <sys/types.h>
@@ -14,7 +15,10 @@ namespace server {
 
 ServerBase::ServerBase()
     : state_(kCreated),
-      event_loop_thread_("Server/EL", absl::bind_front(&ServerBase::EventLoopThreadMain, this)),
+      event_loop_thread_("Server/EL",
+                         absl::bind_front(&ServerBase::EventLoopThreadMain, this)),
+      zk_session_(absl::GetFlag(FLAGS_zookeeper_host),
+                  absl::GetFlag(FLAGS_zookeeper_root_path)),
       next_connection_id_(0) {
     stop_eventfd_ = eventfd(0, 0);
     PCHECK(stop_eventfd_ >= 0) << "Failed to create eventfd";
@@ -26,6 +30,7 @@ ServerBase::~ServerBase() {
 
 void ServerBase::Start() {
     DCHECK(state_.load() == kCreated);
+    zk_session_.Start();
     StartInternal();
     // Start thread for running event loop
     event_loop_thread_.Start();
@@ -40,6 +45,7 @@ void ServerBase::ScheduleStop() {
 
 void ServerBase::WaitForFinish() {
     DCHECK(state_.load() != kCreated);
+    zk_session_.WaitForFinish();
     event_loop_thread_.Join();
     DCHECK(state_.load() == kStopped);
     HLOG(INFO) << "Stopped";
@@ -149,6 +155,7 @@ void ServerBase::DoStop() {
     }
     HLOG(INFO) << "All IOWorker finish";
     StopInternal();
+    zk_session_.ScheduleStop();
 }
 
 void ServerBase::DoReadClosedConnection(int pipefd) {

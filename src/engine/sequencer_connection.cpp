@@ -34,8 +34,8 @@ void SequencerConnection::Start(server::IOWorker* io_worker) {
     }
     current_io_uring()->PrepareBuffers(kSequencerConnectionBufGroup, kBufSize);
     URING_DCHECK_OK(current_io_uring()->RegisterFd(sockfd_));
-    std::string shared_log_addr = fmt::format("{}:{}", engine_->shared_log_tcp_host(),
-                                              engine_->shared_log_tcp_port());
+    std::string shared_log_addr = fmt::format("{}:{}",
+        absl::GetFlag(FLAGS_hostname), engine_->shared_log_tcp_port());
     handshake_message_ = SequencerMessageHelper::NewEngineHandshake(
         engine_->node_id(), shared_log_addr);
     URING_DCHECK_OK(current_io_uring()->SendAll(

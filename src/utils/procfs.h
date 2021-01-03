@@ -19,5 +19,8 @@ struct ThreadStat {
 
 bool ReadThreadStat(int tid, ThreadStat* stat);
 
+// Return contents of /proc/sys/kernel/hostname
+std::string ReadHostname();
+
 }  // namespace procfs_utils
 }  // namespace faas

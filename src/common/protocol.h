@@ -275,7 +275,7 @@ public:
     }
 
     static void SetInlineData(Message* message, const std::string& data) {
-        SetInlineData<char>(message, std::span<const char>(data.data(), data.size()));
+        SetInlineData<char>(message, STRING_TO_SPAN(data));
     }
 
     static std::span<const char> GetInlineData(const Message& message) {

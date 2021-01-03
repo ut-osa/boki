@@ -16,7 +16,6 @@ public:
     explicit Server(uint16_t sequencer_id);
     ~Server();
 
-    void set_address(std::string_view address) { address_ = std::string(address); }
     void set_config_path(std::string_view path) { config_path_ = std::string(path); }
     void set_raft_data_dir(std::string_view dir) { raft_data_dir_ = std::string(dir); }
 
@@ -37,7 +36,6 @@ private:
 
     uint16_t my_sequencer_id_;
 
-    std::string address_;
     std::string config_path_;
     std::string raft_data_dir_;
 

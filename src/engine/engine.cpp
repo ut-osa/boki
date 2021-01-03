@@ -25,9 +25,7 @@ using protocol::GatewayMessageHelper;
 using protocol::SharedLogOpType;
 
 Engine::Engine()
-    : gateway_port_(-1),
-      num_io_workers_(kDefaultNumIOWorkers),
-      engine_tcp_port_(-1),
+    : engine_tcp_port_(-1),
       enable_shared_log_(false),
       shared_log_tcp_port_(-1),
       func_worker_use_engine_socket_(absl::GetFlag(FLAGS_func_worker_use_engine_socket)),
@@ -53,8 +51,7 @@ Engine::Engine()
           stat::StatisticsCollector<int32_t>::StandardReportCallback("message_delay")),
       input_use_shm_stat_(stat::Counter::StandardReportCallback("input_use_shm")),
       output_use_shm_stat_(stat::Counter::StandardReportCallback("output_use_shm")),
-      discarded_func_call_stat_(stat::Counter::StandardReportCallback("discarded_func_call")) {
-}
+      discarded_func_call_stat_(stat::Counter::StandardReportCallback("discarded_func_call")) {}
 
 Engine::~Engine() {}
 
@@ -65,9 +62,10 @@ void Engine::StartInternal() {
         << "Failed to read from file " << func_config_file_;
     CHECK(func_config_.Load(func_config_json_));
     // Start IO workers
-    CHECK_GT(num_io_workers_, 0);
-    HLOG(INFO) << fmt::format("Start {} IO workers", num_io_workers_);
-    for (int i = 0; i < num_io_workers_; i++) {
+    int num_io_workers = absl::GetFlag(FLAGS_num_io_workers);
+    CHECK_GT(num_io_workers, 0);
+    HLOG(INFO) << fmt::format("Start {} IO workers", num_io_workers);
+    for (int i = 0; i < num_io_workers; i++) {
         auto io_worker = CreateIOWorker(fmt::format("IO-{}", i));
         io_workers_.push_back(io_worker);
     }
@@ -81,25 +79,23 @@ void Engine::StartInternal() {
 }
 
 void Engine::SetupGatewayConnections() {
-    CHECK(!gateway_addr_.empty());
-    CHECK_NE(gateway_port_, -1);
-    int total_conn = num_io_workers_ * absl::GetFlag(FLAGS_gateway_conn_per_worker);
+    std::string gateway_addr;
+    zk::ZKStatus status = zk_session()->GetOrWaitSync("gateway_addr", &gateway_addr);
+    CHECK(status.ok()) << "Failed to get gateway address from ZooKeeper: "
+                       << status.ToString();
+    std::string_view gateway_host;
+    uint16_t gateway_port;
+    CHECK(utils::ParseHostPort(gateway_addr, &gateway_host, &gateway_port));
+    int total_conn = io_workers_.size() * absl::GetFlag(FLAGS_gateway_conn_per_worker);
     for (int i = 0; i < total_conn; i++) {
-        int sockfd = -1;
-        bool success = utils::NetworkOpWithRetry(
-            /* max_retry= */ 10, /* sleep_sec=*/ 3,
-            [this, &sockfd] {
-                sockfd = utils::TcpSocketConnect(gateway_addr_, gateway_port_);
-                return sockfd != -1;
-            }
-        );
-        if (!success) {
+        int sockfd = utils::TcpSocketConnect(gateway_host, gateway_port);
+        if (sockfd == -1) {
             HLOG(FATAL) << fmt::format("Failed to connect to gateway {}:{}",
-                                       gateway_addr_, gateway_port_);
+                                       gateway_host, gateway_port);
         }
         std::shared_ptr<server::ConnectionBase> connection(
             new GatewayConnection(this, gsl::narrow_cast<uint16_t>(i), sockfd));
-        server::IOWorker* io_worker = io_workers_[i % num_io_workers_];
+        server::IOWorker* io_worker = io_workers_[i % io_workers_.size()];
         RegisterConnection(io_worker, connection.get());
         DCHECK_GE(connection->id(), 0);
         DCHECK(!gateway_connections_.contains(connection->id()));
@@ -119,11 +115,14 @@ void Engine::SetupLocalIpc() {
             << fmt::format("Failed to listen on {}", ipc_path);
         HLOG(INFO) << fmt::format("Listen on {} for IPC connections", ipc_path);
     } else {
+        std::string address = absl::GetFlag(FLAGS_listen_addr);
+        CHECK(!address.empty());
         server_sockfd_ = utils::TcpSocketBindAndListen(
-            "0.0.0.0", engine_tcp_port_, listen_backlog);
+            address, engine_tcp_port_, listen_backlog);
         CHECK(server_sockfd_ != -1)
-            << fmt::format("Failed to listen on 0.0.0.0:{}", engine_tcp_port_);
-        HLOG(INFO) << fmt::format("Listen on 0.0.0.0:{} for IPC connections", engine_tcp_port_);
+            << fmt::format("Failed to listen on {}:{}", address, engine_tcp_port_);
+        HLOG(INFO) << fmt::format("Listen on {}:{} for IPC connections",
+                                  address, engine_tcp_port_);
     }
     ListenForNewConnections(server_sockfd_,
                             absl::bind_front(&Engine::OnNewMessageConnection, this));
@@ -136,18 +135,20 @@ void Engine::SetupSharedLog() {
     }
     slog_engine_.reset(new SLogEngine(this));
     // Listen on shared_log_tcp_port
+    std::string address = absl::GetFlag(FLAGS_listen_addr);
+    CHECK(!address.empty());
     CHECK_NE(shared_log_tcp_port_, -1);
     shared_log_sockfd_ = utils::TcpSocketBindAndListen(
-        "0.0.0.0", shared_log_tcp_port_, absl::GetFlag(FLAGS_socket_listen_backlog));
+        address, shared_log_tcp_port_, absl::GetFlag(FLAGS_socket_listen_backlog));
     CHECK(shared_log_sockfd_ != -1)
-        << fmt::format("Failed to listen on 0.0.0.0:{}", shared_log_tcp_port_);
-    HLOG(INFO) << fmt::format("Listen on 0.0.0.0:{} for shared log related connections",
-                              shared_log_tcp_port_);
+        << fmt::format("Failed to listen on {}:{}", address, shared_log_tcp_port_);
+    HLOG(INFO) << fmt::format("Listen on {}:{} for shared log related connections",
+                              address, shared_log_tcp_port_);
     ListenForNewConnections(shared_log_sockfd_,
                             absl::bind_front(&Engine::OnNewSLogConnection, this));
     // Connect to sequencer
     sequencer_config_.ForEachPeer([this] (const SequencerConfig::Peer* peer) {
-        int total_conn = num_io_workers_ * absl::GetFlag(FLAGS_sequencer_conn_per_worker);
+        int total_conn = io_workers_.size() * absl::GetFlag(FLAGS_sequencer_conn_per_worker);
         for (int i = 0; i < total_conn; i++) {
             int sockfd = -1;
             bool success = utils::NetworkOpWithRetry(
@@ -163,7 +164,7 @@ void Engine::SetupSharedLog() {
             }
             std::shared_ptr<server::ConnectionBase> connection(
                 new SequencerConnection(this, slog_engine_.get(), peer->id, sockfd));
-            server::IOWorker* io_worker = io_workers_[i % num_io_workers_];
+            server::IOWorker* io_worker = io_workers_[i % io_workers_.size()];
             RegisterConnection(io_worker, connection.get());
             DCHECK_GE(connection->id(), 0);
             DCHECK(!sequencer_connections_.contains(connection->id()));
@@ -285,8 +286,7 @@ bool Engine::OnNewHandshake(MessageConnection* connection,
         if (func_worker_use_engine_socket_) {
             response->flags |= protocol::kFuncWorkerUseEngineSocketFlag;
         }
-        *response_payload = std::span<const char>(func_config_json_.data(),
-                                                  func_config_json_.size());
+        *response_payload = STRING_TO_SPAN(func_config_json_);
     } else {
         *response = MessageHelper::NewHandshakeResponse(0);
         if (use_fifo_for_nested_call_) {

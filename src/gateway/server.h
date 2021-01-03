@@ -2,6 +2,7 @@
 
 #include "base/common.h"
 #include "base/thread.h"
+#include "common/zk.h"
 #include "common/stat.h"
 #include "common/protocol.h"
 #include "common/func_config.h"
@@ -17,17 +18,12 @@ namespace gateway {
 
 class Server final : public server::ServerBase {
 public:
-    static constexpr int kDefaultNumIOWorkers = 1;
-
     Server();
     ~Server();
 
-    void set_address(std::string_view address) { address_ = std::string(address); }
     void set_engine_conn_port(int port) { engine_conn_port_ = port; }
     void set_http_port(int port) { http_port_ = port; }
     void set_grpc_port(int port) { grpc_port_ = port; }
-    void set_listen_backlog(int value) { listen_backlog_ = value; }
-    void set_num_io_workers(int value) { num_io_workers_ = value; }
     void set_func_config_file(std::string_view path) {
         func_config_file_ = std::string(path);
     }
@@ -44,14 +40,10 @@ public:
                              std::span<const char> payload);
 
 private:
-    std::string address_;
     int engine_conn_port_;
     int http_port_;
     int grpc_port_;
-    int listen_backlog_;
-    int num_io_workers_;
     std::string func_config_file_;
-    std::string func_config_json_;
     FuncConfig func_config_;
 
     int engine_sockfd_;

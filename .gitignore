@@ -27,6 +27,7 @@
 /src/proto/*.pb.*
 
 # Misc
+/src/bin/test_*.cpp
 /tmp/
 /config.mk
 *~

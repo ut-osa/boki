@@ -18,20 +18,22 @@ ABSL_FLAG(std::string, fprocess_mode, "cpp",
           "Operating mode of fprocess. Valid options are cpp, go, nodejs, and python.");
 ABSL_FLAG(int, engine_tcp_port, -1, "If set, will connect to engine via localhost TCP socket");
 
-static std::atomic<faas::launcher::Launcher*> launcher_ptr(nullptr);
-void SignalHandlerToStopLauncher(int signal) {
-    faas::launcher::Launcher* launcher = launcher_ptr.exchange(nullptr);
+namespace faas {
+
+static std::atomic<launcher::Launcher*> launcher_ptr{nullptr};
+static void SignalHandlerToStopLauncher(int signal) {
+    launcher::Launcher* launcher = launcher_ptr.exchange(nullptr);
     if (launcher != nullptr) {
         launcher->ScheduleStop();
     }
 }
 
-int main(int argc, char* argv[]) {
+void LauncherMain(int argc, char* argv[]) {
     signal(SIGINT, SignalHandlerToStopLauncher);
-    faas::base::InitMain(argc, argv);
-    faas::ipc::SetRootPathForIpc(absl::GetFlag(FLAGS_root_path_for_ipc));
+    base::InitMain(argc, argv);
+    ipc::SetRootPathForIpc(absl::GetFlag(FLAGS_root_path_for_ipc));
 
-    auto launcher = std::make_unique<faas::launcher::Launcher>();
+    auto launcher = std::make_unique<launcher::Launcher>();
     launcher->set_func_id(absl::GetFlag(FLAGS_func_id));
     launcher->set_fprocess(absl::GetFlag(FLAGS_fprocess));
     launcher->set_fprocess_working_dir(absl::GetFlag(FLAGS_fprocess_working_dir));
@@ -40,13 +42,13 @@ int main(int argc, char* argv[]) {
 
     std::string fprocess_mode = absl::GetFlag(FLAGS_fprocess_mode);
     if (fprocess_mode == "cpp") {
-        launcher->set_fprocess_mode(faas::launcher::Launcher::kCppMode);
+        launcher->set_fprocess_mode(launcher::Launcher::kCppMode);
     } else if (fprocess_mode == "go") {
-        launcher->set_fprocess_mode(faas::launcher::Launcher::kGoMode);
+        launcher->set_fprocess_mode(launcher::Launcher::kGoMode);
     } else if (fprocess_mode == "nodejs") {
-        launcher->set_fprocess_mode(faas::launcher::Launcher::kNodeJsMode);
+        launcher->set_fprocess_mode(launcher::Launcher::kNodeJsMode);
     } else if (fprocess_mode == "python") {
-        launcher->set_fprocess_mode(faas::launcher::Launcher::kPythonMode);
+        launcher->set_fprocess_mode(launcher::Launcher::kPythonMode);
     } else {
         LOG(FATAL) << "Invalid fprocess_mode: " << fprocess_mode;
     }
@@ -54,6 +56,11 @@ int main(int argc, char* argv[]) {
     launcher->Start();
     launcher_ptr.store(launcher.get());
     launcher->WaitForFinish();
+}
 
+}  // namespace faas
+
+int main(int argc, char* argv[]) {
+    faas::LauncherMain(argc, argv);
     return 0;
 }

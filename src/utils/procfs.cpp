@@ -64,6 +64,15 @@ bool ReadThreadStat(int tid, ThreadStat* stat) {
 
     return true;
 }
-    
+
+std::string ReadHostname() {
+    std::string hostname;
+    if (!fs_utils::ReadContents("/proc/sys/kernel/hostname", &hostname)) {
+        LOG(FATAL) << "Failed to read /proc/sys/kernel/hostname";
+    }
+    hostname = absl::StripSuffix(hostname, "\n");
+    return hostname;
+}
+
 }  // namespace procfs_utils
 }  // namespace faas

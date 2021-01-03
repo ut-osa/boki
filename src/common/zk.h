@@ -64,7 +64,7 @@ bool ZKParseSequenceNumber(std::string_view created_path, uint64_t* parsed);
 
 class ZKSession {
 public:
-    explicit ZKSession(std::string_view host);
+    ZKSession(std::string_view host, std::string_view root_path);
     ~ZKSession();
 
     void Start();
@@ -107,6 +107,7 @@ private:
     enum State { kCreated, kRunning, kStopped };
     std::atomic<State> state_;
     std::string host_;
+    std::string root_path_;
     zhandle_t* handle_;
 
     base::Thread event_loop_thread_;

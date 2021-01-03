@@ -21,16 +21,9 @@ namespace engine {
 
 class Engine final : public server::ServerBase {
 public:
-    static constexpr int kDefaultNumIOWorkers = 1;
-
     Engine();
     ~Engine();
 
-    void set_gateway_addr_port(std::string_view addr, int port) {
-        gateway_addr_ = std::string(addr);
-        gateway_port_ = port;
-    }
-    void set_num_io_workers(int value) { num_io_workers_ = value; }
     void set_node_id(uint16_t value) { node_id_ = value; }
     void set_func_config_file(std::string_view path) {
         func_config_file_ = std::string(path);
@@ -40,15 +33,11 @@ public:
     }
     void enable_shared_log() { enable_shared_log_ = true; }
     void set_engine_tcp_port(int port) { engine_tcp_port_ = port; }
-    void set_shared_log_tcp_host(std::string_view host) {
-        shared_log_tcp_host_ = std::string(host);
-    }
     void set_shared_log_tcp_port(int port) { shared_log_tcp_port_ = port; }
 
     uint16_t node_id() const { return node_id_; }
     const FuncConfig* func_config() { return &func_config_; }
     int engine_tcp_port() const { return engine_tcp_port_; }
-    std::string_view shared_log_tcp_host() const { return shared_log_tcp_host_; }
     int shared_log_tcp_port() const { return shared_log_tcp_port_; }
     bool func_worker_use_engine_socket() const { return func_worker_use_engine_socket_; }
     WorkerManager* worker_manager() { return worker_manager_.get(); }
@@ -71,12 +60,8 @@ private:
     class ExternalFuncCallContext;
     friend class SLogEngine;
 
-    std::string gateway_addr_;
-    int gateway_port_;
-    int num_io_workers_;
     int engine_tcp_port_;
     bool enable_shared_log_;
-    std::string shared_log_tcp_host_;
     int shared_log_tcp_port_;
     uint16_t node_id_;
     std::string func_config_file_;

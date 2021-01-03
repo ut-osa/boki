@@ -48,9 +48,7 @@ void Launcher::Start() {
     Message handshake_message = MessageHelper::NewLauncherHandshake(func_id_);
     std::string self_container_id = docker_utils::GetSelfContainerId();
     DCHECK_EQ(self_container_id.size(), docker_utils::kContainerIdLength);
-    MessageHelper::SetInlineData(&handshake_message,
-                                 std::span<const char>(self_container_id.data(),
-                                                       self_container_id.size()));
+    MessageHelper::SetInlineData(&handshake_message, STRING_TO_SPAN(self_container_id));
     engine_connection_.Start(&uv_loop_, engine_tcp_port_, handshake_message);
     // Start thread for running event loop
     event_loop_thread_.Start();
