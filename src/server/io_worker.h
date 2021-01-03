@@ -76,6 +76,9 @@ public:
     // if it is closed.
     void ScheduleFunction(ConnectionBase* owner, std::function<void()> fn);
 
+    // Idle functions will be invoked at the end of each event loop iteration.
+    void ScheduleIdleFunction(ConnectionBase* owner, std::function<void()> fn);
+
 private:
     enum State { kCreated, kRunning, kStopping, kStopped };
 
@@ -101,12 +104,15 @@ private:
         std::function<void()> fn;
     };
     absl::Mutex scheduled_function_mu_;
-    absl::InlinedVector<std::unique_ptr<ScheduledFunction>, 16>
+    absl::InlinedVector<ScheduledFunction, 16>
         scheduled_functions_ ABSL_GUARDED_BY(scheduled_function_mu_);
+    absl::InlinedVector<ScheduledFunction, 16> idle_functions_;
 
     void EventLoopThreadMain();
     void OnNewConnection(ConnectionBase* connection);
     void RunScheduledFunctions();
+    void RunIdleFunctions();
+    void InvokeFunction(const ScheduledFunction& function);
     void StopInternal();
     void CloseWorkerFds();
 

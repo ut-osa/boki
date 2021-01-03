@@ -145,6 +145,7 @@ void IOWorker::EventLoopThreadMain() {
     int inflight_ops;
     do {
         io_uring_.EventLoopRunOnce(&inflight_ops);
+        RunIdleFunctions();
     } while (inflight_ops > 0);
     HLOG(INFO) << "Event loop finishes";
     state_.store(kStopped);
@@ -155,17 +156,38 @@ void IOWorker::ScheduleFunction(ConnectionBase* owner, std::function<void()> fn)
         HLOG(WARNING) << "Cannot schedule function in non-running state, will ignore it";
         return;
     }
+    ScheduledFunction function = {
+        .owner_id = (owner == nullptr) ? -1 : owner->id(),
+        .fn = fn
+    };
     if (WithinMyEventLoopThread()) {
-        fn();
+        InvokeFunction(function);
         return;
     }
-    std::unique_ptr<ScheduledFunction> function = std::make_unique<ScheduledFunction>();
-    function->owner_id = (owner == nullptr) ? -1 : owner->id();
-    function->fn = fn;
-    absl::MutexLock lk(&scheduled_function_mu_);
-    scheduled_functions_.push_back(std::move(function));
-    DCHECK(eventfd_ >= 0);
-    PCHECK(eventfd_write(eventfd_, 1) == 0) << "eventfd_write failed";
+    bool need_notify = false;
+    {
+        absl::MutexLock lk(&scheduled_function_mu_);
+        if (scheduled_functions_.empty()) {
+            need_notify = true;
+        }
+        scheduled_functions_.push_back(std::move(function));
+    }
+    if (need_notify) {
+        DCHECK(eventfd_ >= 0);
+        PCHECK(eventfd_write(eventfd_, 1) == 0) << "eventfd_write failed";
+    }
+}
+
+void IOWorker::ScheduleIdleFunction(ConnectionBase* owner, std::function<void()> fn) {
+    DCHECK(WithinMyEventLoopThread());
+    if (state_.load(std::memory_order_acquire) != kRunning) {
+        HLOG(WARNING) << "Cannot schedule function in non-running state, will ignore it";
+        return;
+    }
+    idle_functions_.push_back(ScheduledFunction {
+        .owner_id = (owner == nullptr) ? -1 : owner->id(),
+        .fn = fn
+    });
 }
 
 void IOWorker::OnNewConnection(ConnectionBase* connection) {
@@ -194,18 +216,34 @@ void IOWorker::RunScheduledFunctions() {
     if (state_.load(std::memory_order_acquire) != kRunning) {
         return;
     }
-    absl::InlinedVector<std::unique_ptr<ScheduledFunction>, 16> functions;
+    absl::InlinedVector<ScheduledFunction, 16> functions;
     {
         absl::MutexLock lk(&scheduled_function_mu_);
         functions = std::move(scheduled_functions_);
         scheduled_functions_.clear();
     }
-    for (const auto& function : functions) {
-        if (function->owner_id < 0 || connections_.contains(function->owner_id)) {
-            function->fn();
-        } else {
-            HLOG(WARNING) << "Owner connection has closed";
-        }
+    for (const ScheduledFunction& function : functions) {
+        InvokeFunction(function);
+    }
+}
+
+void IOWorker::RunIdleFunctions() {
+    DCHECK(WithinMyEventLoopThread());
+    if (state_.load(std::memory_order_acquire) != kRunning) {
+        return;
+    }
+    for (const ScheduledFunction& function : idle_functions_) {
+        InvokeFunction(function);
+    }
+    idle_functions_.clear();
+}
+
+void IOWorker::InvokeFunction(const ScheduledFunction& function) {
+    DCHECK(WithinMyEventLoopThread());
+    if (function.owner_id < 0 || connections_.contains(function.owner_id)) {
+        function.fn();
+    } else {
+        HLOG(WARNING) << "Owner connection has closed";
     }
 }
 
