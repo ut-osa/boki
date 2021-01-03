@@ -81,12 +81,6 @@ void Server::StartInternal() {
                               address, engine_conn_port_);
     ListenForNewConnections(
         engine_sockfd_, absl::bind_front(&Server::OnNewEngineConnection, this));
-    // Save gateway host address to ZooKeeper for engines to connect
-    std::string gateway_addr(fmt::format("{}:{}", address, engine_conn_port_));
-    zk::ZKStatus status = zk_session()->CreateSync(
-        "gateway_addr", STRING_TO_SPAN(gateway_addr),
-        zk::ZKCreateMode::kEphemeral, nullptr);
-    CHECK(status.ok()) << "Failed to create ZooKeeper node: " << status.ToString();
     // Listen on address:http_port for HTTP requests
     http_sockfd_ = utils::TcpSocketBindAndListen(
         address, http_port_, listen_backlog);
@@ -105,6 +99,13 @@ void Server::StartInternal() {
         ListenForNewConnections(
             grpc_sockfd_, absl::bind_front(&Server::OnNewGrpcConnection, this));
     }
+    // Save gateway host address to ZooKeeper for engines to connect
+    std::string gateway_addr(
+        fmt::format("{}:{}", absl::GetFlag(FLAGS_hostname), engine_conn_port_));
+    zk::ZKStatus status = zk_session()->CreateSync(
+        "gateway_addr", STRING_TO_SPAN(gateway_addr),
+        zk::ZKCreateMode::kEphemeral, nullptr);
+    CHECK(status.ok()) << "Failed to create ZooKeeper node: " << status.ToString();
 }
 
 void Server::StopInternal() {
