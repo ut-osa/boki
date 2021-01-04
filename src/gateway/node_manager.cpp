@@ -10,44 +10,19 @@ namespace gateway {
 
 NodeManager::NodeManager(Server* server)
     : server_(server),
-      max_running_requests_(0) {
-}
+      max_running_requests_(0) {}
 
-NodeManager::~NodeManager() {
-}
+NodeManager::~NodeManager() {}
 
-size_t NodeManager::num_connected_node() const {
-    absl::ReaderMutexLock lk(&mu_);
-    return connected_nodes_.size();
-}
-
-void NodeManager::OnNewEngineConnection(EngineConnection* connection) {
-    absl::MutexLock lk(&mu_);
-    uint16_t node_id = connection->node_id();
-    if (!connected_nodes_.contains(node_id)) {
-        NewConnectedNode(node_id);
-        mu_.Unlock();
-        server_->OnNewConnectedNode(connection);
-        mu_.Lock();
-    }
-    DCHECK(connected_nodes_.contains(node_id));
-    Node* node = connected_nodes_[node_id].get();
-    node->connections.push_back(connection);
-    node->active_connections++;
-}
-
-void NodeManager::OnEngineConnectionClosed(EngineConnection* connection) {
-    absl::MutexLock lk(&mu_);
-    uint16_t node_id = connection->node_id();
-    DCHECK(connected_nodes_.contains(node_id));
-    Node* node = connected_nodes_[node_id].get();
-    for (size_t i = 0; i < node->connections.size(); i++) {
-        if (node->connections[i] == connection) {
-            node->connections[i] = nullptr;
-            node->active_connections--;
-            break;
-        }
-    }
+void NodeManager::StartWatchingEngineNodes(zk::ZKSession* session) {
+    engine_watcher_.reset(new zk_utils::DirWatcher(session, "engines"));
+    engine_watcher_->SetNodeCreatedCallback(
+        absl::bind_front(&NodeManager::OnZNodeCreated, this));
+    engine_watcher_->SetNodeChangedCallback(
+        absl::bind_front(&NodeManager::OnZNodeChanged, this));
+    engine_watcher_->SetNodeDeletedCallback(
+        absl::bind_front(&NodeManager::OnZNodeDeleted, this));
+    engine_watcher_->Start();
 }
 
 bool NodeManager::PickNodeForNewFuncCall(const protocol::FuncCall& func_call, uint16_t* node_id) {
@@ -70,7 +45,7 @@ bool NodeManager::PickNodeForNewFuncCall(const protocol::FuncCall& func_call, ui
     }
     Node* node = connected_node_list_[idx];
     node->inflight_requests++;
-    node->dispatched_requests_stat->Tick();
+    node->dispatched_requests_stat.Tick();
     running_requests_.insert(func_call.full_call_id);
     *node_id = node->node_id;
     return true;
@@ -89,71 +64,61 @@ void NodeManager::FuncCallFinished(const protocol::FuncCall& func_call, uint16_t
     node->inflight_requests--;
 }
 
-void NodeManager::NewConnectedNode(uint16_t node_id) {
-    DCHECK(!connected_nodes_[node_id]);
-    Node* node = new Node;
-    node->node_id = node_id;
-    node->inflight_requests = 0;
-    node->dispatched_requests_stat.reset(new stat::Counter(
-        stat::Counter::StandardReportCallback(fmt::format("dispatched_requests[{}]", node_id))));
-    connected_node_list_.push_back(node);
-    connected_nodes_[node_id] = std::unique_ptr<Node>(node);
-    max_running_requests_ = absl::GetFlag(FLAGS_max_running_requests) * connected_nodes_.size();
-    HLOG(INFO) << fmt::format("Node with id {} connected, total number of connected nodes: {}",
-                              node_id, connected_nodes_.size());
+bool NodeManager::GetNodeAddr(uint16_t node_id, struct sockaddr_in* addr) {
+    absl::MutexLock lk(&mu_);
+    if (!connected_nodes_.contains(node_id)) {
+        return false;
+    }
+    Node* node = connected_nodes_[node_id].get();
+    memcpy(addr, &node->addr, sizeof(struct sockaddr_in));
+    return true;
 }
 
-bool NodeManager::SendMessage(uint16_t node_id, const protocol::GatewayMessage& message,
-                              std::span<const char> payload) {
-    // Fast path
-    server::IOWorker* io_worker = server::IOWorker::current();
-    if (io_worker != nullptr) {
-        server::ConnectionBase* connection = io_worker->PickConnection(
-            EngineConnection::type_id(node_id));
-        if (connection != nullptr) {
-            connection->as_ptr<EngineConnection>()->SendMessage(message, payload);
-            return true;
-        }
-    }
-    // Slow path
-    HLOG(WARNING) << "Using slow path in SendMessage";
-    std::shared_ptr<server::ConnectionBase> connection = nullptr;
+NodeManager::Node::Node(uint16_t node_id)
+    : node_id(node_id),
+      inflight_requests(0),
+      dispatched_requests_stat(stat::Counter::StandardReportCallback(
+          fmt::format("dispatched_requests[{}]", node_id))) {}
+
+void NodeManager::OnZNodeCreated(std::string_view path, std::span<const char> contents) {
+    int parsed;
+    CHECK(absl::SimpleAtoi(path, &parsed));
+    uint16_t node_id = gsl::narrow_cast<uint16_t>(parsed);
+    std::string_view engine_host;
+    uint16_t port;
+    CHECK(utils::ParseHostPort(
+        std::string_view(contents.data(), contents.size()),
+        &engine_host, &port));
+    std::unique_ptr<Node> node = std::make_unique<Node>(node_id);
+    CHECK(utils::FillTcpSocketAddr(&node->addr, engine_host, port));
     {
-        absl::ReaderMutexLock lk(&mu_);
-        if (!connected_nodes_.contains(node_id)) {
-            return false;
-        }
-        Node* node = connected_nodes_[node_id].get();
-        if (node->active_connections == 0) {
-            return false;
-        }
-        while (true) {
-            size_t idx = absl::Uniform<size_t>(random_bit_gen_, 0, node->connections.size());
-            EngineConnection* engine_connection = node->connections[idx];
-            if (engine_connection != nullptr) {
-                connection = engine_connection->ref_self();
-                break;
-            }
+        absl::MutexLock lk(&mu_);
+        DCHECK(!connected_nodes_.contains(node_id))
+            << fmt::format("Engine node {} already exists", node_id);
+        connected_node_list_.push_back(node.get());
+        connected_nodes_[node_id] = std::move(node);
+    }
+    server_->OnEngineNodeOnline(node_id);
+}
+
+void NodeManager::OnZNodeChanged(std::string_view path, std::span<const char> contents) {
+    LOG(FATAL) << fmt::format("Contents of znode {} changed", path);
+}
+
+void NodeManager::OnZNodeDeleted(std::string_view path) {
+    int parsed;
+    CHECK(absl::SimpleAtoi(path, &parsed));
+    uint16_t node_id = gsl::narrow_cast<uint16_t>(parsed);
+    {
+        absl::MutexLock lk(&mu_);
+        DCHECK(connected_nodes_.contains(node_id));
+        connected_nodes_.erase(node_id);
+        connected_node_list_.clear();
+        for (auto& entry : connected_nodes_) {
+            connected_node_list_.push_back(entry.second.get());
         }
     }
-    protocol::GatewayMessage message_copy = message;
-    std::span<const char> payload_copy;
-    char* buf = nullptr;
-    if (payload.size() > 0) {
-        buf = reinterpret_cast<char*>(malloc(payload.size()));
-        memcpy(buf, payload.data(), payload.size());
-        payload_copy = std::span<const char>(buf, payload.size());
-    }
-    EngineConnection* engine_connection = connection->as_ptr<EngineConnection>();
-    engine_connection->io_worker()->ScheduleFunction(
-        connection.get(), [engine_connection, message_copy, payload_copy, buf] () {
-            engine_connection->SendMessage(message_copy, payload_copy);
-            if (buf != nullptr) {
-                free(buf);
-            }
-        }
-    );
-    return true;
+    server_->OnEngineNodeOffline(node_id);
 }
 
 }  // namespace gateway

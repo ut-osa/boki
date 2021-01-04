@@ -60,6 +60,8 @@ public:
     void WaitForFinish();
     bool WithinMyEventLoopThread();
 
+    void RegisterConnection(ConnectionBase* connection);
+
     // Called by Connection for ONLY once
     void OnConnectionClose(ConnectionBase* connection);
 
@@ -109,7 +111,6 @@ private:
     absl::InlinedVector<ScheduledFunction, 16> idle_functions_;
 
     void EventLoopThreadMain();
-    void OnNewConnection(ConnectionBase* connection);
     void RunScheduledFunctions();
     void RunIdleFunctions();
     void InvokeFunction(const ScheduledFunction& function);

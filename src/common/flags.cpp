@@ -3,11 +3,14 @@
 #include "utils/procfs.h"
 
 ABSL_FLAG(std::string, listen_addr, "0.0.0.0",
-          "Address to listen for external connections");
+          "Address to listen for external TCP connections");
 ABSL_FLAG(std::string, hostname, "",
-          "Hostname for others to connect. "
+          "Hostname for other components to connect. "
           "If set to empty, /proc/sys/kernel/hostname will be used.");
+ABSL_FLAG(int, message_port, 23333, "Port for message passing between components");
 ABSL_FLAG(int, num_io_workers, 1, "Number of IO workers.");
+ABSL_FLAG(int, message_conn_per_worker, 16,
+          "Number of connections for message passing per IO worker.");
 ABSL_FLAG(int, socket_listen_backlog, 64, "Backlog for listen");
 ABSL_FLAG(bool, tcp_enable_nodelay, true, "Enable TCP_NODELAY");
 ABSL_FLAG(bool, tcp_enable_keepalive, true, "Enable TCP keep-alive");

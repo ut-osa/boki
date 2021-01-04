@@ -47,7 +47,7 @@ private:
     absl::flat_hash_set<std::unique_ptr<IOWorker>> io_workers_;
     absl::flat_hash_map<IOWorker*, /* fd */ int> pipes_to_io_worker_;
     absl::flat_hash_map</* fd */ int, ConnectionCallback> connection_cbs_;
-    int next_connection_id_;
+    std::atomic<int> next_connection_id_;
 
     void EventLoopThreadMain();
     void DoStop();

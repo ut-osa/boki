@@ -7,10 +7,11 @@
 #include "common/protocol.h"
 #include "common/func_config.h"
 #include "server/server_base.h"
+#include "server/ingress_connection.h"
+#include "server/egress_hub.h"
 #include "gateway/func_call_context.h"
 #include "gateway/http_connection.h"
 #include "gateway/grpc_connection.h"
-#include "gateway/engine_connection.h"
 #include "gateway/node_manager.h"
 
 namespace faas {
@@ -21,7 +22,6 @@ public:
     Server();
     ~Server();
 
-    void set_engine_conn_port(int port) { engine_conn_port_ = port; }
     void set_http_port(int port) { http_port_ = port; }
     void set_grpc_port(int port) { grpc_port_ = port; }
     void set_func_config_file(std::string_view path) {
@@ -31,34 +31,36 @@ public:
     NodeManager* node_manager() { return &node_manager_; }
 
     // Must be thread-safe
-    void OnNewConnectedNode(EngineConnection* connection);
+    void OnEngineNodeOnline(uint16_t node_id);
+    void OnEngineNodeOffline(uint16_t node_id);
     void OnNewHttpFuncCall(HttpConnection* connection, FuncCallContext* func_call_context);
     void OnNewGrpcFuncCall(GrpcConnection* connection, FuncCallContext* func_call_context);
     void DiscardFuncCall(FuncCallContext* func_call_context);
-    void OnRecvEngineMessage(EngineConnection* connection,
-                             const protocol::GatewayMessage& message,
+    void OnRecvEngineMessage(uint16_t node_id, const protocol::GatewayMessage& message,
                              std::span<const char> payload);
 
 private:
-    int engine_conn_port_;
     int http_port_;
     int grpc_port_;
     std::string func_config_file_;
     FuncConfig func_config_;
 
-    int engine_sockfd_;
+    int message_sockfd_;
     int http_sockfd_;
     int grpc_sockfd_;
     std::vector<server::IOWorker*> io_workers_;
 
     size_t next_http_conn_worker_id_;
     size_t next_grpc_conn_worker_id_;
+    size_t next_engine_conn_worker_id_;
     int next_http_connection_id_;
     int next_grpc_connection_id_;
 
     NodeManager node_manager_;
-    absl::flat_hash_map</* id */ int, std::shared_ptr<server::ConnectionBase>>
-        engine_connections_;
+    absl::flat_hash_map</* id */ int, std::unique_ptr<server::IngressConnection>>
+        engine_ingress_conns_;
+    absl::flat_hash_map</* id */ int, std::unique_ptr<server::EgressHub>>
+        engine_egress_hubs_;
 
     std::atomic<uint32_t> next_call_id_;
 
@@ -119,11 +121,13 @@ private:
         ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
     void TryDispatchingPendingFuncCalls();
 
+    bool SendMessageToEngine(uint16_t node_id, const protocol::GatewayMessage& message,
+                             std::span<const char> payload);
     void HandleFuncCallCompleteOrFailedMessage(uint16_t node_id,
                                                const protocol::GatewayMessage& message,
                                                std::span<const char> payload);
 
-    void OnNewEngineConnection(int sockfd);
+    void OnNewMessageConnection(int sockfd);
     void OnNewHttpConnection(int sockfd);
     void OnNewGrpcConnection(int sockfd);
 

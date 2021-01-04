@@ -60,7 +60,7 @@ void IOWorker::Start(int pipe_to_server_fd) {
             CHECK_EQ(data.size(), static_cast<size_t>(__FAAS_PTR_SIZE));
             ConnectionBase* connection;
             memcpy(&connection, data.data(), __FAAS_PTR_SIZE);
-            OnNewConnection(connection);
+            RegisterConnection(connection);
             return true;
         }
     ));
@@ -81,6 +81,27 @@ void IOWorker::WaitForFinish() {
 
 bool IOWorker::WithinMyEventLoopThread() {
     return base::Thread::current() == &event_loop_thread_;
+}
+
+void IOWorker::RegisterConnection(ConnectionBase* connection) {
+    DCHECK(WithinMyEventLoopThread());
+    connection->Start(this);
+    DCHECK(connection->id() >= 0);
+    DCHECK(!connections_.contains(connection->id()));
+    connections_[connection->id()] = connection;
+    int conn_type = connection->type();
+    if (conn_type >= 0) {
+        if (!connections_by_type_.contains(conn_type)) {
+            connections_by_type_[conn_type].reset(new utils::RoundRobinSet<int>());
+        }
+        connections_by_type_[conn_type]->Add(connection->id());
+        HLOG(INFO) << fmt::format("New connection of type {0}, total of type {0} is {1}",
+                                  conn_type, connections_by_type_[conn_type]->size());
+    }
+    if (state_.load(std::memory_order_acquire) == kStopping) {
+        HLOG(WARNING) << "Receive new connection in stopping state, will close it directly";
+        connection->ScheduleClose();
+    }
 }
 
 void IOWorker::OnConnectionClose(ConnectionBase* connection) {
@@ -188,27 +209,6 @@ void IOWorker::ScheduleIdleFunction(ConnectionBase* owner, std::function<void()>
         .owner_id = (owner == nullptr) ? -1 : owner->id(),
         .fn = fn
     });
-}
-
-void IOWorker::OnNewConnection(ConnectionBase* connection) {
-    DCHECK(WithinMyEventLoopThread());
-    connection->Start(this);
-    DCHECK(connection->id() >= 0);
-    DCHECK(!connections_.contains(connection->id()));
-    connections_[connection->id()] = connection;
-    int conn_type = connection->type();
-    if (conn_type >= 0) {
-        if (!connections_by_type_.contains(conn_type)) {
-            connections_by_type_[conn_type].reset(new utils::RoundRobinSet<int>());
-        }
-        connections_by_type_[conn_type]->Add(connection->id());
-        HLOG(INFO) << fmt::format("New connection of type {0}, total of type {0} is {1}",
-                                  conn_type, connections_by_type_[conn_type]->size());
-    }
-    if (state_.load(std::memory_order_acquire) == kStopping) {
-        HLOG(WARNING) << "Receive new connection in stopping state, will close it directly";
-        connection->ScheduleClose();
-    }
 }
 
 void IOWorker::RunScheduledFunctions() {

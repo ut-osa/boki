@@ -175,6 +175,30 @@ struct Message {
 #define MESSAGE_INLINE_DATA_SIZE (__FAAS_MESSAGE_SIZE - MESSAGE_HEADER_SIZE)
 static_assert(sizeof(Message) == __FAAS_MESSAGE_SIZE, "Unexpected Message size");
 
+enum class ConnType : uint16_t {
+    GATEWAY_TO_ENGINE     = 0,
+    ENGINE_TO_GATEWAY     = 1,
+    ENGINE_TO_SEQUENCER   = 2,
+    SEQUENCER_TO_ENGINE   = 3,
+    SLOG_ENGINE_TO_ENGINE = 4
+};
+
+struct HandshakeMessage {
+    uint16_t conn_type;
+    uint16_t src_node_id;
+} __attribute__ ((packed));
+
+static_assert(sizeof(HandshakeMessage) == 4, "Unexpected HandshakeMessage size");
+
+inline std::string EncodeHandshakeMessage(ConnType type, uint16_t src_node_id = 0) {
+    HandshakeMessage message = {
+        .conn_type = static_cast<uint16_t>(type),
+        .src_node_id = src_node_id, 
+    };
+    return std::string(reinterpret_cast<const char*>(&message),
+                       sizeof(HandshakeMessage));
+}
+
 struct GatewayMessage {
     struct {
         uint16_t message_type : 4;

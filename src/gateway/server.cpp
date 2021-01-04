@@ -23,14 +23,14 @@ using protocol::GatewayMessage;
 using protocol::GatewayMessageHelper;
 
 Server::Server()
-    : engine_conn_port_(-1),
-      http_port_(-1),
+    : http_port_(-1),
       grpc_port_(-1),
-      engine_sockfd_(-1),
+      message_sockfd_(-1),
       http_sockfd_(-1),
       grpc_sockfd_(-1),
       next_http_conn_worker_id_(0),
       next_grpc_conn_worker_id_(0),
+      next_engine_conn_worker_id_(0),
       next_http_connection_id_(0),
       next_grpc_connection_id_(0),
       node_manager_(this),
@@ -70,18 +70,18 @@ void Server::StartInternal() {
     }
     std::string address = absl::GetFlag(FLAGS_listen_addr);
     CHECK(!address.empty());
-    CHECK_NE(engine_conn_port_, -1);
     CHECK_NE(http_port_, -1);
-    // Listen on address:engine_conn_port for engine connections
+    // Listen on address:message_port for message connections
     int listen_backlog = absl::GetFlag(FLAGS_socket_listen_backlog);
-    engine_sockfd_ = utils::TcpSocketBindAndListen(
-        address, engine_conn_port_, listen_backlog);
-    CHECK(engine_sockfd_ != -1)
-        << fmt::format("Failed to listen on {}:{}", address, engine_conn_port_);
-    HLOG(INFO) << fmt::format("Listen on {}:{} for engine connections",
-                              address, engine_conn_port_);
+    int message_port = absl::GetFlag(FLAGS_message_port);
+    message_sockfd_ = utils::TcpSocketBindAndListen(
+        address, message_port, listen_backlog);
+    CHECK(message_sockfd_ != -1)
+        << fmt::format("Failed to listen on {}:{}", address, message_port);
+    HLOG(INFO) << fmt::format("Listen on {}:{} for message connections",
+                              address, message_port);
     ListenForNewConnections(
-        engine_sockfd_, absl::bind_front(&Server::OnNewEngineConnection, this));
+        message_sockfd_, absl::bind_front(&Server::OnNewMessageConnection, this));
     // Listen on address:http_port for HTTP requests
     http_sockfd_ = utils::TcpSocketBindAndListen(
         address, http_port_, listen_backlog);
@@ -102,17 +102,19 @@ void Server::StartInternal() {
     }
     // Save gateway host address to ZooKeeper for engines to connect
     std::string gateway_addr(
-        fmt::format("{}:{}", absl::GetFlag(FLAGS_hostname), engine_conn_port_));
+        fmt::format("{}:{}", absl::GetFlag(FLAGS_hostname), message_port));
     auto status = zk_utils::CreateSync(
         zk_session(), /* path= */ "gateway_addr",
         /* value= */ STRING_TO_SPAN(gateway_addr),
         zk::ZKCreateMode::kEphemeral, nullptr);
     CHECK(status.ok()) << "Failed to create ZooKeeper node: " << status.ToString();
+    // NodeManager starts to watch for engine nodes
+    node_manager_.StartWatchingEngineNodes(zk_session());
 }
 
 void Server::StopInternal() {
-    if (engine_sockfd_ != -1) {
-        PCHECK(close(engine_sockfd_) == 0) << "Failed to close engine server fd";
+    if (message_sockfd_ != -1) {
+        PCHECK(close(message_sockfd_) == 0) << "Failed to close message server fd";
     }
     if (http_sockfd_ != -1) {
         PCHECK(close(http_sockfd_) == 0) << "Failed to close HTTP server fd";
@@ -130,13 +132,14 @@ void Server::OnConnectionClose(server::ConnectionBase* connection) {
         absl::MutexLock lk(&mu_);
         DCHECK(connections_.contains(connection->id()));
         connections_.erase(connection->id());
-    } else if (conn_type == kEngineConnectionTypeId) {
-        EngineConnection* engine_connection = connection->as_ptr<EngineConnection>();
-        HLOG(WARNING) << fmt::format("EngineConnection (node_id={}, conn_id={}) disconnected",
-                                     engine_connection->node_id(), engine_connection->conn_id());
+    } else if (conn_type == kEngineIngressTypeId) {
         absl::MutexLock lk(&mu_);
-        DCHECK(engine_connections_.contains(connection->id()));
-        engine_connections_.erase(connection->id());
+        DCHECK(engine_ingress_conns_.contains(connection->id()));
+        engine_ingress_conns_.erase(connection->id());
+    } else if (conn_type == kEngineEgressHubTypeId) {
+        absl::MutexLock lk(&mu_);
+        DCHECK(engine_egress_hubs_.contains(connection->id()));
+        engine_egress_hubs_.erase(connection->id());
     } else {
         UNREACHABLE();
     }
@@ -181,8 +184,13 @@ void Server::DiscardFuncCall(FuncCallContext* func_call_context) {
     discarded_func_calls_.insert(func_call_context->func_call().full_call_id);
 }
 
-void Server::OnNewConnectedNode(EngineConnection* connection) {
+void Server::OnEngineNodeOnline(uint16_t node_id) {
+    HLOG(INFO) << fmt::format("Engine node {} is online", node_id);
     TryDispatchingPendingFuncCalls();
+}
+
+void Server::OnEngineNodeOffline(uint16_t node_id) {
+    HLOG(INFO) << fmt::format("Engine node {} is online", node_id);
 }
 
 void Server::TryDispatchingPendingFuncCalls() {
@@ -232,8 +240,49 @@ void Server::TryDispatchingPendingFuncCalls() {
     mu_.Unlock();
 }
 
+bool Server::SendMessageToEngine(uint16_t node_id, const GatewayMessage& message,
+                                 std::span<const char> payload) {
+    server::IOWorker* io_worker = server::IOWorker::current();
+    server::ConnectionBase* conn = io_worker->PickConnection(
+        kEngineEgressHubTypeId + node_id);
+    server::EgressHub* hub = nullptr;
+    if (conn == nullptr) {
+        struct sockaddr_in addr;
+        if (!node_manager_.GetNodeAddr(node_id, &addr)) {
+            return false;
+        }
+        auto egress_hub = std::make_unique<server::EgressHub>(
+            kEngineEgressHubTypeId + node_id,
+            &addr, absl::GetFlag(FLAGS_message_conn_per_worker));
+        egress_hub->set_log_header(fmt::format("EngineEgressHub[{}]", node_id));
+        egress_hub->SetHandshakeMessageCallback([] (std::string* handshake) {
+            *handshake = protocol::EncodeHandshakeMessage(
+                protocol::ConnType::GATEWAY_TO_ENGINE);
+        });
+        RegisterConnection(io_worker, egress_hub.get());
+        DCHECK_GE(egress_hub->id(), 0);
+        {
+            absl::MutexLock lk(&mu_);
+            DCHECK(!engine_egress_hubs_.contains(egress_hub->id()));
+            engine_egress_hubs_[egress_hub->id()] = std::move(egress_hub);
+        }
+        hub = egress_hub.get();
+    } else {
+        hub = conn->as_ptr<server::EgressHub>();
+    }
+    DCHECK(hub != nullptr);
+    std::span<const char> data(reinterpret_cast<const char*>(&message),
+                               sizeof(GatewayMessage));
+    if (payload.size() == 0) {
+        hub->SendMessage(data);
+    } else {
+        hub->SendMessage({data, payload});
+    }
+    return true;
+}
+
 void Server::HandleFuncCallCompleteOrFailedMessage(uint16_t node_id,
-                                                   const protocol::GatewayMessage& message,
+                                                   const GatewayMessage& message,
                                                    std::span<const char> payload) {
     DCHECK(GatewayMessageHelper::IsFuncCallComplete(message)
              || GatewayMessageHelper::IsFuncCallFailed(message));
@@ -295,11 +344,11 @@ void Server::HandleFuncCallCompleteOrFailedMessage(uint16_t node_id,
     TryDispatchingPendingFuncCalls();
 }
 
-void Server::OnRecvEngineMessage(EngineConnection* connection, const GatewayMessage& message,
+void Server::OnRecvEngineMessage(uint16_t node_id, const GatewayMessage& message,
                                  std::span<const char> payload) {
     if (GatewayMessageHelper::IsFuncCallComplete(message)
             || GatewayMessageHelper::IsFuncCallFailed(message)) {
-        HandleFuncCallCompleteOrFailedMessage(connection->node_id(), message, payload);
+        HandleFuncCallCompleteOrFailedMessage(node_id, message, payload);
     } else {
         HLOG(ERROR) << "Unknown engine message type";
     }
@@ -402,7 +451,7 @@ bool Server::DispatchFuncCall(std::shared_ptr<server::ConnectionBase> parent_con
     FuncCall func_call = func_call_context->func_call();
     GatewayMessage dispatch_message = GatewayMessageHelper::NewDispatchFuncCall(func_call);
     dispatch_message.payload_size = func_call_context->input().size();
-    bool success = node_manager_.SendMessage(node_id, dispatch_message, func_call_context->input());
+    bool success = SendMessageToEngine(node_id, dispatch_message, func_call_context->input());
     if (!success) {
         node_manager_.FuncCallFinished(func_call, node_id);
         func_call_context->set_status(FuncCallContext::kNotFound);
@@ -415,7 +464,7 @@ bool Server::DispatchAsyncFuncCall(const FuncCall& func_call, std::span<const ch
                                    uint16_t node_id) {
     GatewayMessage dispatch_message = GatewayMessageHelper::NewDispatchFuncCall(func_call);
     dispatch_message.payload_size = input.size();
-    bool success = node_manager_.SendMessage(node_id, dispatch_message, input);
+    bool success = SendMessageToEngine(node_id, dispatch_message, input);
     if (!success) {
         node_manager_.FuncCallFinished(func_call, node_id);
     }
@@ -436,38 +485,59 @@ void Server::FinishFuncCall(std::shared_ptr<server::ConnectionBase> parent_conne
     }
 }
 
-void Server::OnNewEngineConnection(int sockfd) {
-    GatewayMessage message;
-    if (!io_utils::RecvMessage(sockfd, &message, nullptr)) {
+void Server::OnNewMessageConnection(int sockfd) {
+    protocol::HandshakeMessage handshake;
+    if (!io_utils::RecvMessage(sockfd, &handshake, nullptr)) {
         HPLOG(ERROR) << "Failed to read handshake message from engine";
         close(sockfd);
         return;
     }
-    if (!GatewayMessageHelper::IsEngineHandshake(message)) {
-        HLOG(ERROR) << "Unexpected engine handshake message";
+    protocol::ConnType conn_type = static_cast<protocol::ConnType>(handshake.conn_type);
+    if (conn_type != protocol::ConnType::ENGINE_TO_GATEWAY) {
+        HLOG(ERROR) << "Invalid connection type: " << handshake.conn_type;
         close(sockfd);
         return;
     }
-    uint16_t node_id = message.node_id;
-    uint16_t conn_id = message.conn_id;
-    std::shared_ptr<server::ConnectionBase> connection(
-        new EngineConnection(this, node_id, conn_id, sockfd));
-    size_t worker_id = conn_id % io_workers_.size();
-    HLOG(INFO) << fmt::format("New engine connection (node_id={}, conn_id={}), "
-                              "assigned to IO worker {}", node_id, conn_id, worker_id);
-    server::IOWorker* io_worker = io_workers_[worker_id];
+
+    uint16_t node_id = handshake.src_node_id;
+    auto connection = std::make_unique<server::IngressConnection>(
+        kEngineIngressTypeId + node_id, sockfd, sizeof(GatewayMessage));
+    connection->set_log_header(fmt::format("EngineIngress[{}]", node_id));
+    connection->SetMessageFullSizeCallback(
+        [] (std::span<const char> header) -> size_t {
+            DCHECK_EQ(header.size(), sizeof(GatewayMessage));
+            const GatewayMessage* message = reinterpret_cast<const GatewayMessage*>(
+                header.data());
+            DCHECK_GE(message->payload_size, 0);
+            return message->payload_size;
+        }
+    );
+    connection->SetNewMessageCallback(
+        [this, node_id] (std::span<const char> data) {
+            DCHECK_GE(data.size(), sizeof(GatewayMessage));
+            const GatewayMessage* message = reinterpret_cast<const GatewayMessage*>(
+                data.data());
+            std::span<const char> payload;
+            if (data.size() > sizeof(GatewayMessage)) {
+                payload = data.subspan(sizeof(GatewayMessage));
+            }
+            OnRecvEngineMessage(node_id, *message, payload);
+        }
+    );
+
+    size_t idx = (next_engine_conn_worker_id_++) % io_workers_.size();
+    server::IOWorker* io_worker = io_workers_[idx];
     RegisterConnection(io_worker, connection.get());
     DCHECK_GE(connection->id(), 0);
-    DCHECK(!engine_connections_.contains(connection->id()));
-    engine_connections_[connection->id()] = std::move(connection);
+    DCHECK(!engine_ingress_conns_.contains(connection->id()));
+    engine_ingress_conns_[connection->id()] = std::move(connection);
 }
 
 void Server::OnNewHttpConnection(int sockfd) {
     std::shared_ptr<server::ConnectionBase> connection(
         new HttpConnection(this, next_http_connection_id_++, sockfd));
-    DCHECK_LT(next_http_conn_worker_id_, io_workers_.size());
-    server::IOWorker* io_worker = io_workers_[next_http_conn_worker_id_];
-    next_http_conn_worker_id_ = (next_http_conn_worker_id_ + 1) % io_workers_.size();
+    size_t idx = (next_http_conn_worker_id_++) % io_workers_.size();
+    server::IOWorker* io_worker = io_workers_[idx];
     RegisterConnection(io_worker, connection.get());
     DCHECK_GE(connection->id(), 0);
     {
@@ -480,9 +550,8 @@ void Server::OnNewHttpConnection(int sockfd) {
 void Server::OnNewGrpcConnection(int sockfd) {
     std::shared_ptr<server::ConnectionBase> connection(
         new GrpcConnection(this, next_grpc_connection_id_++, sockfd));
-    DCHECK_LT(next_grpc_conn_worker_id_, io_workers_.size());
-    server::IOWorker* io_worker = io_workers_[next_grpc_conn_worker_id_];
-    next_grpc_conn_worker_id_ = (next_grpc_conn_worker_id_ + 1) % io_workers_.size();
+    size_t idx = (next_grpc_conn_worker_id_++) % io_workers_.size();
+    server::IOWorker* io_worker = io_workers_[idx];
     RegisterConnection(io_worker, connection.get());
     DCHECK_GE(connection->id(), 0);
     {
