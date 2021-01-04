@@ -16,15 +16,6 @@ ABSL_FLAG(std::string, zk_logfile, "", "");
 namespace faas {
 namespace zk {
 
-bool ZKParseSequenceNumber(std::string_view created_path, uint64_t* parsed) {
-    static constexpr size_t kSequenceNumberLength = 10;
-    size_t length = created_path.length();
-    if (length < kSequenceNumberLength) {
-        return false;
-    }
-    return absl::SimpleAtoi(created_path.substr(length - kSequenceNumberLength), parsed);
-}
-
 ZKSession::ZKSession(std::string_view host, std::string_view root_path)
     : state_(kCreated),
       host_(host),
@@ -152,84 +143,6 @@ void ZKSession::GetChildren(std::string_view path, WatcherFn watcher_fn, Callbac
     EnqueueNewOp(kGetChildren, path, watcher_fn, cb, nullptr);
 }
 
-ZKStatus ZKSession::CreateSync(std::string_view path, std::span<const char> value,
-                               ZKCreateMode mode, std::string* created_path) {
-    if (WithinMyEventLoopThread()) {
-        HLOG(ERROR) << "CreateSync cannot be called from ZKSession's event loop thread!";
-        return ZKStatus(ZBADARGUMENTS);
-    }
-    ZKStatus ret_status;
-    absl::Notification finished;
-    Create(path, value, mode, [&] (ZKStatus status, const ZKResult& result, bool*) {
-        if (status.ok() && created_path != nullptr) {
-            *created_path = std::string(result.path);
-        }
-        ret_status = status;
-        finished.Notify();
-    });
-    finished.WaitForNotification();
-    DCHECK(!ret_status.undefined());
-    return ret_status;
-}
-
-ZKStatus ZKSession::DeleteSync(std::string_view path) {
-    if (WithinMyEventLoopThread()) {
-        HLOG(ERROR) << "DeleteSync cannot be called from ZKSession's event loop thread!";
-        return ZKStatus(ZBADARGUMENTS);
-    }
-    ZKStatus ret_status;
-    absl::Notification finished;
-    Delete(path, [&] (ZKStatus status, const ZKResult& result, bool*) {
-        ret_status = status;
-        finished.Notify();
-    });
-    finished.WaitForNotification();
-    DCHECK(!ret_status.undefined());
-    return ret_status;
-}
-
-ZKStatus ZKSession::GetOrWaitSync(std::string_view path, std::string* value) {
-    if (WithinMyEventLoopThread()) {
-        HLOG(ERROR) << "GetOrWaitSync cannot be called from ZKSession's event loop thread!";
-        return ZKStatus(ZBADARGUMENTS);
-    }
-    DCHECK(value != nullptr);
-    ZKStatus ret_status;
-    absl::Notification finished;
-    auto get_cb = [&] (ZKStatus status, const ZKResult& result, bool*) {
-        if (status.ok()) {
-            value->assign(result.data.data(), result.data.size());
-        }
-        ret_status = status;
-        finished.Notify();
-    };
-    auto exists_cb = [&] (ZKStatus status, const ZKResult&, bool* remove_watch) {
-        if (status.ok()) {
-            Get(path, nullptr, get_cb);
-            *remove_watch = true;
-        } else if (status.IsNoNode()) {
-            HVLOG(1) << "Node not exists, will rely on watch";
-        } else {
-            *remove_watch = true;
-            ret_status = status;
-            finished.Notify();
-        }
-    };
-    auto watcher_fn = [&] (ZKEvent event, std::string_view) {
-        if (event.IsCreated()) {
-            Get(path, nullptr, get_cb);
-        } else {
-            HLOG(ERROR) << "Receive watch event other than created: " << event.type;
-            ret_status.code = ZNONODE;
-            finished.Notify();
-        }
-    };
-    Exists(path, watcher_fn, exists_cb);
-    finished.WaitForNotification();
-    DCHECK(!ret_status.undefined());
-    return ret_status;
-}
-
 void ZKSession::EnqueueNewOp(OpType type, std::string_view path,
                              WatcherFn watcher_fn, Callback cb,
                              std::function<void(Op*)> setup_fn) {
@@ -239,7 +152,11 @@ void ZKSession::EnqueueNewOp(OpType type, std::string_view path,
         Op* op = op_pool_.Get();
         op->sess = this;
         op->type = type;
-        op->path = fmt::format("{}/{}", root_path_, absl::StripPrefix(path, "/"));
+        if (absl::StartsWith(path, "/")) {
+            op->path = path;
+        } else {
+            op->path = fmt::format("{}/{}", root_path_, path);
+        }
         op->value.Reset();
         op->create_mode = -1;
         op->data_version = -1;
@@ -518,7 +435,9 @@ ZKResult ZKSession::StringsResult(const struct String_vector* strings) {
 
 ZKResult ZKSession::DataResult(const char* data, int data_len, const struct Stat* stat) {
     ZKResult result = EmptyResult();
-    result.data = std::span<const char>(data, data_len);
+    if (data != nullptr) {
+        result.data = std::span<const char>(data, data_len);
+    }
     result.stat = stat;
     return result;
 }

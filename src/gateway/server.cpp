@@ -3,6 +3,7 @@
 #include "ipc/base.h"
 #include "ipc/shm_region.h"
 #include "common/time.h"
+#include "common/zk_utils.h"
 #include "utils/fs.h"
 #include "utils/io.h"
 #include "utils/socket.h"
@@ -102,8 +103,9 @@ void Server::StartInternal() {
     // Save gateway host address to ZooKeeper for engines to connect
     std::string gateway_addr(
         fmt::format("{}:{}", absl::GetFlag(FLAGS_hostname), engine_conn_port_));
-    zk::ZKStatus status = zk_session()->CreateSync(
-        "gateway_addr", STRING_TO_SPAN(gateway_addr),
+    auto status = zk_utils::CreateSync(
+        zk_session(), /* path= */ "gateway_addr",
+        /* value= */ STRING_TO_SPAN(gateway_addr),
         zk::ZKCreateMode::kEphemeral, nullptr);
     CHECK(status.ok()) << "Failed to create ZooKeeper node: " << status.ToString();
 }

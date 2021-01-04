@@ -60,12 +60,14 @@ enum class ZKCreateMode : int {
     kContainer            = 4
 };
 
-bool ZKParseSequenceNumber(std::string_view created_path, uint64_t* parsed);
-
 class ZKSession {
 public:
-    ZKSession(std::string_view host, std::string_view root_path);
+    // If `path` in ops does not start with '/', `root_path` will be prepended
+    explicit ZKSession(std::string_view host, std::string_view root_path = "/");
     ~ZKSession();
+
+    std::string_view root_path() const { return root_path_; }
+    bool running() { return state_.load() == kRunning; }
 
     void Start();
     void ScheduleStop();
@@ -91,17 +93,6 @@ public:
                         int version, Callback cb);
     // If succeeded, `result.paths` is set to paths of children
     void GetChildren(std::string_view path, WatcherFn watcher_fn, Callback cb);
-
-    // Synchronous helper APIs
-    // They cannot be called from callbacks of asynchronous APIs above
-    //
-    // Synchronously create a new node
-    ZKStatus CreateSync(std::string_view path, std::span<const char> value,
-                        ZKCreateMode mode, std::string* created_path);
-    // Synchronously delete a node.
-    ZKStatus DeleteSync(std::string_view path);
-    // Get the value of `path`. If `path` not exists, will wait for its creation
-    ZKStatus GetOrWaitSync(std::string_view path, std::string* value);
 
 private:
     enum State { kCreated, kRunning, kStopped };

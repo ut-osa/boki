@@ -3,6 +3,7 @@
 #include "ipc/base.h"
 #include "ipc/shm_region.h"
 #include "common/time.h"
+#include "common/zk_utils.h"
 #include "utils/fs.h"
 #include "utils/io.h"
 #include "utils/docker.h"
@@ -80,7 +81,7 @@ void Engine::StartInternal() {
 
 void Engine::SetupGatewayConnections() {
     std::string gateway_addr;
-    zk::ZKStatus status = zk_session()->GetOrWaitSync("gateway_addr", &gateway_addr);
+    auto status = zk_utils::GetOrWaitSync(zk_session(), "gateway_addr", &gateway_addr);
     CHECK(status.ok()) << "Failed to get gateway address from ZooKeeper: "
                        << status.ToString();
     std::string_view gateway_host;
