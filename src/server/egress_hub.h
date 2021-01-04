@@ -26,7 +26,7 @@ public:
     void SetHandshakeMessageCallback(HandshakeMessageCallback cb);
 
     void SendMessage(std::span<const char> message);
-    void SendMessage(const std::vector<std::span<const char>>& message_vec);
+    void SendMessage(std::span<const char> part1, std::span<const char> part2);
 
 private:
     enum State { kCreated, kRunning, kClosing, kClosed };

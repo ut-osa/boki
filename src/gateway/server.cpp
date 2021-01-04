@@ -68,46 +68,11 @@ void Server::StartInternal() {
         auto io_worker = CreateIOWorker(fmt::format("IO-{}", i));
         io_workers_.push_back(io_worker);
     }
-    std::string address = absl::GetFlag(FLAGS_listen_addr);
-    CHECK(!address.empty());
-    CHECK_NE(http_port_, -1);
-    // Listen on address:message_port for message connections
-    int listen_backlog = absl::GetFlag(FLAGS_socket_listen_backlog);
-    int message_port = absl::GetFlag(FLAGS_message_port);
-    message_sockfd_ = utils::TcpSocketBindAndListen(
-        address, message_port, listen_backlog);
-    CHECK(message_sockfd_ != -1)
-        << fmt::format("Failed to listen on {}:{}", address, message_port);
-    HLOG(INFO) << fmt::format("Listen on {}:{} for message connections",
-                              address, message_port);
-    ListenForNewConnections(
-        message_sockfd_, absl::bind_front(&Server::OnNewMessageConnection, this));
-    // Listen on address:http_port for HTTP requests
-    http_sockfd_ = utils::TcpSocketBindAndListen(
-        address, http_port_, listen_backlog);
-    CHECK(http_sockfd_ != -1)
-        << fmt::format("Failed to listen on {}:{}", address, http_port_);
-    HLOG(INFO) << fmt::format("Listen on {}:{} for HTTP requests", address, http_port_);
-    ListenForNewConnections(
-        http_sockfd_, absl::bind_front(&Server::OnNewHttpConnection, this));
-    // Listen on address:grpc_port for gRPC requests
+    SetupHttpServer();
     if (grpc_port_ != -1) {
-        grpc_sockfd_ = utils::TcpSocketBindAndListen(
-            address, grpc_port_, listen_backlog);
-        CHECK(grpc_sockfd_ != -1)
-            << fmt::format("Failed to listen on {}:{}", address, grpc_port_);
-        HLOG(INFO) << fmt::format("Listen on {}:{} for gRPC requests", address, grpc_port_);
-        ListenForNewConnections(
-            grpc_sockfd_, absl::bind_front(&Server::OnNewGrpcConnection, this));
+        SetupGrpcServer();
     }
-    // Save gateway host address to ZooKeeper for engines to connect
-    std::string gateway_addr(
-        fmt::format("{}:{}", absl::GetFlag(FLAGS_hostname), message_port));
-    auto status = zk_utils::CreateSync(
-        zk_session(), /* path= */ "gateway_addr",
-        /* value= */ STRING_TO_SPAN(gateway_addr),
-        zk::ZKCreateMode::kEphemeral, nullptr);
-    CHECK(status.ok()) << "Failed to create ZooKeeper node: " << status.ToString();
+    SetupMessageServer();
     // NodeManager starts to watch for engine nodes
     node_manager_.StartWatchingEngineNodes(zk_session());
 }
@@ -143,6 +108,57 @@ void Server::OnConnectionClose(server::ConnectionBase* connection) {
     } else {
         UNREACHABLE();
     }
+}
+
+void Server::SetupHttpServer() {
+    // Listen on address:http_port for HTTP requests
+    std::string address = absl::GetFlag(FLAGS_listen_addr);
+    CHECK(!address.empty());
+    CHECK_NE(http_port_, -1);
+    http_sockfd_ = utils::TcpSocketBindAndListen(
+        address, http_port_, absl::GetFlag(FLAGS_socket_listen_backlog));
+    CHECK(http_sockfd_ != -1)
+        << fmt::format("Failed to listen on {}:{}", address, http_port_);
+    HLOG(INFO) << fmt::format("Listen on {}:{} for HTTP requests", address, http_port_);
+    ListenForNewConnections(
+        http_sockfd_, absl::bind_front(&Server::OnNewHttpConnection, this));
+}
+
+void Server::SetupGrpcServer() {
+    // Listen on address:grpc_port for gRPC requests
+    std::string address = absl::GetFlag(FLAGS_listen_addr);
+    CHECK(!address.empty());
+    CHECK_NE(grpc_port_, -1);
+    grpc_sockfd_ = utils::TcpSocketBindAndListen(
+        address, grpc_port_, absl::GetFlag(FLAGS_socket_listen_backlog));
+    CHECK(grpc_sockfd_ != -1)
+        << fmt::format("Failed to listen on {}:{}", address, grpc_port_);
+    HLOG(INFO) << fmt::format("Listen on {}:{} for gRPC requests", address, grpc_port_);
+    ListenForNewConnections(
+        grpc_sockfd_, absl::bind_front(&Server::OnNewGrpcConnection, this));
+}
+
+void Server::SetupMessageServer() {
+    // Listen on address:message_port for message connections
+    std::string address = absl::GetFlag(FLAGS_listen_addr);
+    CHECK(!address.empty());
+    int message_port = absl::GetFlag(FLAGS_message_port);
+    message_sockfd_ = utils::TcpSocketBindAndListen(
+        address, message_port, absl::GetFlag(FLAGS_socket_listen_backlog));
+    CHECK(message_sockfd_ != -1)
+        << fmt::format("Failed to listen on {}:{}", address, message_port);
+    HLOG(INFO) << fmt::format("Listen on {}:{} for message connections",
+                              address, message_port);
+    ListenForNewConnections(
+        message_sockfd_, absl::bind_front(&Server::OnNewMessageConnection, this));
+    // Save gateway host address to ZooKeeper for engines to connect
+    std::string gateway_addr(
+        fmt::format("{}:{}", absl::GetFlag(FLAGS_hostname), message_port));
+    auto status = zk_utils::CreateSync(
+        zk_session(), /* path= */ "gateway",
+        /* value= */ STRING_TO_SPAN(gateway_addr),
+        zk::ZKCreateMode::kEphemeral, nullptr);
+    CHECK(status.ok()) << "Failed to create ZooKeeper node: " << status.ToString();
 }
 
 void Server::OnNewHttpFuncCall(HttpConnection* connection, FuncCallContext* func_call_context) {
@@ -273,11 +289,7 @@ bool Server::SendMessageToEngine(uint16_t node_id, const GatewayMessage& message
     DCHECK(hub != nullptr);
     std::span<const char> data(reinterpret_cast<const char*>(&message),
                                sizeof(GatewayMessage));
-    if (payload.size() == 0) {
-        hub->SendMessage(data);
-    } else {
-        hub->SendMessage({data, payload});
-    }
+    hub->SendMessage(data, payload);
     return true;
 }
 

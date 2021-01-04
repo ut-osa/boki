@@ -25,7 +25,15 @@ static bool FillUnixSocketAddr(struct sockaddr_un* addr, std::string_view path) 
     return true;
 }
 
-static bool FillTcp6SocketAddr(struct sockaddr_in6* addr, std::string_view ip, uint16_t port) {
+static bool FillTcpSocketAddr(struct sockaddr_in* addr,
+                              std::string_view host_or_ip, uint16_t port) {
+    addr->sin_family = AF_INET; 
+    addr->sin_port = htons(port);
+    return ResolveHost(host_or_ip, &addr->sin_addr);
+}
+
+static bool FillTcp6SocketAddr(struct sockaddr_in6* addr,
+                               std::string_view ip, uint16_t port) {
     addr->sin6_family = AF_INET6; 
     addr->sin6_port = htons(port);
     addr->sin6_flowinfo = 0;
@@ -221,25 +229,19 @@ bool ResolveHost(std::string_view host_or_ip, struct in_addr* addr) {
     return false;
 }
 
-bool FillTcpSocketAddr(struct sockaddr_in* addr, std::string_view host_or_ip, uint16_t port) {
-    addr->sin_family = AF_INET; 
-    addr->sin_port = htons(port);
-    return ResolveHost(host_or_ip, &addr->sin_addr);
-}
-
-bool ParseHostPort(std::string_view addr_str, std::string_view* host, uint16_t* port) {
+bool ResolveTcpAddr(struct sockaddr_in* addr, std::string_view addr_str) {
 #ifdef __FAAS_HAVE_ABSL
     size_t pos = addr_str.find_last_of(":");
     if (pos == std::string::npos) {
         return false;
     }
-    *host = addr_str.substr(0, pos);
+    std::string_view host = addr_str.substr(0, pos);
     int parsed_port;
     if (!absl::SimpleAtoi(addr_str.substr(pos + 1), &parsed_port)) {
         return false;
     }
-    *port = gsl::narrow_cast<uint16_t>(parsed_port);
-    return true;
+    uint16_t port = gsl::narrow_cast<uint16_t>(parsed_port);
+    return FillTcpSocketAddr(addr, host, port);
 #else
     NOT_IMPLEMENTED();
 #endif

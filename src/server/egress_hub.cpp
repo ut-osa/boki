@@ -66,22 +66,18 @@ void EgressHub::SendMessage(std::span<const char> message) {
     ScheduleSendFunction();
 }
 
-void EgressHub::SendMessage(const std::vector<std::span<const char>>& message_vec) {
+void EgressHub::SendMessage(std::span<const char> part1, std::span<const char> part2) {
     DCHECK(io_worker_->WithinMyEventLoopThread());
     if (state_ != kRunning) {
         HLOG(ERROR) << "Connection is closing or has closed, will not send this message";
         return;
     }
-    size_t total_size = 0;
-    for (std::span<const char> data : message_vec) {
-        if (data.size() > 0) {
-            write_buffer_.AppendData(data);
-            total_size += data.size();
-        }
+    if (part1.size() + part2.size() == 0) {
+        return;
     }
-    if (total_size > 0) {
-        ScheduleSendFunction();
-    }
+    write_buffer_.AppendData(part1);
+    write_buffer_.AppendData(part2);
+    ScheduleSendFunction();
 }
 
 namespace {

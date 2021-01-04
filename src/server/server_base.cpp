@@ -121,19 +121,17 @@ IOWorker* ServerBase::CreateIOWorker(std::string_view worker_name, size_t write_
 
 void ServerBase::RegisterConnection(IOWorker* io_worker, ConnectionBase* connection) {
     connection->set_id(next_connection_id_.fetch_add(1, std::memory_order_relaxed));
-    if (WithinMyEventLoopThread()) {
+    if (io_worker->WithinMyEventLoopThread()) {
+        io_worker->RegisterConnection(connection);
+    } else {
         DCHECK(pipes_to_io_worker_.contains(io_worker));
-        int pipe_to_worker = pipes_to_io_worker_[io_worker];
+        int pipe_to_worker = pipes_to_io_worker_.at(io_worker);
         ssize_t ret = write(pipe_to_worker, &connection, __FAAS_PTR_SIZE);
         if (ret < 0) {
             PLOG(FATAL) << "Write failed on pipe to IOWorker";
         } else {
             CHECK_EQ(ret, __FAAS_PTR_SIZE);
         }
-    } else if (io_worker->WithinMyEventLoopThread()) {
-        io_worker->RegisterConnection(connection);
-    } else {
-        HLOG(FATAL) << "Cannot perform RegisterConnection in the current thread";
     }
 }
 
@@ -156,7 +154,7 @@ void ServerBase::DoStop() {
     }
     for (const auto& io_worker : io_workers_) {
         io_worker->WaitForFinish();
-        int pipefd = pipes_to_io_worker_[io_worker.get()];
+        int pipefd = pipes_to_io_worker_.at(io_worker.get());
         PCHECK(close(pipefd) == 0) << "Failed to close pipe to IOWorker";
     }
     HLOG(INFO) << "All IOWorker finish";

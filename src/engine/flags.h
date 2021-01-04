@@ -2,7 +2,6 @@
 
 #include "common/flags.h"
 
-ABSL_DECLARE_FLAG(size_t, gateway_conn_per_worker);
 ABSL_DECLARE_FLAG(size_t, sequencer_conn_per_worker);
 ABSL_DECLARE_FLAG(size_t, shared_log_conn_per_worker);
 

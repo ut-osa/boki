@@ -109,6 +109,10 @@ private:
     void StopInternal() override;
     void OnConnectionClose(server::ConnectionBase* connection) override;
 
+    void SetupHttpServer();
+    void SetupGrpcServer();
+    void SetupMessageServer();
+
     void OnNewFuncCallCommon(std::shared_ptr<server::ConnectionBase> parent_connection,
                              FuncCallContext* func_call_context);
     bool DispatchFuncCall(std::shared_ptr<server::ConnectionBase> parent_connection,

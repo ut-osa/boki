@@ -6,7 +6,8 @@
 #include "common/sequencer_config.h"
 #include "ipc/shm_region.h"
 #include "server/server_base.h"
-#include "engine/gateway_connection.h"
+#include "server/ingress_connection.h"
+#include "server/egress_hub.h"
 #include "engine/message_connection.h"
 #include "engine/dispatcher.h"
 #include "engine/worker_manager.h"
@@ -50,9 +51,6 @@ public:
                         protocol::Message* response,
                         std::span<const char>* response_payload);
     void OnRecvMessage(MessageConnection* connection, const protocol::Message& message);
-    void OnRecvGatewayMessage(GatewayConnection* connection,
-                              const protocol::GatewayMessage& message,
-                              std::span<const char> payload);
     Dispatcher* GetOrCreateDispatcher(uint16_t func_id);
     void DiscardFuncCall(const protocol::FuncCall& func_call);
 
@@ -72,15 +70,21 @@ private:
     bool func_worker_use_engine_socket_;
     bool use_fifo_for_nested_call_;
 
-    int server_sockfd_;
+    int message_sockfd_;
+    int ipc_sockfd_;
     int shared_log_sockfd_;
 
     std::vector<server::IOWorker*> io_workers_;
+    size_t next_gateway_conn_worker_id_;
     size_t next_ipc_conn_worker_id_;
     size_t next_shared_log_conn_worker_id_;
 
+    absl::flat_hash_map</* id */ int, std::unique_ptr<server::EgressHub>>
+        gateway_egress_hubs_;
+    absl::flat_hash_map</* id */ int, std::unique_ptr<server::IngressConnection>>
+        gateway_ingress_conns_;
+
     absl::flat_hash_map</* id */ int, std::shared_ptr<server::ConnectionBase>> message_connections_;
-    absl::flat_hash_map</* id */ int, std::shared_ptr<server::ConnectionBase>> gateway_connections_;
     absl::flat_hash_map</* id */ int, std::shared_ptr<server::ConnectionBase>> sequencer_connections_;
     absl::flat_hash_map</* id */ int, std::shared_ptr<server::ConnectionBase>> slog_connections_;
     absl::flat_hash_set<std::unique_ptr<SLogMessageHub>> slog_message_hubs_;
@@ -123,16 +127,22 @@ private:
     void StopInternal() override;
     void OnConnectionClose(server::ConnectionBase* connection) override;
 
-    void SetupGatewayConnections();
+    void SetupGatewayEgress();
     void SetupLocalIpc();
     void SetupSharedLog();
+    void SetupMessageServer();
 
     Timer* CreateTimer(int timer_type, server::IOWorker* io_worker, Timer::Callback cb);
     Timer* CreatePeriodicTimer(int timer_type, server::IOWorker* io_worker,
                                absl::Time initial, absl::Duration duration,
                                Timer::Callback cb);
 
-    void OnNewMessageConnection(int sockfd);
+    void CreateGatewayIngressConn(int sockfd);
+    void OnNewRemoteMessageConn(int sockfd);
+
+    void OnNewLocalIpcConn(int sockfd);
+    void OnLocalIpcConnClosed(MessageConnection* conn);
+
     void OnNewSLogConnection(int sockfd);
 
     // Must be thread-safe
@@ -141,6 +151,8 @@ private:
     void HandleFuncCallFailedMessage(const protocol::Message& message);
     void HandleSharedLogOpMessage(const protocol::Message& message);
 
+    void OnRecvGatewayMessage(const protocol::GatewayMessage& message,
+                              std::span<const char> payload);
     void SendGatewayMessage(const protocol::GatewayMessage& message,
                             std::span<const char> payload = std::span<const char>());
     bool SendFuncWorkerMessage(uint16_t client_id, protocol::Message* message);

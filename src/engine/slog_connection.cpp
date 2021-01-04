@@ -252,11 +252,8 @@ void SLogMessageHub::SendMessage(uint16_t node_id, const protocol::Message& mess
 void SLogMessageHub::SetupConnections(uint16_t node_id) {
     DCHECK(io_worker_->WithinMyEventLoopThread());
     std::string addr_str = slog_engine_->GetNodeAddr(node_id);
-    std::string_view host;
-    uint16_t port;
-    CHECK(utils::ParseHostPort(addr_str, &host, &port));
     struct sockaddr_in addr;
-    if (!utils::FillTcpSocketAddr(&addr, host, port)) {
+    if (!utils::ResolveTcpAddr(&addr, addr_str)) {
         HLOG(FATAL) << fmt::format("Cannot resolve address for node {}: {}",
                                    node_id, addr_str);
     }

@@ -37,9 +37,10 @@ void EngineConnection::Start(uv_loop_t* uv_loop, int engine_tcp_port,
         UV_DCHECK_OK(uv_tcp_init(uv_loop, tcp_handle));
         tcp_handle->data = this;
         struct sockaddr_in addr;
-        std::string host(utils::GetEnvVariable("FAAS_ENGINE_HOST", "127.0.0.1"));
-        if (!utils::FillTcpSocketAddr(&addr, host, engine_tcp_port)) {
-            HLOG(FATAL) << "Failed to fill socker address for " << host;
+        std::string addr_str(fmt::format("{}:{}",
+            utils::GetEnvVariable("FAAS_ENGINE_HOST", "127.0.0.1"), engine_tcp_port));
+        if (!utils::ResolveTcpAddr(&addr, addr_str)) {
+            HLOG(FATAL) << "Failed to resolve socket address: " << addr_str;
         }
         uv_tcp_connect(&connect_req_, tcp_handle, (const struct sockaddr *)&addr,
                        &EngineConnection::ConnectCallback);

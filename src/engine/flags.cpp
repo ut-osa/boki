@@ -1,6 +1,5 @@
 #include "engine/flags.h"
 
-ABSL_FLAG(size_t, gateway_conn_per_worker, 2, "");
 ABSL_FLAG(size_t, sequencer_conn_per_worker, 2, "");
 ABSL_FLAG(size_t, shared_log_conn_per_worker, 2, "");
 

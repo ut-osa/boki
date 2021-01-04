@@ -84,13 +84,12 @@ void NodeManager::OnZNodeCreated(std::string_view path, std::span<const char> co
     int parsed;
     CHECK(absl::SimpleAtoi(path, &parsed));
     uint16_t node_id = gsl::narrow_cast<uint16_t>(parsed);
-    std::string_view engine_host;
-    uint16_t port;
-    CHECK(utils::ParseHostPort(
-        std::string_view(contents.data(), contents.size()),
-        &engine_host, &port));
+    std::string_view addr_str(contents.data(), contents.size());
     std::unique_ptr<Node> node = std::make_unique<Node>(node_id);
-    CHECK(utils::FillTcpSocketAddr(&node->addr, engine_host, port));
+    if (!utils::ResolveTcpAddr(&node->addr, addr_str)) {
+        HLOG(FATAL) << fmt::format("Cannot resolve address for node {}: {}",
+                                   node_id, addr_str);
+    }
     {
         absl::MutexLock lk(&mu_);
         DCHECK(!connected_nodes_.contains(node_id))
