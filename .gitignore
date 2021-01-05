@@ -28,6 +28,9 @@
 # Protobuf generated code
 /src/proto/*.pb.*
 
+# jemalloc
+*.heap
+
 # Misc
 /src/bin/test_*.cpp
 /tmp/

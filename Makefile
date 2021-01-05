@@ -28,7 +28,7 @@ LINK_FLAGS = -Ldeps/out/lib \
     -Wl,-Bstatic -luv_a -lhttp_parser -lnghttp2 \
 	-luring -lprotobuf-lite -lraft -lrocksdb -lzookeeper_st \
     -Wl,--start-group $(ABSL_LIBRARIES) -Wl,--end-group \
-    -Wl,-Bdynamic -lpthread -ldl -Wl,--gc-sections
+	-ljemalloc -Wl,-Bdynamic -lpthread -ldl -Wl,--gc-sections
 # Additional release-specific linker settings
 RLINK_FLAGS =
 # Additional debug-specific linker settings

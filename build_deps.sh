@@ -34,6 +34,12 @@ cd $BASE_DIR/deps/abseil-cpp && rm -rf build && mkdir -p build && cd build && \
   make -j$(nproc) install && \
   rm -rf $BASE_DIR/deps/abseil-cpp/build
 
+# Build jemalloc
+cd $BASE_DIR/deps/jemalloc && ./autogen.sh && \
+  ./configure --prefix=${DEPS_INSTALL_PATH} \
+              --enable-prof --disable-shared && \
+  make clean && make -j$(nproc) install && make clean
+
 # Build http-parser
 cd $BASE_DIR/deps/http-parser && make clean && make package && \
   install -D $BASE_DIR/deps/http-parser/http_parser.h $DEPS_INSTALL_PATH/include/http_parser.h && \

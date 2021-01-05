@@ -37,3 +37,6 @@
 [submodule "deps/xxHash"]
 	path = deps/xxHash
 	url = https://github.com/Cyan4973/xxHash
+[submodule "deps/jemalloc"]
+	path = deps/jemalloc
+	url = https://github.com/jemalloc/jemalloc.git
