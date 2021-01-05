@@ -27,6 +27,8 @@ export CXXFLAGS="${CXXFLAGS} -std=c++17 -fdata-sections -ffunction-sections"
 rm -rf ${DEPS_INSTALL_PATH}
 mkdir -p ${DEPS_INSTALL_PATH}
 
+export PKG_CONFIG_PATH=${DEPS_INSTALL_PATH}/lib/pkgconfig
+
 # Build abseil-cpp
 cd $BASE_DIR/deps/abseil-cpp && rm -rf build && mkdir -p build && cd build && \
   cmake -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DCMAKE_CXX_STANDARD=17 \
@@ -39,6 +41,11 @@ cd $BASE_DIR/deps/jemalloc && ./autogen.sh && \
   ./configure --prefix=${DEPS_INSTALL_PATH} \
               --enable-prof --disable-shared && \
   make clean && make -j$(nproc) install && make clean
+
+# Build zstd
+cd $BASE_DIR/deps/zstd && make clean && \
+  prefix=${DEPS_INSTALL_PATH} make install && \
+  make clean
 
 # Build http-parser
 cd $BASE_DIR/deps/http-parser && make clean && make package && \
@@ -65,26 +72,29 @@ cd $BASE_DIR/deps/libuv && rm -rf build && mkdir -p build && cd build && \
 # Build nghttp2
 cd $BASE_DIR/deps/nghttp2 && rm -rf build && mkdir -p build && cd build && \
   cmake -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DENABLE_LIB_ONLY=ON \
-        -DENABLE_ASIO_LIB=OFF -DENABLE_STATIC_LIB=ON -DWITH_JEMALLOC=OFF \
+        -DENABLE_STATIC_LIB=ON -DENABLE_SHARED_LIB=OFF \
+        -DENABLE_ASIO_LIB=OFF -DWITH_JEMALLOC=ON \
         -DCMAKE_INSTALL_PREFIX=${DEPS_INSTALL_PATH} -DCMAKE_INSTALL_LIBDIR=lib .. && \
   make -j$(nproc) install && \
   rm -rf $BASE_DIR/deps/nghttp2/build
 
 # Build raft
 cd $BASE_DIR/deps/raft && autoreconf -i && \
-  PKG_CONFIG_PATH=${DEPS_INSTALL_PATH}/lib/pkgconfig \
-      ./configure --prefix=${DEPS_INSTALL_PATH} --enable-debug=${ENABLE_DEBUG} && \
+  ./configure --prefix=${DEPS_INSTALL_PATH} --disable-shared \
+              --enable-debug=${ENABLE_DEBUG} && \
   make clean && make -j$(nproc) install && make clean
 
 # Build zookeeper-client-c
 cd $BASE_DIR/deps/zookeeper-client-c && autoreconf -if && \
-  ./configure --prefix=${DEPS_INSTALL_PATH} --enable-debug=${ENABLE_DEBUG} \
+  ./configure --prefix=${DEPS_INSTALL_PATH} --disable-shared \
+              --enable-debug=${ENABLE_DEBUG} \
               --without-syncapi --without-cppunit --without-openssl && \
   make -j$(nproc) install && make clean
 
 # Build rocksdb
 cd $BASE_DIR/deps/rocksdb && rm -rf build && mkdir -p build && cd build && \
   cmake -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DCMAKE_CXX_STANDARD=17 \
+        -DWITH_JEMALLOC=ON -DWITH_ZSTD=ON -DROCKSDB_BUILD_SHARED=OFF \
         -DWITH_GFLAGS=OFF -DWITH_TESTS=OFF -DWITH_BENCHMARK_TOOLS=OFF \
         -DWITH_CORE_TOOLS=OFF -DWITH_TOOLS=OFF -DWITH_FOLLY_DISTRIBUTED_MUTEX=OFF \
         -DCMAKE_INSTALL_PREFIX=${DEPS_INSTALL_PATH} .. && \
