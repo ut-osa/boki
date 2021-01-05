@@ -22,10 +22,9 @@ namespace engine {
 
 class Engine final : public server::ServerBase {
 public:
-    Engine();
+    explicit Engine(uint16_t node_id);
     ~Engine();
 
-    void set_node_id(uint16_t value) { node_id_ = value; }
     void set_func_config_file(std::string_view path) {
         func_config_file_ = std::string(path);
     }
@@ -70,14 +69,8 @@ private:
     bool func_worker_use_engine_socket_;
     bool use_fifo_for_nested_call_;
 
-    int message_sockfd_;
     int ipc_sockfd_;
     int shared_log_sockfd_;
-
-    std::vector<server::IOWorker*> io_workers_;
-    size_t next_gateway_conn_worker_id_;
-    size_t next_ipc_conn_worker_id_;
-    size_t next_shared_log_conn_worker_id_;
 
     absl::flat_hash_map</* id */ int, std::unique_ptr<server::EgressHub>>
         gateway_egress_hubs_;
@@ -126,11 +119,14 @@ private:
     void StartInternal() override;
     void StopInternal() override;
     void OnConnectionClose(server::ConnectionBase* connection) override;
+    void OnRemoteMessageConn(const protocol::HandshakeMessage& handshake, int sockfd) override;
 
     void SetupGatewayEgress();
     void SetupLocalIpc();
     void SetupSharedLog();
-    void SetupMessageServer();
+
+    void OnNodeOnline(server::NodeWatcher::NodeType node_type, uint16_t node_id);
+    void OnNodeOffline(server::NodeWatcher::NodeType node_type, uint16_t node_id);
 
     Timer* CreateTimer(int timer_type, server::IOWorker* io_worker, Timer::Callback cb);
     Timer* CreatePeriodicTimer(int timer_type, server::IOWorker* io_worker,

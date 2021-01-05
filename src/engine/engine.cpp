@@ -18,6 +18,7 @@
 namespace faas {
 namespace engine {
 
+using server::NodeWatcher;
 using protocol::FuncCall;
 using protocol::Message;
 using protocol::MessageHelper;
@@ -25,17 +26,16 @@ using protocol::GatewayMessage;
 using protocol::GatewayMessageHelper;
 using protocol::SharedLogOpType;
 
-Engine::Engine()
-    : engine_tcp_port_(-1),
+Engine::Engine(uint16_t node_id)
+    : ServerBase(fmt::format("engine_{}", node_id)),
+      engine_tcp_port_(-1),
       enable_shared_log_(false),
       shared_log_tcp_port_(-1),
+      node_id_(node_id),
       func_worker_use_engine_socket_(absl::GetFlag(FLAGS_func_worker_use_engine_socket)),
       use_fifo_for_nested_call_(absl::GetFlag(FLAGS_use_fifo_for_nested_call)),
-      message_sockfd_(-1),
       ipc_sockfd_(-1),
       shared_log_sockfd_(-1),
-      next_ipc_conn_worker_id_(0),
-      next_shared_log_conn_worker_id_(0),
       worker_manager_(new WorkerManager(this)),
       monitor_(absl::GetFlag(FLAGS_enable_monitor) ? new Monitor(this) : nullptr),
       tracer_(new Tracer(this)),
@@ -63,34 +63,27 @@ void Engine::StartInternal() {
     CHECK(fs_utils::ReadContents(func_config_file_, &func_config_json_))
         << "Failed to read from file " << func_config_file_;
     CHECK(func_config_.Load(func_config_json_));
-    // Start IO workers
-    int num_io_workers = absl::GetFlag(FLAGS_num_io_workers);
-    CHECK_GT(num_io_workers, 0);
-    HLOG(INFO) << fmt::format("Start {} IO workers", num_io_workers);
-    for (int i = 0; i < num_io_workers; i++) {
-        auto io_worker = CreateIOWorker(fmt::format("IO-{}", i));
-        io_workers_.push_back(io_worker);
-    }
-    SetupGatewayEgress();
     SetupLocalIpc();
     if (enable_shared_log_) {
         SetupSharedLog();
     }
-    SetupMessageServer();
+    // Setup callbacks for node watcher
+    node_watcher()->SetNodeOnlineCallback(
+        absl::bind_front(&Engine::OnNodeOnline, this));
+    node_watcher()->SetNodeOfflineCallback(
+        absl::bind_front(&Engine::OnNodeOffline, this));
     // Initialize tracer
     tracer_->Init();
 }
 
 void Engine::SetupGatewayEgress() {
-    std::string gateway_addr;
-    auto status = zk_utils::GetOrWaitSync(zk_session(), "gateway", &gateway_addr);
-    CHECK(status.ok()) << "Failed to get gateway address from ZooKeeper: "
-                       << status.ToString();
     struct sockaddr_in addr;
-    if (!utils::ResolveTcpAddr(&addr, gateway_addr)) {
-        HLOG(FATAL) << "Cannot resolve address for gateway: " << gateway_addr;
+    if (!node_watcher()->GetNodeAddr(NodeWatcher::kGatewayNode, 0, &addr)) {
+        HLOG(ERROR) << "Cannot get address of gateway";
+        ScheduleStop();
+        return;
     }
-    for (server::IOWorker* io_worker : io_workers_) {
+    ForEachIOWorker([&addr, this] (server::IOWorker* io_worker) {
         auto egress_hub = std::make_unique<server::EgressHub>(
             kGatewayEgressHubTypeId,
             &addr, absl::GetFlag(FLAGS_message_conn_per_worker));
@@ -104,7 +97,7 @@ void Engine::SetupGatewayEgress() {
         DCHECK_GE(egress_hub->id(), 0);
         DCHECK(!gateway_egress_hubs_.contains(egress_hub->id()));
         gateway_egress_hubs_[egress_hub->id()] = std::move(egress_hub);
-    }
+    });
 }
 
 void Engine::SetupLocalIpc() {
@@ -131,29 +124,6 @@ void Engine::SetupLocalIpc() {
     ListenForNewConnections(ipc_sockfd_, absl::bind_front(&Engine::OnNewLocalIpcConn, this));
 }
 
-void Engine::SetupMessageServer() {
-    // Listen on address:message_port for message connections
-    std::string address = absl::GetFlag(FLAGS_listen_addr);
-    CHECK(!address.empty());
-    uint16_t message_port;
-    message_sockfd_ = utils::TcpSocketBindArbitraryPort(address, &message_port);
-    CHECK(message_sockfd_ != -1)
-        << fmt::format("Failed to bind on {}", address);
-    CHECK(utils::SocketListen(message_sockfd_, absl::GetFlag(FLAGS_socket_listen_backlog)))
-        << fmt::format("Failed to listen on {}:{}", address, message_port);
-    HLOG(INFO) << fmt::format("Listen on {}:{} for message connections",
-                              address, message_port);
-    ListenForNewConnections(
-        message_sockfd_, absl::bind_front(&Engine::OnNewRemoteMessageConn, this));
-    // Save my host address to ZooKeeper for others to connect
-    std::string my_addr(fmt::format("{}:{}", absl::GetFlag(FLAGS_hostname), message_port));
-    std::string znode_path = fmt::format("engines/{}", node_id_);
-    auto status = zk_utils::CreateSync(
-        zk_session(), /* path= */ znode_path, /* value= */ STRING_TO_SPAN(my_addr),
-        zk::ZKCreateMode::kEphemeral, nullptr);
-    CHECK(status.ok()) << "Failed to create ZooKeeper node: " << status.ToString();
-}
-
 void Engine::SetupSharedLog() {
     DCHECK(enable_shared_log_);
     if (!sequencer_config_.LoadFromFile(sequencer_config_file_)) {
@@ -174,41 +144,48 @@ void Engine::SetupSharedLog() {
                             absl::bind_front(&Engine::OnNewSLogConnection, this));
     // Connect to sequencer
     sequencer_config_.ForEachPeer([this] (const SequencerConfig::Peer* peer) {
-        int total_conn = io_workers_.size() * absl::GetFlag(FLAGS_sequencer_conn_per_worker);
-        for (int i = 0; i < total_conn; i++) {
-            int sockfd = -1;
-            bool success = utils::NetworkOpWithRetry(
-                /* max_retry= */ 10, /* sleep_sec=*/ 3,
-                [peer, &sockfd] {
-                    sockfd = utils::TcpSocketConnect(peer->host_addr, peer->engine_conn_port);
-                    return sockfd != -1;
+        ForEachIOWorker([peer, this] (server::IOWorker* io_worker) {
+            int total_conn = absl::GetFlag(FLAGS_sequencer_conn_per_worker);
+            for (int i = 0; i < total_conn; i++) {
+                int sockfd = -1;
+                bool success = utils::NetworkOpWithRetry(
+                    /* max_retry= */ 10, /* sleep_sec=*/ 3,
+                    [peer, &sockfd] {
+                        sockfd = utils::TcpSocketConnect(peer->host_addr, peer->engine_conn_port);
+                        return sockfd != -1;
+                    }
+                );
+                if (!success) {
+                    HLOG(FATAL) << fmt::format("Failed to connect to sequencer {}:{}",
+                                            peer->host_addr, peer->engine_conn_port);
                 }
-            );
-            if (!success) {
-                HLOG(FATAL) << fmt::format("Failed to connect to sequencer {}:{}",
-                                           peer->host_addr, peer->engine_conn_port);
+                std::shared_ptr<server::ConnectionBase> connection(
+                    new SequencerConnection(this, slog_engine_.get(), peer->id, sockfd));
+                RegisterConnection(io_worker, connection.get());
+                DCHECK_GE(connection->id(), 0);
+                DCHECK(!sequencer_connections_.contains(connection->id()));
+                sequencer_connections_[connection->id()] = std::move(connection);
             }
-            std::shared_ptr<server::ConnectionBase> connection(
-                new SequencerConnection(this, slog_engine_.get(), peer->id, sockfd));
-            server::IOWorker* io_worker = io_workers_[i % io_workers_.size()];
-            RegisterConnection(io_worker, connection.get());
-            DCHECK_GE(connection->id(), 0);
-            DCHECK(!sequencer_connections_.contains(connection->id()));
-            sequencer_connections_[connection->id()] = std::move(connection);
-        }
+        });
     });
     // Setup SharedLogMessageHub for each server::IOWorker
-    for (size_t i = 0; i < io_workers_.size(); i++) {
+    ForEachIOWorker([this] (server::IOWorker* io_worker) {
         auto hub = std::make_unique<SLogMessageHub>(slog_engine_.get());
-        RegisterConnection(io_workers_[i], hub.get());
+        RegisterConnection(io_worker, hub.get());
         slog_message_hubs_.insert(std::move(hub));
+    });
+}
+
+void Engine::OnNodeOnline(NodeWatcher::NodeType node_type, uint16_t node_id) {
+    if (node_type == NodeWatcher::kGatewayNode) {
+        SetupGatewayEgress();
     }
 }
 
+void Engine::OnNodeOffline(NodeWatcher::NodeType node_type, uint16_t node_id) {
+}
+
 void Engine::StopInternal() {
-    if (message_sockfd_ != -1) {
-        PCHECK(close(message_sockfd_) == 0) << "Failed to close message server fd";
-    }
     if (ipc_sockfd_ != -1) {
         PCHECK(close(ipc_sockfd_) == 0) << "Failed to close local IPC server fd";
     }
@@ -718,41 +695,17 @@ void Engine::CreateGatewayIngressConn(int sockfd) {
         kGatewayIngressTypeId, sockfd, sizeof(GatewayMessage));
     connection->set_log_header("GatewayIngress: ");
     connection->SetMessageFullSizeCallback(
-        [] (std::span<const char> header) -> size_t {
-            DCHECK_EQ(header.size(), sizeof(GatewayMessage));
-            const GatewayMessage* message = reinterpret_cast<const GatewayMessage*>(
-                header.data());
-            DCHECK_GE(message->payload_size, 0);
-            return sizeof(GatewayMessage) + message->payload_size;
-        }
-    );
+        &server::IngressConnection::GatewayMessageFullSizeCallback);
     connection->SetNewMessageCallback(
-        [this] (std::span<const char> data) {
-            DCHECK_GE(data.size(), sizeof(GatewayMessage));
-            const GatewayMessage* message = reinterpret_cast<const GatewayMessage*>(
-                data.data());
-            std::span<const char> payload;
-            if (data.size() > sizeof(GatewayMessage)) {
-                payload = data.subspan(sizeof(GatewayMessage));
-            }
-            OnRecvGatewayMessage(*message, payload);
-        }
-    );
-    size_t idx = (next_gateway_conn_worker_id_++) % io_workers_.size();
-    server::IOWorker* io_worker = io_workers_[idx];
-    RegisterConnection(io_worker, connection.get());
+        server::IngressConnection::BuildNewGatewayMessageCallback(
+            absl::bind_front(&Engine::OnRecvGatewayMessage, this)));
+    RegisterConnection(PickIOWorkerForConnType(connection->type()), connection.get());
     DCHECK_GE(connection->id(), 0);
     DCHECK(!gateway_ingress_conns_.contains(connection->id()));
     gateway_ingress_conns_[connection->id()] = std::move(connection);
 }
 
-void Engine::OnNewRemoteMessageConn(int sockfd) {
-    protocol::HandshakeMessage handshake;
-    if (!io_utils::RecvMessage(sockfd, &handshake, nullptr)) {
-        HPLOG(ERROR) << "Failed to read handshake message from engine";
-        close(sockfd);
-        return;
-    }
+void Engine::OnRemoteMessageConn(const protocol::HandshakeMessage& handshake, int sockfd) {
     protocol::ConnType conn_type = static_cast<protocol::ConnType>(handshake.conn_type);
     switch (conn_type) {
     case protocol::ConnType::GATEWAY_TO_ENGINE:
@@ -767,9 +720,7 @@ void Engine::OnNewRemoteMessageConn(int sockfd) {
 
 void Engine::OnNewLocalIpcConn(int sockfd) {
     std::shared_ptr<server::ConnectionBase> connection(new MessageConnection(this, sockfd));
-    size_t idx = (next_ipc_conn_worker_id_++) % io_workers_.size();
-    server::IOWorker* io_worker = io_workers_[idx];
-    RegisterConnection(io_worker, connection.get());
+    RegisterConnection(PickIOWorkerForConnType(connection->type()), connection.get());
     DCHECK_GE(connection->id(), 0);
     DCHECK(!message_connections_.contains(connection->id()));
     message_connections_[connection->id()] = std::move(connection);
@@ -779,9 +730,7 @@ void Engine::OnNewSLogConnection(int sockfd) {
     DCHECK(slog_engine_ != nullptr);
     std::shared_ptr<server::ConnectionBase> connection(
         new IncomingSLogConnection(slog_engine_.get(), sockfd));
-    size_t idx = (next_shared_log_conn_worker_id_++) % io_workers_.size();
-    server::IOWorker* io_worker = io_workers_[idx];
-    RegisterConnection(io_worker, connection.get());
+    RegisterConnection(PickIOWorkerForConnType(connection->type()), connection.get());
     DCHECK_GE(connection->id(), 0);
     DCHECK(!slog_connections_.contains(connection->id()));
     slog_connections_[connection->id()] = std::move(connection);

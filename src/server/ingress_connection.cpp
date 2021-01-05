@@ -84,5 +84,28 @@ bool IngressConnection::OnRecvData(int status, std::span<const char> data) {
     }
 }
 
+size_t IngressConnection::GatewayMessageFullSizeCallback(std::span<const char> header) {
+    using protocol::GatewayMessage;
+    DCHECK_EQ(header.size(), sizeof(GatewayMessage));
+    const GatewayMessage* message = reinterpret_cast<const GatewayMessage*>(
+        header.data());
+    DCHECK_GE(message->payload_size, 0);
+    return sizeof(GatewayMessage) + message->payload_size;
+}
+
+IngressConnection::NewMessageCallback IngressConnection::BuildNewGatewayMessageCallback(
+        std::function<void(const protocol::GatewayMessage&, std::span<const char>)> cb) {
+    using protocol::GatewayMessage;
+    return [cb] (std::span<const char> data) {
+        DCHECK_GE(data.size(), sizeof(GatewayMessage));
+        const GatewayMessage* message = reinterpret_cast<const GatewayMessage*>(data.data());
+        std::span<const char> payload;
+        if (data.size() > sizeof(GatewayMessage)) {
+            payload = data.subspan(sizeof(GatewayMessage));
+        }
+        cb(*message, payload);
+    };
+}
+
 }  // namespace server
 }  // namespace faas

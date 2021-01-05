@@ -45,17 +45,12 @@ private:
     std::string func_config_file_;
     FuncConfig func_config_;
 
-    int message_sockfd_;
     int http_sockfd_;
     int grpc_sockfd_;
     std::vector<server::IOWorker*> io_workers_;
 
-    size_t next_http_conn_worker_id_;
-    size_t next_grpc_conn_worker_id_;
     int next_http_connection_id_;
     int next_grpc_connection_id_;
-
-    absl::flat_hash_map</* node_id */ uint16_t, size_t> next_engine_conn_worker_id_;
 
     NodeManager node_manager_;
     absl::flat_hash_map</* id */ int, std::unique_ptr<server::IngressConnection>>
@@ -108,10 +103,10 @@ private:
     void StartInternal() override;
     void StopInternal() override;
     void OnConnectionClose(server::ConnectionBase* connection) override;
+    void OnRemoteMessageConn(const protocol::HandshakeMessage& handshake, int sockfd) override;
 
     void SetupHttpServer();
     void SetupGrpcServer();
-    void SetupMessageServer();
 
     void OnNewFuncCallCommon(std::shared_ptr<server::ConnectionBase> parent_connection,
                              FuncCallContext* func_call_context);
@@ -131,7 +126,6 @@ private:
                                                const protocol::GatewayMessage& message,
                                                std::span<const char> payload);
 
-    void OnNewMessageConnection(int sockfd);
     void OnNewHttpConnection(int sockfd);
     void OnNewGrpcConnection(int sockfd);
 

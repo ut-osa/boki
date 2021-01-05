@@ -132,19 +132,19 @@ inline void FillReadLogResponse(uint64_t seqnum, const LogRecord& record,
 }
 
 void SLogEngine::SetupTimers() {
-    size_t n_workers = engine_->io_workers_.size();
+    size_t n_workers = absl::GetFlag(FLAGS_num_io_workers);
     absl::Duration duration = EngineCore::local_cut_interval();
     absl::Time initial = absl::Now() + absl::Milliseconds(200);
-    for (server::IOWorker* io_worker : engine_->io_workers_) {
+    engine_->ForEachIOWorker([&, this] (server::IOWorker* io_worker) {
         engine_->CreatePeriodicTimer(
             kSLogLocalCutTimerTypeId, io_worker,
             initial, duration * n_workers,
             absl::bind_front(&SLogEngine::LocalCutTimerTriggered, this));
         initial += duration;
-    }
+    });
     if (absl::GetFlag(FLAGS_slog_enable_statecheck)) {
         statecheck_timer_ = engine_->CreatePeriodicTimer(
-            kSLogStateCheckTimerTypeId, engine_->io_workers_.front(),
+            kSLogStateCheckTimerTypeId, engine_->SomeIOWorker(),
             absl::Now() + absl::Milliseconds(200),
             absl::Seconds(absl::GetFlag(FLAGS_slog_statecheck_interval_sec)),
             absl::bind_front(&SLogEngine::StateCheckTimerTriggered, this));

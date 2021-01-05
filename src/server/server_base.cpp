@@ -1,26 +1,30 @@
 #include "server/server_base.h"
 
 #include "common/flags.h"
+#include "common/zk_utils.h"
 #include "utils/io.h"
+#include "utils/socket.h"
 
 #include <sys/types.h>
 #include <sys/eventfd.h>
 #include <fcntl.h>
 #include <poll.h>
 
-#define log_header_ "Server: "
+#define log_header_ "ServerBase: "
 
 namespace faas {
 namespace server {
 
-ServerBase::ServerBase()
+ServerBase::ServerBase(std::string_view node_name)
     : state_(kCreated),
+      node_name_(node_name),
+      stop_eventfd_(eventfd(0, 0)),
+      message_sockfd_(-1),
       event_loop_thread_("Server/EL",
                          absl::bind_front(&ServerBase::EventLoopThreadMain, this)),
       zk_session_(absl::GetFlag(FLAGS_zookeeper_host),
                   absl::GetFlag(FLAGS_zookeeper_root_path)),
       next_connection_id_(0) {
-    stop_eventfd_ = eventfd(0, 0);
     PCHECK(stop_eventfd_ >= 0) << "Failed to create eventfd";
 }
 
@@ -31,7 +35,11 @@ ServerBase::~ServerBase() {
 void ServerBase::Start() {
     DCHECK(state_.load() == kCreated);
     zk_session_.Start();
+    SetupIOWorkers();
+    state_.store(kBootstrapping);
     StartInternal();
+    SetupMessageServer();
+    node_watcher_.StartWatching(zk_session());
     // Start thread for running event loop
     event_loop_thread_.Start();
     state_.store(kRunning);
@@ -53,6 +61,28 @@ void ServerBase::WaitForFinish() {
 
 bool ServerBase::WithinMyEventLoopThread() {
     return base::Thread::current() == &event_loop_thread_;
+}
+
+void ServerBase::ForEachIOWorker(std::function<void(IOWorker* io_worker)> cb) {
+    for (size_t i = 0; i < io_workers_.size(); i++) {
+        cb(io_workers_[i].get());
+    }
+}
+
+IOWorker* ServerBase::PickIOWorkerForConnType(int conn_type) {
+    DCHECK(WithinMyEventLoopThread());
+    DCHECK_GE(conn_type, 0);
+    size_t idx = (next_io_worker_id_[conn_type]++) % io_workers_.size();
+    return io_workers_[idx].get();
+}
+
+IOWorker* ServerBase::SomeIOWorker() {
+    return io_workers_.front().get();
+}
+
+void ServerBase::OnRemoteMessageConn(const protocol::HandshakeMessage& handshake, int sockfd) {
+    HLOG(WARNING) << "OnRemoteMessageConn supposed to be implemented by sub-class";
+    close(sockfd);
 }
 
 void ServerBase::EventLoopThreadMain() {
@@ -105,18 +135,58 @@ void ServerBase::EventLoopThreadMain() {
     state_.store(kStopped);
 }
 
-IOWorker* ServerBase::CreateIOWorker(std::string_view worker_name, size_t write_buffer_size) {
+void ServerBase::SetupIOWorkers() {
     DCHECK(state_.load() == kCreated);
-    auto io_worker = std::make_unique<IOWorker>(worker_name, write_buffer_size);
-    int pipe_fds[2] = { -1, -1 };
-    if (socketpair(AF_UNIX, SOCK_STREAM, 0, pipe_fds) < 0) {
-        PLOG(FATAL) << "socketpair failed";
+    int num_io_workers = absl::GetFlag(FLAGS_num_io_workers);
+    CHECK_GT(num_io_workers, 0);
+    HLOG(INFO) << fmt::format("Start {} IO workers", num_io_workers);
+    for (int i = 0; i < num_io_workers; i++) {
+        auto io_worker = std::make_unique<IOWorker>(
+            fmt::format("IO-{}", i), kDefaultIOWorkerBufferSize);
+        int pipe_fds[2] = { -1, -1 };
+        if (socketpair(AF_UNIX, SOCK_STREAM, 0, pipe_fds) < 0) {
+            PLOG(FATAL) << "socketpair failed";
+        }
+        io_worker->Start(pipe_fds[1]);
+        pipes_to_io_worker_[io_worker.get()] = pipe_fds[0];
+        io_workers_.push_back(std::move(io_worker));
     }
-    io_worker->Start(pipe_fds[1]);
-    pipes_to_io_worker_[io_worker.get()] = pipe_fds[0];
-    IOWorker* ret = io_worker.get();
-    io_workers_.insert(std::move(io_worker));
-    return ret;
+}
+
+void ServerBase::SetupMessageServer() {
+    DCHECK(state_.load() == kBootstrapping);
+    // Listen on address:message_port for message connections
+    std::string address = absl::GetFlag(FLAGS_listen_addr);
+    CHECK(!address.empty());
+    uint16_t message_port;
+    message_sockfd_ = utils::TcpSocketBindArbitraryPort(address, &message_port);
+    CHECK(message_sockfd_ != -1)
+        << fmt::format("Failed to bind on {}", address);
+    CHECK(utils::SocketListen(message_sockfd_, absl::GetFlag(FLAGS_socket_listen_backlog)))
+        << fmt::format("Failed to listen on {}:{}", address, message_port);
+    HLOG(INFO) << fmt::format("Listen on {}:{} for message connections",
+                              address, message_port);
+    ListenForNewConnections(
+        message_sockfd_, absl::bind_front(&ServerBase::OnNewMessageConnection, this));
+    // Save my host address to ZooKeeper for others to connect
+    std::string my_addr(fmt::format("{}:{}", absl::GetFlag(FLAGS_hostname), message_port));
+    std::string znode_path = fmt::format("node_addr/{}", node_name_);
+    auto status = zk_utils::CreateSync(
+        zk_session(), /* path= */ znode_path, /* value= */ STRING_TO_SPAN(my_addr),
+        zk::ZKCreateMode::kEphemeral, nullptr);
+    CHECK(status.ok()) << fmt::format("Failed to create ZooKeeper node {}: {}",
+                                      znode_path, status.ToString());
+}
+
+void ServerBase::OnNewMessageConnection(int sockfd) {
+    DCHECK(WithinMyEventLoopThread());
+    protocol::HandshakeMessage handshake;
+    if (!io_utils::RecvMessage(sockfd, &handshake, nullptr)) {
+        HPLOG(ERROR) << "Failed to read handshake message";
+        close(sockfd);
+        return;
+    }
+    OnRemoteMessageConn(handshake, sockfd);
 }
 
 void ServerBase::RegisterConnection(IOWorker* io_worker, ConnectionBase* connection) {
@@ -136,7 +206,7 @@ void ServerBase::RegisterConnection(IOWorker* io_worker, ConnectionBase* connect
 }
 
 void ServerBase::ListenForNewConnections(int server_sockfd, ConnectionCallback cb) {
-    DCHECK(state_.load() == kCreated);
+    DCHECK(state_.load() == kBootstrapping);
     io_utils::FdSetNonblocking(server_sockfd);
     connection_cbs_[server_sockfd] = cb;
 }
@@ -159,6 +229,9 @@ void ServerBase::DoStop() {
     }
     HLOG(INFO) << "All IOWorker finish";
     StopInternal();
+    if (message_sockfd_ != -1) {
+        PCHECK(close(message_sockfd_) == 0) << "Failed to close message server fd";
+    }
     zk_session_.ScheduleStop();
 }
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "base/common.h"
+#include "common/protocol.h"
 #include "utils/appendable_buffer.h"
 #include "server/io_worker.h"
 
@@ -34,6 +35,11 @@ public:
     typedef std::function<void(std::span<const char> /* message */)>
             NewMessageCallback;
     void SetNewMessageCallback(NewMessageCallback cb);
+
+    static size_t GatewayMessageFullSizeCallback(std::span<const char> header);
+    static NewMessageCallback BuildNewGatewayMessageCallback(
+        std::function<void(const protocol::GatewayMessage&,
+                           std::span<const char> /* payload */)> cb);
 
 private:
     enum State { kCreated, kRunning, kClosing, kClosed };

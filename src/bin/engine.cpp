@@ -55,8 +55,6 @@ void EngineMain(int argc, char* argv[]) {
         docker_utils::SetCgroupFsRoot(cgroup_fs_root);
     }
 
-    auto engine = std::make_unique<engine::Engine>();
-    engine->set_engine_tcp_port(absl::GetFlag(FLAGS_engine_tcp_port));
     int node_id = absl::GetFlag(FLAGS_node_id);
     if (node_id == -1) {
         node_id = utils::GetEnvVariableAsInt("FAAS_NODE_ID", -1);
@@ -64,7 +62,8 @@ void EngineMain(int argc, char* argv[]) {
     if (node_id == -1) {
         node_id = GenerateNodeId();
     }
-    engine->set_node_id(gsl::narrow_cast<uint16_t>(node_id));
+    auto engine = std::make_unique<engine::Engine>(node_id);
+    engine->set_engine_tcp_port(absl::GetFlag(FLAGS_engine_tcp_port));
     engine->set_func_config_file(absl::GetFlag(FLAGS_func_config_file));
 
     if (absl::GetFlag(FLAGS_enable_shared_log)) {
