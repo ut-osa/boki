@@ -12,13 +12,10 @@ namespace base {
 
 class Thread {
 public:
-    Thread(std::string_view name, std::function<void()> fn)
-        : state_(kCreated), name_(std::string(name)), fn_(fn), tid_(-1) {}
+    static constexpr const char* kMainThreadName = "Main";
 
-    ~Thread() {
-        State state = state_.load();
-        DCHECK(state == kCreated || state == kFinished);
-    }
+    Thread(std::string_view name, std::function<void()> fn);
+    ~Thread();
 
     void Start();
     void Join();
@@ -26,11 +23,9 @@ public:
     void MarkThreadCategory(absl::string_view category);
 
     const char* name() const { return name_.c_str(); }
-    int tid() { return tid_; }
-    static Thread* current() {
-        DCHECK(current_ != nullptr);
-        return current_;
-    }
+    int tid() const { return tid_; }
+
+    static Thread* current() { return DCHECK_NOTNULL(current_); }
 
     static void RegisterMainThread();
 

@@ -9,32 +9,48 @@
 namespace faas {
 namespace base {
 
-thread_local Thread* Thread::current_ = nullptr;
+thread_local Thread* Thread::current_{nullptr};
 
-namespace {
-pid_t gettid() {
-    return syscall(SYS_gettid);
-}
+Thread::Thread(std::string_view name, std::function<void()> fn)
+    : state_(kCreated),
+      name_(std::string(name)),
+      fn_(fn),
+      tid_(-1) {}
+
+Thread::~Thread() {
+    if (name_ != kMainThreadName) {
+        State state = state_.load();
+        CHECK(state == kCreated || state == kFinished);
+    }
 }
 
 void Thread::Start() {
+    if (name_ == kMainThreadName) {
+        LOG(FATAL) << "Cannot call Start() on the main thread";
+    }
+    if (!fn_) {
+        LOG(FATAL) << "Empty entry function for thread " << name_;
+    }
     state_.store(kStarting);
     CHECK_EQ(pthread_create(&pthread_, nullptr, &Thread::StartRoutine, this), 0);
     started_.WaitForNotification();
-    DCHECK(state_.load() == kRunning);
+    CHECK(state_.load() == kRunning);
 }
 
 void Thread::Join() {
+    if (name_ == kMainThreadName) {
+        LOG(FATAL) << "Cannot call Join() on the main thread";
+    }
     State state = state_.load();
     if (state == kFinished) {
         return;
     }
-    DCHECK(state == kRunning);
+    CHECK(state == kRunning);
     CHECK_EQ(pthread_join(pthread_, nullptr), 0);
 }
 
 void Thread::Run() {
-    tid_ = gettid();
+    tid_ = syscall(SYS_gettid);
     state_.store(kRunning);
     started_.Notify();
     LOG(INFO) << "Start thread: " << name_;
@@ -91,10 +107,14 @@ void* Thread::StartRoutine(void* arg) {
     return nullptr;
 }
 
+namespace {
+static Thread main_thread{Thread::kMainThreadName, nullptr};
+}
+
 void Thread::RegisterMainThread() {
-    Thread* thread = new Thread("Main", std::function<void()>());
+    Thread* thread = &main_thread;
     thread->state_.store(kRunning);
-    thread->tid_ = gettid();
+    thread->tid_ = syscall(SYS_gettid);
     thread->pthread_ = pthread_self();
     current_ = thread;
     LOG(INFO) << "Register main thread: tid=" << thread->tid_;
