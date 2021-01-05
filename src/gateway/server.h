@@ -52,9 +52,10 @@ private:
 
     size_t next_http_conn_worker_id_;
     size_t next_grpc_conn_worker_id_;
-    size_t next_engine_conn_worker_id_;
     int next_http_connection_id_;
     int next_grpc_connection_id_;
+
+    absl::flat_hash_map</* node_id */ uint16_t, size_t> next_engine_conn_worker_id_;
 
     NodeManager node_manager_;
     absl::flat_hash_map</* id */ int, std::unique_ptr<server::IngressConnection>>
@@ -71,8 +72,7 @@ private:
         int64_t            recv_timestamp;
         int64_t            dispatch_timestamp;
         // Will only be used for async call
-        std::unique_ptr<char[]> input_buf;
-        std::span<const char>   input;
+        std::string        input;
     };
 
     struct PerFuncStat {

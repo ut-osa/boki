@@ -79,17 +79,17 @@ void Server::Start() {
         if (peer->id == my_sequencer_id_) {
             addr_str = fmt::format("127.0.0.1:{}", peer->raft_port);
         } else {
-            struct in_addr addr;
+            std::string resolved_ip;
             bool success = utils::NetworkOpWithRetry(
                 /* max_retry= */ 10, /* sleep_sec=*/ 3,
-                [&peer, &addr] {
-                    return utils::ResolveHost(peer->host_addr, &addr);
+                [&peer, &resolved_ip] {
+                    return utils::ResolveHost(peer->host_addr, &resolved_ip);
                 }
             );
             if (!success) {
                 HLOG(FATAL) << "Failed to resolve " << peer->host_addr;
             }
-            addr_str = fmt::format("{}:{}", inet_ntoa(addr), peer->raft_port);
+            addr_str = fmt::format("{}:{}", resolved_ip, peer->raft_port);
         }
         peers.push_back(std::make_pair(uint64_t{peer->id}, addr_str));
     });

@@ -133,7 +133,7 @@ void DirWatcher::Start() {
     InvokeGetChildren();
 }
 
-void DirWatcher::InvokeGet(std::string_view path, bool from_get_watch) {
+void DirWatcher::InvokeGet(std::string path, bool from_get_watch) {
     session_->Get(
         path,
         absl::bind_front(&DirWatcher::GetWatchCallback, this),
@@ -157,13 +157,13 @@ void DirWatcher::GetWatchCallback(ZKEvent event, std::string_view path) {
             nodes_.erase(node_path);
         }
     } else if (event.IsChanged()) {
-        InvokeGet(path, true);
+        InvokeGet(std::string(path), true);
     } else {
         LOG(FATAL) << fmt::format("Get watch receives {} event", EventName(event));
     }
 }
 
-void DirWatcher::GetCallback(std::string_view path, bool from_get_watch,
+void DirWatcher::GetCallback(std::string path, bool from_get_watch,
                              ZKStatus status, const ZKResult& result, bool* remove_watch) {
     if (status.ok()) {
         std::string node_path = GetNodePath(path);

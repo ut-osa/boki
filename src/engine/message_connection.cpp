@@ -68,13 +68,11 @@ void MessageConnection::ScheduleClose() {
     }
     DCHECK(state_ == kHandshake || state_ == kRunning);
     HLOG(INFO) << "Start closing";
-    current_io_uring()->StopReadOrRecv(sockfd_);
     URING_DCHECK_OK(current_io_uring()->Close(sockfd_, [this] () {
         sockfd_ = -1;
         OnFdClosed();
     }));
     if (in_fifo_fd_ != -1) {
-        current_io_uring()->StopReadOrRecv(in_fifo_fd_);
         URING_DCHECK_OK(current_io_uring()->Close(in_fifo_fd_, [this] () {
             in_fifo_fd_ = -1;
             OnFdClosed();

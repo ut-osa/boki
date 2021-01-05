@@ -94,10 +94,11 @@ void Engine::SetupGatewayEgress() {
         auto egress_hub = std::make_unique<server::EgressHub>(
             kGatewayEgressHubTypeId,
             &addr, absl::GetFlag(FLAGS_message_conn_per_worker));
-        egress_hub->set_log_header("GatewayEgressHub");
-        egress_hub->SetHandshakeMessageCallback([] (std::string* handshake) {
+        egress_hub->set_log_header("GatewayEgressHub: ");
+        uint16_t node_id = node_id_;
+        egress_hub->SetHandshakeMessageCallback([node_id] (std::string* handshake) {
             *handshake = protocol::EncodeHandshakeMessage(
-                protocol::ConnType::ENGINE_TO_GATEWAY);
+                protocol::ConnType::ENGINE_TO_GATEWAY, node_id);
         });
         RegisterConnection(io_worker, egress_hub.get());
         DCHECK_GE(egress_hub->id(), 0);
@@ -113,7 +114,7 @@ void Engine::SetupLocalIpc() {
         if (fs_utils::Exists(ipc_path)) {
             PCHECK(fs_utils::Remove(ipc_path));
         }
-        ipc_sockfd_ = utils::UnixDomainSocketBindAndListen(ipc_path, listen_backlog);
+        ipc_sockfd_ = utils::UnixSocketBindAndListen(ipc_path, listen_backlog);
         CHECK(ipc_sockfd_ != -1)
             << fmt::format("Failed to listen on {}", ipc_path);
         HLOG(INFO) << fmt::format("Listen on {} for IPC connections", ipc_path);
@@ -134,10 +135,11 @@ void Engine::SetupMessageServer() {
     // Listen on address:message_port for message connections
     std::string address = absl::GetFlag(FLAGS_listen_addr);
     CHECK(!address.empty());
-    int message_port = absl::GetFlag(FLAGS_message_port);
-    message_sockfd_ = utils::TcpSocketBindAndListen(
-        address, message_port, absl::GetFlag(FLAGS_socket_listen_backlog));
+    uint16_t message_port;
+    message_sockfd_ = utils::TcpSocketBindArbitraryPort(address, &message_port);
     CHECK(message_sockfd_ != -1)
+        << fmt::format("Failed to bind on {}", address);
+    CHECK(utils::SocketListen(message_sockfd_, absl::GetFlag(FLAGS_socket_listen_backlog)))
         << fmt::format("Failed to listen on {}:{}", address, message_port);
     HLOG(INFO) << fmt::format("Listen on {}:{} for message connections",
                               address, message_port);
@@ -714,7 +716,7 @@ void Engine::ProcessDiscardedFuncCallIfNecessary() {
 void Engine::CreateGatewayIngressConn(int sockfd) {
     auto connection = std::make_unique<server::IngressConnection>(
         kGatewayIngressTypeId, sockfd, sizeof(GatewayMessage));
-    connection->set_log_header("GatewayIngress");
+    connection->set_log_header("GatewayIngress: ");
     connection->SetMessageFullSizeCallback(
         [] (std::span<const char> header) -> size_t {
             DCHECK_EQ(header.size(), sizeof(GatewayMessage));

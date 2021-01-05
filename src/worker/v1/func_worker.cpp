@@ -66,10 +66,12 @@ void FuncWorker::Serve() {
         << "Failed to load function configs from payload";
     // Connect to engine via IPC path
     if (engine_tcp_port_ == -1) {
-        engine_sock_fd_ = utils::UnixDomainSocketConnect(ipc::GetEngineUnixSocketPath());
+        engine_sock_fd_ = utils::UnixSocketConnect(ipc::GetEngineUnixSocketPath());
     } else {
-        std::string host(utils::GetEnvVariable("FAAS_ENGINE_HOST", "127.0.0.1"));
-        engine_sock_fd_ = utils::TcpSocketConnect(host.c_str(), engine_tcp_port_);
+        std::string engine_ip;
+        CHECK(utils::ResolveHost(
+            utils::GetEnvVariable("FAAS_ENGINE_HOST", "127.0.0.1"), &engine_ip));
+        engine_sock_fd_ = utils::TcpSocketConnect(engine_ip, engine_tcp_port_);
     }
     CHECK(engine_sock_fd_ != -1) << "Failed to connect to engine socket";
     HandshakeWithEngine();

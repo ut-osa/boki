@@ -39,7 +39,6 @@ void IncomingSLogConnection::ScheduleClose() {
         return;
     }
     DCHECK(state_ == kRunning);
-    current_io_uring()->StopReadOrRecv(sockfd_);
     URING_DCHECK_OK(current_io_uring()->Close(sockfd_, [this] () {
         DCHECK(state_ == kClosing);
         state_ = kClosed;

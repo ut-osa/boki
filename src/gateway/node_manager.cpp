@@ -82,7 +82,8 @@ NodeManager::Node::Node(uint16_t node_id)
 
 void NodeManager::OnZNodeCreated(std::string_view path, std::span<const char> contents) {
     int parsed;
-    CHECK(absl::SimpleAtoi(path, &parsed));
+    CHECK(absl::SimpleAtoi(path, &parsed))
+        << "Failed to parse node_id from " << path;
     uint16_t node_id = gsl::narrow_cast<uint16_t>(parsed);
     std::string_view addr_str(contents.data(), contents.size());
     std::unique_ptr<Node> node = std::make_unique<Node>(node_id);
@@ -106,7 +107,8 @@ void NodeManager::OnZNodeChanged(std::string_view path, std::span<const char> co
 
 void NodeManager::OnZNodeDeleted(std::string_view path) {
     int parsed;
-    CHECK(absl::SimpleAtoi(path, &parsed));
+    CHECK(absl::SimpleAtoi(path, &parsed))
+        << "Failed to parse node_id from " << path;
     uint16_t node_id = gsl::narrow_cast<uint16_t>(parsed);
     {
         absl::MutexLock lk(&mu_);

@@ -30,7 +30,6 @@ Server::Server()
       grpc_sockfd_(-1),
       next_http_conn_worker_id_(0),
       next_grpc_conn_worker_id_(0),
-      next_engine_conn_worker_id_(0),
       next_http_connection_id_(0),
       next_grpc_connection_id_(0),
       node_manager_(this),
@@ -142,10 +141,11 @@ void Server::SetupMessageServer() {
     // Listen on address:message_port for message connections
     std::string address = absl::GetFlag(FLAGS_listen_addr);
     CHECK(!address.empty());
-    int message_port = absl::GetFlag(FLAGS_message_port);
-    message_sockfd_ = utils::TcpSocketBindAndListen(
-        address, message_port, absl::GetFlag(FLAGS_socket_listen_backlog));
+    uint16_t message_port;
+    message_sockfd_ = utils::TcpSocketBindArbitraryPort(address, &message_port);
     CHECK(message_sockfd_ != -1)
+        << fmt::format("Failed to bind on {}", address);
+    CHECK(utils::SocketListen(message_sockfd_, absl::GetFlag(FLAGS_socket_listen_backlog)))
         << fmt::format("Failed to listen on {}:{}", address, message_port);
     HLOG(INFO) << fmt::format("Listen on {}:{} for message connections",
                               address, message_port);
@@ -206,7 +206,7 @@ void Server::OnEngineNodeOnline(uint16_t node_id) {
 }
 
 void Server::OnEngineNodeOffline(uint16_t node_id) {
-    HLOG(INFO) << fmt::format("Engine node {} is online", node_id);
+    HLOG(INFO) << fmt::format("Engine node {} is offline", node_id);
 }
 
 void Server::TryDispatchingPendingFuncCalls() {
@@ -233,7 +233,8 @@ void Server::TryDispatchingPendingFuncCalls() {
         bool dispatched = false;
         if (node_picked) {
             if (async_call) {
-                dispatched = DispatchAsyncFuncCall(func_call, state.input, node_id);
+                dispatched = DispatchAsyncFuncCall(func_call, STRING_TO_SPAN(state.input),
+                                                   node_id);
             } else {
                 dispatched = DispatchFuncCall(std::move(parent_connection),
                                               state.context, node_id);
@@ -270,7 +271,7 @@ bool Server::SendMessageToEngine(uint16_t node_id, const GatewayMessage& message
         auto egress_hub = std::make_unique<server::EgressHub>(
             kEngineEgressHubTypeId + node_id,
             &addr, absl::GetFlag(FLAGS_message_conn_per_worker));
-        egress_hub->set_log_header(fmt::format("EngineEgressHub[{}]", node_id));
+        egress_hub->set_log_header(fmt::format("EngineEgressHub[{}]: ", node_id));
         egress_hub->SetHandshakeMessageCallback([] (std::string* handshake) {
             *handshake = protocol::EncodeHandshakeMessage(
                 protocol::ConnType::GATEWAY_TO_ENGINE);
@@ -400,8 +401,7 @@ void Server::OnNewFuncCallCommon(std::shared_ptr<server::ConnectionBase> parent_
         .context = func_call_context->is_async() ? nullptr : func_call_context,
         .recv_timestamp = 0,
         .dispatch_timestamp = 0,
-        .input_buf = nullptr,
-        .input = std::span<const char>()
+        .input = std::string()
     };
     uint16_t node_id;
     bool node_picked = node_manager_.PickNodeForNewFuncCall(func_call, &node_id);
@@ -425,10 +425,7 @@ void Server::OnNewFuncCallCommon(std::shared_ptr<server::ConnectionBase> parent_
             if (func_call_context->is_async()) {
                 // Make a copy of input in state
                 std::span<const char> input = func_call_context->input();
-                char* input_buf = new char[input.size()];
-                state.input_buf.reset(input_buf);
-                memcpy(input_buf, input.data(), input.size());
-                state.input = std::span<const char>(input_buf, input.size());
+                state.input.assign(input.data(), input.size());
             }
             pending_func_calls_.push_back(std::move(state));
         }
@@ -514,7 +511,7 @@ void Server::OnNewMessageConnection(int sockfd) {
     uint16_t node_id = handshake.src_node_id;
     auto connection = std::make_unique<server::IngressConnection>(
         kEngineIngressTypeId + node_id, sockfd, sizeof(GatewayMessage));
-    connection->set_log_header(fmt::format("EngineIngress[{}]", node_id));
+    connection->set_log_header(fmt::format("EngineIngress[{}]: ", node_id));
     connection->SetMessageFullSizeCallback(
         [] (std::span<const char> header) -> size_t {
             DCHECK_EQ(header.size(), sizeof(GatewayMessage));
@@ -537,7 +534,7 @@ void Server::OnNewMessageConnection(int sockfd) {
         }
     );
 
-    size_t idx = (next_engine_conn_worker_id_++) % io_workers_.size();
+    size_t idx = (next_engine_conn_worker_id_[node_id]++) % io_workers_.size();
     server::IOWorker* io_worker = io_workers_[idx];
     RegisterConnection(io_worker, connection.get());
     DCHECK_GE(connection->id(), 0);

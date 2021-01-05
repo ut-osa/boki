@@ -9,7 +9,9 @@ IngressConnection::IngressConnection(int type, int sockfd, size_t msghdr_size)
       state_(kCreated),
       sockfd_(sockfd),
       msghdr_size_(msghdr_size),
-      log_header_(fmt::format("IngressConn[{}-{}]", type, sockfd)) {}
+      buf_group_(kDefaultBufGroup),
+      buf_size_(kDefaultBufSize),
+      log_header_(fmt::format("IngressConn[{}-{}]: ", type, sockfd)) {}
 
 IngressConnection::~IngressConnection() {
     DCHECK(state_ == kCreated || state_ == kClosed);
@@ -19,10 +21,10 @@ void IngressConnection::Start(IOWorker* io_worker) {
     DCHECK(state_ == kCreated);
     DCHECK(io_worker->WithinMyEventLoopThread());
     io_worker_ = io_worker;
-    current_io_uring()->PrepareBuffers(kIngressBufGroup, kBufSize);
+    current_io_uring()->PrepareBuffers(buf_group_, buf_size_);
     URING_DCHECK_OK(current_io_uring()->RegisterFd(sockfd_));
     URING_DCHECK_OK(current_io_uring()->StartRecv(
-        sockfd_, kIngressBufGroup,
+        sockfd_, buf_group_,
         absl::bind_front(&IngressConnection::OnRecvData, this)));
     state_ = kRunning;
 }

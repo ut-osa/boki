@@ -58,7 +58,6 @@ void Timer::Start(server::IOWorker* io_worker) {
 void Timer::ScheduleClose() {
     DCHECK(io_worker_->WithinMyEventLoopThread());
     state_ = kClosing;
-    current_io_uring()->StopReadOrRecv(timerfd_);
     URING_DCHECK_OK(current_io_uring()->Close(timerfd_, [this] () {
         timerfd_ = -1;
         state_ = kClosed;

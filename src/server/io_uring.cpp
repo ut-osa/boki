@@ -80,6 +80,7 @@ IOUring::~IOUring() {
 
 void IOUring::PrepareBuffers(uint16_t gid, size_t buf_size) {
     if (buf_pools_.contains(gid)) {
+        DCHECK_EQ(buf_pools_.at(gid)->buffer_size(), buf_size);
         return;
     }
     buf_pools_[gid] = std::make_unique<utils::BufferPool>(

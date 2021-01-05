@@ -165,7 +165,7 @@ EventDrivenWorker::FuncWorkerState* EventDrivenWorker::GetAssociatedFuncWorkerSt
 }
 
 void EventDrivenWorker::NewFuncWorker(uint16_t client_id) {
-    int engine_sock_fd = utils::UnixDomainSocketConnect(ipc::GetEngineUnixSocketPath());
+    int engine_sock_fd = utils::UnixSocketConnect(ipc::GetEngineUnixSocketPath());
     CHECK(engine_sock_fd != -1) << "Failed to connect to engine socket";
     int input_pipe_fd = ipc::FifoOpenForRead(ipc::GetFuncWorkerInputFifoName(client_id));
     Message message = MessageHelper::NewFuncWorkerHandshake(

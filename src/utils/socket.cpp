@@ -5,6 +5,8 @@
 #include <absl/strings/numbers.h>
 #endif
 
+#include "utils/random.h"
+
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -26,10 +28,13 @@ static bool FillUnixSocketAddr(struct sockaddr_un* addr, std::string_view path) 
 }
 
 static bool FillTcpSocketAddr(struct sockaddr_in* addr,
-                              std::string_view host_or_ip, uint16_t port) {
+                              std::string_view ip, uint16_t port) {
     addr->sin_family = AF_INET; 
     addr->sin_port = htons(port);
-    return ResolveHost(host_or_ip, &addr->sin_addr);
+    if (inet_aton(std::string(ip).c_str(), &addr->sin_addr) != 1) {
+        return false;
+    }
+    return true;
 }
 
 static bool FillTcp6SocketAddr(struct sockaddr_in6* addr,
@@ -43,158 +48,8 @@ static bool FillTcp6SocketAddr(struct sockaddr_in6* addr,
     addr->sin6_scope_id = 0;
     return true;
 }
-}
 
-int UnixDomainSocketBindAndListen(std::string_view path, int backlog) {
-    struct sockaddr_un addr;
-    if (!FillUnixSocketAddr(&addr, path)) {
-        LOG(ERROR) << "Failed to fill Unix socket path: " << path;
-        return -1;
-    }
-    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (fd == -1) {
-        PLOG(ERROR) << "Failed to create Unix socket";
-        return -1;
-    }
-    if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) != 0) {
-        PLOG(ERROR) << "Failed to bind to " << path;
-        close(fd);
-        return -1;
-    }
-    if (listen(fd, backlog) != 0) {
-        PLOG(ERROR) << "Failed to listen with backlog " << backlog;
-        close(fd);
-        return -1;
-    }
-    return fd;
-}
-
-int UnixDomainSocketConnect(std::string_view path) {
-    struct sockaddr_un addr;
-    if (!FillUnixSocketAddr(&addr, path)) {
-        LOG(ERROR) << "Failed to fill Unix socket path: " << path;
-        return -1;
-    }
-    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (fd == -1) {
-        PLOG(ERROR) << "Failed to create Unix socket";
-        return -1;
-    }
-    if (connect(fd, (struct sockaddr*)&addr, sizeof(addr)) != 0) {
-        PLOG(ERROR) << "Failed to connect to " << path;
-        close(fd);
-        return -1;
-    }
-    return fd;
-}
-
-int TcpSocketBindAndListen(std::string_view addr, uint16_t port, int backlog) {
-    struct sockaddr_in sockaddr;
-    if (!FillTcpSocketAddr(&sockaddr, addr, port)) {
-        LOG(ERROR) << "Failed to fill socket addr: " << addr << ":" << port;
-        return -1;
-    }
-    int fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (fd == -1) {
-        PLOG(ERROR) << "Failed to create AF_INET socket";
-        return -1;
-    }
-    if (bind(fd, (struct sockaddr*)&sockaddr, sizeof(sockaddr)) != 0) {
-        PLOG(ERROR) << "Failed to bind to " << addr << ":" << port;
-        close(fd);
-        return -1;
-    }
-    if (listen(fd, backlog) != 0) {
-        PLOG(ERROR) << "Failed to listen with backlog " << backlog;
-        close(fd);
-        return -1;
-    }
-    return fd;
-}
-
-int TcpSocketConnect(std::string_view addr, uint16_t port) {
-    struct sockaddr_in sockaddr;
-    if (!FillTcpSocketAddr(&sockaddr, addr, port)) {
-        LOG(ERROR) << "Failed to fill socket addr: " << addr << ":" << port;
-        return -1;
-    }
-    int fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (fd == -1) {
-        PLOG(ERROR) << "Failed to create AF_INET socket";
-        return -1;
-    }
-    if (connect(fd, (struct sockaddr*)&sockaddr, sizeof(sockaddr)) != 0) {
-        PLOG(ERROR) << "Failed to connect to " << addr << ":" << port;
-        close(fd);
-        return -1;
-    }
-    return fd;
-}
-
-int Tcp6SocketBindAndListen(std::string_view ip, uint16_t port, int backlog) {
-    struct sockaddr_in6 sockaddr;
-    if (!FillTcp6SocketAddr(&sockaddr, ip, port)) {
-        LOG(ERROR) << "Failed to fill socket addr: " << ip << ":" << port;
-        return -1;
-    }
-    int fd = socket(AF_INET6, SOCK_STREAM, 0);
-    if (fd == -1) {
-        PLOG(ERROR) << "Failed to create AF_INET6 socket";
-        return -1;
-    }
-    if (bind(fd, (struct sockaddr*)&sockaddr, sizeof(sockaddr)) != 0) {
-        PLOG(ERROR) << "Failed to bind to " << ip << ":" << port;
-        close(fd);
-        return -1;
-    }
-    if (listen(fd, backlog) != 0) {
-        PLOG(ERROR) << "Failed to listen with backlog " << backlog;
-        close(fd);
-        return -1;
-    }
-    return fd;
-}
-
-int Tcp6SocketConnect(std::string_view ip, uint16_t port) {
-    struct sockaddr_in6 sockaddr;
-    if (!FillTcp6SocketAddr(&sockaddr, ip, port)) {
-        LOG(ERROR) << "Failed to fill socket addr: " << ip << ":" << port;
-        return -1;
-    }
-    int fd = socket(AF_INET6, SOCK_STREAM, 0);
-    if (fd == -1) {
-        PLOG(ERROR) << "Failed to create AF_INET6 socket";
-        return -1;
-    }
-    if (connect(fd, (struct sockaddr*)&sockaddr, sizeof(sockaddr)) != 0) {
-        PLOG(ERROR) << "Failed to connect to " << ip << ":" << port;
-        close(fd);
-        return -1;
-    }
-    return fd;
-}
-
-bool SetTcpSocketNoDelay(int sockfd) {
-    int flag = 1;
-    if (setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY,
-                   reinterpret_cast<const void*>(&flag), sizeof(int)) != 0) {
-        PLOG(ERROR) << "Failed to set TCP_NODELAY";
-        return false;
-    }
-    return true;
-}
-
-bool SetTcpSocketKeepAlive(int sockfd) {
-    int flag = 1;
-    if (setsockopt(sockfd, IPPROTO_TCP, SO_KEEPALIVE,
-                   reinterpret_cast<const void*>(&flag), sizeof(int)) != 0) {
-        PLOG(ERROR) << "Failed to set TCP_KEEPALIVE";
-        return false;
-    }
-    return true;
-}
-
-bool ResolveHost(std::string_view host_or_ip, struct in_addr* addr) {
+static bool ResolveHostInternal(std::string_view host_or_ip, struct in_addr* addr) {
     // Assume host_or_ip is IP address first
     if (inet_aton(std::string(host_or_ip).c_str(), addr) == 1) {
         return true;
@@ -228,23 +83,224 @@ bool ResolveHost(std::string_view host_or_ip, struct in_addr* addr) {
     }
     return false;
 }
+}
+
+bool SocketListen(int sockfd, int backlog) {
+    if (listen(sockfd, backlog) != 0) {
+        PLOG(ERROR) << "Failed to listen with backlog " << backlog;
+        return false;
+    }
+    return true;
+}
+
+int UnixSocketBindAndListen(std::string_view path, int backlog) {
+    struct sockaddr_un addr;
+    if (!FillUnixSocketAddr(&addr, path)) {
+        LOG(ERROR) << "Failed to fill Unix socket path: " << path;
+        return -1;
+    }
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd == -1) {
+        PLOG(ERROR) << "Failed to create Unix socket";
+        return -1;
+    }
+    if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) != 0) {
+        PLOG(ERROR) << "Failed to bind to " << path;
+        close(fd);
+        return -1;
+    }
+    if (!SocketListen(fd, backlog)) {
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
+
+int UnixSocketConnect(std::string_view path) {
+    struct sockaddr_un addr;
+    if (!FillUnixSocketAddr(&addr, path)) {
+        LOG(ERROR) << "Failed to fill Unix socket path: " << path;
+        return -1;
+    }
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd == -1) {
+        PLOG(ERROR) << "Failed to create Unix socket";
+        return -1;
+    }
+    if (connect(fd, (struct sockaddr*)&addr, sizeof(addr)) != 0) {
+        PLOG(ERROR) << "Failed to connect to " << path;
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
+
+int TcpSocketBindAndListen(std::string_view ip, uint16_t port, int backlog) {
+    struct sockaddr_in sockaddr;
+    if (!FillTcpSocketAddr(&sockaddr, ip, port)) {
+        LOG(ERROR) << fmt::format("Failed to fill socket addr: {}:{}", ip, port);
+        return -1;
+    }
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd == -1) {
+        PLOG(ERROR) << "Failed to create AF_INET socket";
+        return -1;
+    }
+    if (bind(fd, (struct sockaddr*)&sockaddr, sizeof(sockaddr)) != 0) {
+        PLOG(ERROR) << fmt::format("Failed to bind to {}:{}", ip, port);
+        close(fd);
+        return -1;
+    }
+    if (!SocketListen(fd, backlog)) {
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
+
+int TcpSocketConnect(std::string_view ip, uint16_t port) {
+    struct sockaddr_in sockaddr;
+    if (!FillTcpSocketAddr(&sockaddr, ip, port)) {
+        LOG(ERROR) << fmt::format("Failed to fill socket addr: {}:{}", ip, port);
+        return -1;
+    }
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd == -1) {
+        PLOG(ERROR) << "Failed to create AF_INET socket";
+        return -1;
+    }
+    if (connect(fd, (struct sockaddr*)&sockaddr, sizeof(sockaddr)) != 0) {
+        PLOG(ERROR) << fmt::format("Failed to connect to {}:{}", ip, port);
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
+
+int Tcp6SocketBindAndListen(std::string_view ip, uint16_t port, int backlog) {
+    struct sockaddr_in6 sockaddr;
+    if (!FillTcp6SocketAddr(&sockaddr, ip, port)) {
+        LOG(ERROR) << fmt::format("Failed to fill socket addr: {}:{}", ip, port);
+        return -1;
+    }
+    int fd = socket(AF_INET6, SOCK_STREAM, 0);
+    if (fd == -1) {
+        PLOG(ERROR) << "Failed to create AF_INET6 socket";
+        return -1;
+    }
+    if (bind(fd, (struct sockaddr*)&sockaddr, sizeof(sockaddr)) != 0) {
+        PLOG(ERROR) << fmt::format("Failed to bind to {}:{}", ip, port);
+        close(fd);
+        return -1;
+    }
+    if (!SocketListen(fd, backlog)) {
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
+
+int Tcp6SocketConnect(std::string_view ip, uint16_t port) {
+    struct sockaddr_in6 sockaddr;
+    if (!FillTcp6SocketAddr(&sockaddr, ip, port)) {
+        LOG(ERROR) << fmt::format("Failed to fill socket addr: {}:{}", ip, port);
+        return -1;
+    }
+    int fd = socket(AF_INET6, SOCK_STREAM, 0);
+    if (fd == -1) {
+        PLOG(ERROR) << "Failed to create AF_INET6 socket";
+        return -1;
+    }
+    if (connect(fd, (struct sockaddr*)&sockaddr, sizeof(sockaddr)) != 0) {
+        PLOG(ERROR) << fmt::format("Failed to connect to {}:{}", ip, port);
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
+
+int TcpSocketBindArbitraryPort(std::string_view ip, uint16_t* port) {
+    static constexpr int kMaxRetires = 10;
+    static constexpr int kMinPortNum = 20000;
+    static constexpr int kMaxPortNum = 30000;
+    int sockfd;
+    bool success = NetworkOpWithRetry(
+        kMaxRetires, /* sleep_sec= */ 0,
+        [&sockfd, ip, port] () -> bool {
+            struct sockaddr_in sockaddr;
+            uint16_t random_port = gsl::narrow_cast<uint16_t>(
+                utils::GetRandomInt(kMinPortNum, kMaxPortNum));
+            if (!FillTcpSocketAddr(&sockaddr, ip, random_port)) {
+                LOG(ERROR) << fmt::format("Failed to fill socket addr: {}:{}", ip, random_port);
+                return false;
+            }
+            sockfd = socket(AF_INET, SOCK_STREAM, 0);
+            if (sockfd == -1) {
+                PLOG(ERROR) << "Failed to create AF_INET socket";
+                return false;
+            }
+            int ret = bind(sockfd, (struct sockaddr*)&sockaddr, sizeof(sockaddr));
+            if (ret == 0) {
+                *port = random_port;
+                return true;
+            }
+            close(sockfd);
+            if (errno != EADDRINUSE) {
+                PLOG(ERROR) << fmt::format("Failed to bind to {}:{}", ip, random_port);
+            }
+            return false;
+        }
+    );
+    return success ? sockfd : -1;
+}
+
+bool SetTcpSocketNoDelay(int sockfd) {
+    int flag = 1;
+    if (setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY,
+                   reinterpret_cast<const void*>(&flag), sizeof(int)) != 0) {
+        PLOG(ERROR) << "Failed to set TCP_NODELAY";
+        return false;
+    }
+    return true;
+}
+
+bool SetTcpSocketKeepAlive(int sockfd) {
+    int flag = 1;
+    if (setsockopt(sockfd, IPPROTO_TCP, SO_KEEPALIVE,
+                   reinterpret_cast<const void*>(&flag), sizeof(int)) != 0) {
+        PLOG(ERROR) << "Failed to set TCP_KEEPALIVE";
+        return false;
+    }
+    return true;
+}
+
+bool ResolveHost(std::string_view host_or_ip, std::string* ip) {
+    struct in_addr addr;
+    if (!ResolveHostInternal(host_or_ip, &addr)) {
+        return false;
+    }
+    *ip = inet_ntoa(addr);
+    return true;
+}
 
 bool ResolveTcpAddr(struct sockaddr_in* addr, std::string_view addr_str) {
-#ifdef __FAAS_HAVE_ABSL
+
     size_t pos = addr_str.find_last_of(":");
     if (pos == std::string::npos) {
         return false;
     }
     std::string_view host = addr_str.substr(0, pos);
     int parsed_port;
+#ifdef __FAAS_HAVE_ABSL
     if (!absl::SimpleAtoi(addr_str.substr(pos + 1), &parsed_port)) {
         return false;
     }
-    uint16_t port = gsl::narrow_cast<uint16_t>(parsed_port);
-    return FillTcpSocketAddr(addr, host, port);
 #else
     NOT_IMPLEMENTED();
 #endif
+    addr->sin_family = AF_INET; 
+    addr->sin_port = htons(gsl::narrow_cast<uint16_t>(parsed_port));
+    return ResolveHostInternal(host, &addr->sin_addr);
 }
 
 bool NetworkOpWithRetry(int max_retry, int sleep_sec, std::function<bool()> fn) {
@@ -253,7 +309,9 @@ bool NetworkOpWithRetry(int max_retry, int sleep_sec, std::function<bool()> fn) 
         if (fn()) {
             return true;
         }
-        sleep(sleep_sec);
+        if (sleep_sec > 0) {
+            sleep(sleep_sec);
+        }
     }
     return false;
 }

@@ -10,7 +10,7 @@ EgressHub::EgressHub(int type, const struct sockaddr_in* addr, size_t num_conn)
       io_worker_(nullptr),
       state_(kCreated),
       sockfds_(num_conn, -1),
-      log_header_("EgressHub[{}]", type),
+      log_header_("EgressHub[{}]: ", type),
       send_fn_scheduled_(false) {
     memcpy(&addr_, addr, sizeof(struct sockaddr_in));
 }
@@ -27,6 +27,7 @@ void EgressHub::Start(IOWorker* io_worker) {
         int sockfd = socket(AF_INET, SOCK_STREAM, 0);
         PCHECK(sockfd >= 0) << "Failed to create socket";
         sockfds_[i] = sockfd;
+        URING_DCHECK_OK(current_io_uring()->RegisterFd(sockfd));
         URING_DCHECK_OK(current_io_uring()->Connect(
             sockfd, reinterpret_cast<struct sockaddr*>(&addr_), sizeof(addr_),
             absl::bind_front(&EgressHub::OnSocketConnected, this, sockfd)));
@@ -102,7 +103,25 @@ void EgressHub::OnSocketConnected(int sockfd, int status) {
     if (absl::GetFlag(FLAGS_tcp_enable_keepalive)) {
         CHECK(utils::SetTcpSocketKeepAlive(sockfd));
     }
-    
+    // Setup Recv helps to detect disconnection from the other end
+    URING_DCHECK_OK(current_io_uring()->StartRecv(
+        sockfd, IOWorker::kOctaBufGroup,
+        [this, sockfd] (int status, std::span<const char> data) -> bool {
+            if (status != 0) {
+                HPLOG(ERROR) << "Read error, will close this connection";
+                RemoveSocket(sockfd);
+                return false;
+            } else if (data.size() == 0) {
+                HLOG(INFO) << "Connection closed remotely";
+                RemoveSocket(sockfd);
+                return false;
+            } else {
+                HLOG(ERROR) << "Received data on egress sockets, "
+                               "this in general should not happen by design";
+                return true;
+            }
+        }
+    ));
     std::string handshake;
     if (handshake_message_cb_) {
         handshake_message_cb_(&handshake);

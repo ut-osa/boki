@@ -12,14 +12,19 @@ public:
     IngressConnection(int type, int sockfd, size_t msghdr_size);
     virtual ~IngressConnection();
 
-    static constexpr uint16_t kIngressBufGroup = 254;
-    static constexpr size_t   kBufSize         = 65536;
+    static constexpr uint16_t kDefaultBufGroup = 254;
+    static constexpr size_t   kDefaultBufSize  = 65536;
 
     void Start(IOWorker* io_worker) override;
     void ScheduleClose() override;
 
     void set_log_header(std::string_view log_header) {
         log_header_ = std::string(log_header);
+    }
+
+    void set_buffer_group(uint16_t buf_group, size_t buf_size) {
+        buf_group_ = buf_group;
+        buf_size_  = buf_size;
     }
 
     typedef std::function<size_t(std::span<const char> /* header */)>
@@ -37,6 +42,9 @@ private:
     State state_;
     int sockfd_;
     size_t msghdr_size_;
+
+    uint16_t buf_group_;
+    size_t   buf_size_;
 
     MessageFullSizeCallback  message_full_size_cb_;
     NewMessageCallback       new_message_cb_;

@@ -65,11 +65,11 @@ private:
         return std::string(absl::StripPrefix(base, "/"));
     }
 
-    void InvokeGet(std::string_view path, bool from_get_watch);
+    void InvokeGet(std::string path, bool from_get_watch);
     void InvokeGetChildren();
 
     void GetWatchCallback(zk::ZKEvent event, std::string_view path);
-    void GetCallback(std::string_view path, bool from_get_watch,
+    void GetCallback(std::string path, bool from_get_watch,
                      zk::ZKStatus status,
                      const zk::ZKResult& result, bool* remove_watch);
     void GetChildrenWatchCallback(zk::ZKEvent event, std::string_view path);
