@@ -723,7 +723,7 @@ void Engine::CreateGatewayIngressConn(int sockfd) {
             const GatewayMessage* message = reinterpret_cast<const GatewayMessage*>(
                 header.data());
             DCHECK_GE(message->payload_size, 0);
-            return message->payload_size;
+            return sizeof(GatewayMessage) + message->payload_size;
         }
     );
     connection->SetNewMessageCallback(

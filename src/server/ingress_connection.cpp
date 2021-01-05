@@ -57,6 +57,7 @@ void IngressConnection::ProcessMessages() {
     while (read_buffer_.length() >= msghdr_size_) {
         std::span<const char> header(read_buffer_.data(), msghdr_size_);
         size_t full_size = message_full_size_cb_(header);
+        DCHECK_GE(full_size, msghdr_size_);
         if (read_buffer_.length() >= full_size) {
             new_message_cb_(std::span<const char>(read_buffer_.data(), full_size));
             read_buffer_.ConsumeFront(full_size);

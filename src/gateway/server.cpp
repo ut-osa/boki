@@ -278,12 +278,12 @@ bool Server::SendMessageToEngine(uint16_t node_id, const GatewayMessage& message
         });
         RegisterConnection(io_worker, egress_hub.get());
         DCHECK_GE(egress_hub->id(), 0);
+        hub = egress_hub.get();
         {
             absl::MutexLock lk(&mu_);
             DCHECK(!engine_egress_hubs_.contains(egress_hub->id()));
             engine_egress_hubs_[egress_hub->id()] = std::move(egress_hub);
         }
-        hub = egress_hub.get();
     } else {
         hub = conn->as_ptr<server::EgressHub>();
     }
@@ -518,7 +518,7 @@ void Server::OnNewMessageConnection(int sockfd) {
             const GatewayMessage* message = reinterpret_cast<const GatewayMessage*>(
                 header.data());
             DCHECK_GE(message->payload_size, 0);
-            return message->payload_size;
+            return sizeof(GatewayMessage) + message->payload_size;
         }
     );
     connection->SetNewMessageCallback(

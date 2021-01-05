@@ -7,7 +7,6 @@ ABSL_FLAG(std::string, listen_addr, "0.0.0.0",
 ABSL_FLAG(std::string, hostname, "",
           "Hostname for other components to connect. "
           "If set to empty, /proc/sys/kernel/hostname will be used.");
-ABSL_FLAG(int, message_port, 23333, "Port for message passing between components");
 ABSL_FLAG(int, num_io_workers, 1, "Number of IO workers.");
 ABSL_FLAG(int, message_conn_per_worker, 8,
           "Number of connections for message passing per IO worker.");
