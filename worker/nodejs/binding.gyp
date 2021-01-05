@@ -11,6 +11,8 @@
         "src/ipc/fifo.cpp",
         "src/ipc/shm_region.cpp",
         "src/utils/fs.cpp",
+        "src/utils/io.cpp",
+        "src/utils/random.cpp",
         "src/utils/socket.cpp",
         "src/worker/worker_lib.cpp",
         "src/worker/event_driven_worker.cpp"
@@ -24,7 +26,6 @@
       ],
       "defines": [
         "NAPI_DISABLE_CPP_EXCEPTIONS",
-        "FMT_HEADER_ONLY",
         "__FAAS_NODE_ADDON",
         "DCHECK_ALWAYS_ON"
       ],

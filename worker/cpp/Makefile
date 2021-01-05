@@ -8,7 +8,7 @@ COMPILE_FLAGS = -std=c++17 -Wall -Werror -D__FAAS_CPP_WORKER \
 	-DNDEBUG -O3 -DDCHECK_ALWAYS_ON
 # Add additional include paths
 INCLUDES = -I. -I./src -I./include \
-	-DFMT_HEADER_ONLY -I./deps/fmt/include \
+	-I./deps/fmt/include \
 	-I./deps/GSL/include \
 	-I./deps/json/single_include
 # General linker settings

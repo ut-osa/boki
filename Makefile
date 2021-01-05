@@ -15,7 +15,7 @@ RCOMPILE_FLAGS = -DNDEBUG -O3
 DCOMPILE_FLAGS = -DDEBUG -g
 # Add additional include paths
 INCLUDES = -I$(SRC_PATH) -I./include -I./deps/out/include \
-	-DFMT_HEADER_ONLY -I./deps/fmt/include \
+	-I./deps/fmt/include \
 	-I./deps/GSL/include \
 	-I./deps/json/single_include \
 	-I./deps/xxHash

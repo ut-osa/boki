@@ -8,7 +8,7 @@ COMPILE_FLAGS = -std=c++17 -Wall -Werror -D__FAAS_PYTHON_BINDING -fPIC \
 	-DNDEBUG -O3 -DDCHECK_ALWAYS_ON
 # Add additional include paths
 INCLUDES = -I./src \
-	-DFMT_HEADER_ONLY -I./deps/fmt/include \
+	-I./deps/fmt/include \
 	-I./deps/GSL/include \
 	-I./deps/json/single_include \
 	-I./deps/pybind11/include \
@@ -50,6 +50,8 @@ SOURCES = module.cpp \
 	src/ipc/fifo.cpp \
 	src/ipc/shm_region.cpp \
 	src/utils/fs.cpp \
+	src/utils/io.cpp \
+	src/utils/random.cpp \
 	src/utils/socket.cpp \
 	src/worker/worker_lib.cpp \
 	src/worker/event_driven_worker.cpp
