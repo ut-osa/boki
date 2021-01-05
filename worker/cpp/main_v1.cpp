@@ -1,17 +1,19 @@
-#include "base/init.h"
+#define __FAAS_CPP_WORKER_SRC
 #include "base/common.h"
+#include "base/logging.h"
 #include "ipc/base.h"
 #include "utils/env_variables.h"
 #include "worker/v1/func_worker.h"
 
 namespace faas {
 
-void FuncWorkerMain(int argc, char* argv[]) {
-    std::vector<char*> positional_args;
-    base::InitMain(argc, argv, &positional_args);
-    if (positional_args.size() != 1) {
-        LOG(FATAL) << "The only positional argument should be path to the function library";
+void FuncWorkerV1Main(int argc, char* argv[]) {
+    if (argc != 2) {
+        fprintf(stderr, "The only argument should be path to the function library\n");
+        exit(EXIT_FAILURE);
     }
+
+    logging::Init(utils::GetEnvVariableAsInt("FAAS_VLOG_LEVEL", 0));
     ipc::SetRootPathForIpc(
         utils::GetEnvVariable("FAAS_ROOT_PATH_FOR_IPC", "/dev/shm/faas_ipc"));
 
@@ -29,13 +31,13 @@ void FuncWorkerMain(int argc, char* argv[]) {
     }
     func_worker->set_engine_tcp_port(
         utils::GetEnvVariableAsInt("FAAS_ENGINE_TCP_PORT", -1));
-    func_worker->set_func_library_path(positional_args[0]);
+    func_worker->set_func_library_path(argv[1]);
     func_worker->Serve();
 }
 
 }  // namespace faas
 
 int main(int argc, char* argv[]) {
-    faas::FuncWorkerMain(argc, argv);
+    faas::FuncWorkerV1Main(argc, argv);
     return 0;
 }

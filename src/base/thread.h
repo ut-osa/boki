@@ -47,8 +47,6 @@ private:
 
     static thread_local Thread* current_;
 
-    absl::flat_hash_map<intptr_t, void*> local_storage_;
-
     void Run();
     static void* StartRoutine(void* arg);
 

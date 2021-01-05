@@ -1,3 +1,4 @@
+#define __FAAS_CPP_WORKER_SRC
 #include "worker/v1/func_worker.h"
 
 #include "common/time.h"
@@ -5,9 +6,10 @@
 #include "ipc/fifo.h"
 #include "utils/io.h"
 #include "utils/socket.h"
+#include "utils/env_variables.h"
 #include "worker/worker_lib.h"
 
-#include <fcntl.h>
+#include <dlfcn.h>
 
 namespace faas {
 namespace worker_v1 {
@@ -18,12 +20,20 @@ using protocol::Message;
 using protocol::MessageHelper;
 
 FuncWorker::FuncWorker()
-    : func_id_(-1), fprocess_id_(-1), client_id_(0), message_pipe_fd_(-1),
-      use_engine_socket_(false), engine_tcp_port_(-1), use_fifo_for_nested_call_(false),
-      func_call_timeout_(kDefaultFuncCallTimeout),
-      engine_sock_fd_(-1), input_pipe_fd_(-1), output_pipe_fd_(-1),
-      buffer_pool_for_pipes_("Pipes", PIPE_BUF), ongoing_invoke_func_(false),
-      next_call_id_(0), current_func_call_id_(0) {}
+    : func_id_(-1),
+      fprocess_id_(-1),
+      client_id_(0),
+      message_pipe_fd_(-1),
+      use_engine_socket_(false),
+      engine_tcp_port_(-1),
+      use_fifo_for_nested_call_(false),
+      func_call_timeout_ms_(kDefaultFuncCallTimeoutMs),
+      engine_sock_fd_(-1),
+      input_pipe_fd_(-1),
+      output_pipe_fd_(-1),
+      ongoing_invoke_func_(false),
+      next_call_id_(0),
+      current_func_call_id_(0) {}
 
 FuncWorker::~FuncWorker() {
     if (engine_sock_fd_ != -1) {
@@ -37,6 +47,21 @@ FuncWorker::~FuncWorker() {
     }
 }
 
+class FuncWorker::DynamicLibrary {
+public:
+    ~DynamicLibrary();
+
+    template<class T>
+    T LoadSymbol(std::string_view name);
+
+    static std::unique_ptr<DynamicLibrary> Create(std::string_view path);
+
+private:
+    void* handle_;
+    explicit DynamicLibrary(void* handle): handle_(handle) {}
+    DISALLOW_COPY_AND_ASSIGN(DynamicLibrary);
+};
+
 void FuncWorker::Serve() {
     CHECK(func_id_ != -1);
     CHECK(fprocess_id_ != -1);
@@ -44,7 +69,7 @@ void FuncWorker::Serve() {
     LOG(INFO) << "My client_id is " << client_id_;
     // Load function library
     CHECK(!func_library_path_.empty());
-    func_library_ = utils::DynamicLibrary::Create(func_library_path_);
+    func_library_ = DynamicLibrary::Create(func_library_path_);
     init_fn_ = func_library_->LoadSymbol<faas_init_fn_t>("faas_init");
     create_func_worker_fn_ = func_library_->LoadSymbol<faas_create_func_worker_fn_t>(
         "faas_create_func_worker");
@@ -203,7 +228,7 @@ bool FuncWorker::WaitInvokeFunc(Message* invoke_func_message,
     FuncCall func_call = MessageHelper::GetFuncCall(*invoke_func_message);
     // Send message to engine (dispatcher)
     {
-        absl::MutexLock lk(&mu_);
+        std::lock_guard<std::mutex> lk(mu_);
         if (ongoing_invoke_func_) {
             // TODO: fix this
             LOG(FATAL) << "NaiveWaitInvokeFunc cannot execute concurrently";
@@ -216,7 +241,7 @@ bool FuncWorker::WaitInvokeFunc(Message* invoke_func_message,
     Message result_message;
     CHECK(io_utils::RecvMessage(input_pipe_fd_, &result_message, nullptr));
     if (MessageHelper::IsFuncCallFailed(result_message)) {
-        absl::MutexLock lk(&mu_);
+        std::lock_guard<std::mutex> lk(mu_);
         ongoing_invoke_func_ = false;
         return false;
     } else if (!MessageHelper::IsFuncCallComplete(result_message)) {
@@ -242,15 +267,12 @@ bool FuncWorker::WaitInvokeFunc(Message* invoke_func_message,
         *output_data = output_region->base();
         *output_length = output_region->size();
         invoke_func_resource.output_region = std::move(output_region);
-        absl::MutexLock lk(&mu_);
+        std::lock_guard<std::mutex> lk(mu_);
         invoke_func_resources_.push_back(std::move(invoke_func_resource));
         ongoing_invoke_func_ = false;
     } else {
-        absl::MutexLock lk(&mu_);
-        char* buffer;
-        size_t size;
-        buffer_pool_for_pipes_.Get(&buffer, &size);
-        CHECK(size >= sizeof(Message));
+        char* buffer = reinterpret_cast<char*>(malloc(PIPE_BUF));
+        std::lock_guard<std::mutex> lk(mu_);
         memcpy(buffer, &result_message, sizeof(Message));
         Message* message_copy = reinterpret_cast<Message*>(buffer);
         std::span<const char> output = MessageHelper::GetInlineData(*message_copy);
@@ -287,26 +309,16 @@ bool FuncWorker::FifoWaitInvokeFunc(Message* invoke_func_message,
     });
     // Send message to engine (dispatcher)
     {
-        absl::MutexLock lk(&mu_);
+        std::lock_guard<std::mutex> lk(mu_);
         invoke_func_message->send_timestamp = GetMonotonicMicroTimestamp();
         PCHECK(io_utils::SendMessage(output_pipe_fd_, *invoke_func_message));
     }
     VLOG(1) << "InvokeFuncMessage sent to engine";
-    int timeout_ms = -1;
-    if (func_call_timeout_ != absl::InfiniteDuration()) {
-        timeout_ms = gsl::narrow_cast<int>(absl::ToInt64Milliseconds(func_call_timeout_));
-    }
-    if (!io_utils::FdPollForRead(output_fifo, timeout_ms)) {
+    if (!io_utils::FdPollForRead(output_fifo, func_call_timeout_ms_)) {
         LOG(ERROR) << "FdPollForRead failed";
         return false;
     }
-    char* pipe_buffer;
-    {
-        absl::MutexLock lk(&mu_);
-        size_t size;
-        buffer_pool_for_pipes_.Get(&pipe_buffer, &size);
-        DCHECK(size == PIPE_BUF);
-    }
+    char* pipe_buffer = reinterpret_cast<char*>(malloc(PIPE_BUF));
     std::unique_ptr<ipc::ShmRegion> output_region;
     bool success = false;
     bool pipe_buffer_used = false;
@@ -314,7 +326,7 @@ bool FuncWorker::FifoWaitInvokeFunc(Message* invoke_func_message,
     if (worker_lib::FifoGetFuncCallOutput(
             func_call, output_fifo, pipe_buffer,
             &success, &output, &output_region, &pipe_buffer_used)) {
-        absl::MutexLock lk(&mu_);
+        std::lock_guard<std::mutex> lk(mu_);
         InvokeFuncResource invoke_func_resource = {
             .func_call = func_call,
             .output_region = nullptr,
@@ -323,7 +335,7 @@ bool FuncWorker::FifoWaitInvokeFunc(Message* invoke_func_message,
         if (pipe_buffer_used) {
             invoke_func_resource.pipe_buffer = pipe_buffer;
         } else {
-            buffer_pool_for_pipes_.Return(pipe_buffer);
+            free(pipe_buffer);
         }
         if (output_region != nullptr) {
             invoke_func_resource.output_region = std::move(output_region);
@@ -337,17 +349,16 @@ bool FuncWorker::FifoWaitInvokeFunc(Message* invoke_func_message,
             return false;
         }
     } else {
-        absl::MutexLock lk(&mu_);
-        buffer_pool_for_pipes_.Return(pipe_buffer);
+        free(pipe_buffer);
         return false;
     }
 }
 
 void FuncWorker::ReclaimInvokeFuncResources() {
-    absl::MutexLock lk(&mu_);
+    std::lock_guard<std::mutex> lk(mu_);
     for (const auto& resource : invoke_func_resources_) {
         if (resource.pipe_buffer != nullptr) {
-            buffer_pool_for_pipes_.Return(resource.pipe_buffer);
+            free(resource.pipe_buffer);
         }
     }
     invoke_func_resources_.clear();
@@ -367,6 +378,31 @@ int FuncWorker::InvokeFuncWrapper(void* caller_context, const char* func_name,
     bool success = self->InvokeFunc(func_name, input_data, input_length,
                                     output_data, output_length);
     return success ? 0 : -1;
+}
+
+FuncWorker::DynamicLibrary::~DynamicLibrary() {
+    if (dlclose(handle_) != 0) {
+        LOG(FATAL) << "Failed to close dynamic library: " << dlerror();
+    }
+}
+
+std::unique_ptr<FuncWorker::DynamicLibrary> FuncWorker::DynamicLibrary::Create(
+        std::string_view path) {
+    void* handle = dlopen(std::string(path).c_str(), RTLD_LAZY);
+    if (handle == nullptr) {
+        LOG(FATAL) << "Failed to open dynamic library " << path << ": " << dlerror();
+    }
+    DynamicLibrary* dynamic_library = new DynamicLibrary(handle);
+    return std::unique_ptr<DynamicLibrary>(dynamic_library);
+}
+
+template<class T>
+T FuncWorker::DynamicLibrary::LoadSymbol(std::string_view name) {
+    void* ptr = dlsym(handle_, std::string(name).c_str());
+    if (ptr == nullptr) {
+        LOG(FATAL) << "Cannot load symbol " << name << " from the dynamic library";
+    }
+    return reinterpret_cast<T>(ptr);
 }
 
 }  // namespace worker_v1

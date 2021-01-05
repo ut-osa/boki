@@ -4,6 +4,12 @@
 #define _GNU_SOURCE
 #endif
 
+#ifdef __FAAS_CPP_WORKER
+#if !defined(__FAAS_USED_IN_BINDING) && !defined(__FAAS_CPP_WORKER_SRC)
+#error Need the source file to have __FAAS_USED_IN_BINDING defined
+#endif
+#endif
+
 #ifdef __FAAS_NODE_ADDON
 #if !defined(__FAAS_USED_IN_BINDING) && !defined(__FAAS_NODE_ADDON_SRC)
 #error Need the source file to have __FAAS_USED_IN_BINDING defined
@@ -47,6 +53,9 @@
 #include <set>
 #include <unordered_map>
 #include <unordered_set>
+#ifdef __FAAS_CPP_WORKER
+#include <mutex>
+#endif
 
 // fmtlib
 #include <fmt/core.h>

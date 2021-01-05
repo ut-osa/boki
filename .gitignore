@@ -4,6 +4,8 @@
 /deps/out*
 /.release_time
 /.debug_time
+/worker/cpp/bin/
+/worker/cpp/build/
 /worker/golang/build/
 /worker/nodejs/build/
 /worker/nodejs/node_modules/

@@ -1,17 +1,9 @@
 #pragma once
 
-#ifndef __FAAS_SRC
-#error worker/v1/func_worker.h cannot be included outside
-#endif
-
 #include "base/common.h"
-#include "base/thread.h"
-#include "common/stat.h"
 #include "common/protocol.h"
 #include "common/func_config.h"
-#include "utils/dynamic_library.h"
 #include "utils/appendable_buffer.h"
-#include "utils/buffer_pool.h"
 #include "ipc/shm_region.h"
 #include "faas/worker_v1_interface.h"
 
@@ -20,7 +12,7 @@ namespace worker_v1 {
 
 class FuncWorker {
 public:
-    static constexpr absl::Duration kDefaultFuncCallTimeout = absl::Milliseconds(100);
+    static constexpr int kDefaultFuncCallTimeoutMs = 100;
 
     FuncWorker();
     ~FuncWorker();
@@ -46,16 +38,17 @@ private:
     bool use_engine_socket_;
     int engine_tcp_port_;
     bool use_fifo_for_nested_call_;
-    absl::Duration func_call_timeout_;
+    int func_call_timeout_ms_;
 
-    absl::Mutex mu_;
+    std::mutex mu_;
 
     int engine_sock_fd_;
     int input_pipe_fd_;
     int output_pipe_fd_;
 
     FuncConfig func_config_;
-    std::unique_ptr<utils::DynamicLibrary> func_library_;
+    class DynamicLibrary;
+    std::unique_ptr<DynamicLibrary> func_library_;
     void* worker_handle_;
 
     faas_init_fn_t init_fn_;
@@ -69,9 +62,8 @@ private:
         char* pipe_buffer;
     };
 
-    std::vector<InvokeFuncResource> invoke_func_resources_ ABSL_GUARDED_BY(mu_);
-    utils::BufferPool buffer_pool_for_pipes_ ABSL_GUARDED_BY(mu_);
-    bool ongoing_invoke_func_ ABSL_GUARDED_BY(mu_);
+    std::vector<InvokeFuncResource> invoke_func_resources_;  // GUARDED_BY(mu_);
+    bool ongoing_invoke_func_;  // GUARDED_BY(mu_);
     utils::AppendableBuffer func_output_buffer_;
     char main_pipe_buf_[PIPE_BUF];
 

@@ -19,7 +19,6 @@
 
 #ifdef __FAAS_SRC
 
-#include <absl/container/flat_hash_map.h>
 #include <absl/synchronization/mutex.h>
 #include <absl/synchronization/notification.h>
 #include "base/thread.h"
@@ -31,6 +30,10 @@
 static pid_t __gettid() {
     return syscall(SYS_gettid);
 }
+
+#ifdef __FAAS_CPP_WORKER
+#include <mutex>
+#endif
 
 #endif  // __FAAS_SRC
 
@@ -127,11 +130,15 @@ LogMessageFatal::~LogMessageFatal() {
 
 #ifdef __FAAS_SRC
 absl::Mutex stderr_mu;
+#elif defined(__FAAS_CPP_WORKER)
+std::mutex stderr_mu;
 #endif
 
 void LogMessage::SendToLog(const std::string& message_text) {
 #ifdef __FAAS_SRC
     absl::MutexLock lk(&stderr_mu);
+#elif defined(__FAAS_CPP_WORKER)
+    std::lock_guard<std::mutex> lk(stderr_mu);
 #endif
     fprintf(stderr, "%s\n", message_text.c_str());
     fflush(stderr);
