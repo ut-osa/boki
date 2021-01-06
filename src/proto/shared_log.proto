@@ -5,6 +5,88 @@ package faas.log;
 option optimize_for = LITE_RUNTIME;
 option cc_enable_arenas = true;
 
+message ViewProto {
+    uint32 view_id          = 1;  // Monotonically increasing
+    uint32 metalog_replicas = 2;
+    uint32 userlog_replicas = 3;
+    uint32 index_replicas   = 4;
+
+    // [Participant Nodes: Sequencer, Engine, and Storage]
+    // All nodes have globally unique IDs (even across views)
+    // IDs are denoted by sequencer_id, engine_id, storage_id
+
+    // [Physical Log Space]
+    // Within each view, there are M physical log spaces, where M = len(sequencer_nodes).
+    // Each log space maps to one sequencer (primary node), which issues a stream of metalog.
+    // Each log space has `metalog_replicas` replicas, on other sequencer nodes.
+    // One physical log space can be uniquely identified as (view_id, sequencer_id)
+    repeated uint32 sequencer_nodes = 6;
+
+    // [Virtual Log Space]
+    // Within each view, user log spaces (i.e. virtual log spaces) are mapped to
+    // physical log spaces (many-to-one mapping).
+    // The mapping is computed via a token-based consistent hashing:
+    //   sequencer_id = tokens[H(user_log_space, seed) % len(tokens)]
+    // Note that the mapping may change across views.
+    uint64          log_space_hash_seed   = 5;
+    repeated uint32 log_space_hash_tokens = 7;
+
+    // [Log Shards]
+    // Each physical log space has N shards, where N = len(engine_nodes).
+    // Each shard maps to one engine node, consisting of log appends making from this node.
+    // This design helps achieving local ordering.
+    // Log data of each shard replicates on `userlog_replicas` storage nodes.
+    // One log shard can be uniquely identified as (view_id, sequencer_id, engine_id)
+    repeated uint32 engine_nodes = 8;
+
+    // [Log Index]
+    // Each physical log space has `index_replicas` indices, stored on engine nodes.
+    // `index_plan` specifies this mapping, which has a length of
+    // len(sequencer_nodes) * index_replicas.
+    repeated uint32 index_plan = 9;
+
+    // [Log Storage]
+    // `storage_plan` specified storage nodes for each log shards, which has a
+    // length of len(engine_nodes) * userlog_replicas.
+    // Note that for each engine node, its shard of all physical log spaces
+    // maps to the same set of storage nodes.
+    repeated uint32 storage_nodes = 10;
+    repeated uint32 storage_plan  = 11;
+}
+
+message MetaLogProto {
+    // Below two determines the physical log space
+    uint32 view_id        = 1;
+    uint32 sequencer_id   = 2;
+
+    // Monotonically increasing
+    uint32 metalog_seqnum = 3;
+
+    enum Type {
+        INVALID  = 0;
+        NEW_LOGS = 1;
+        TRIM     = 2;
+    }
+    Type type = 4;
+
+    message NewLogsProto {
+        uint64          start_seqnum = 1;
+        repeated uint32 shard_starts = 2;
+        repeated uint32 shard_deltas = 3;
+    }
+    NewLogsProto new_logs_proto = 5;
+
+    message TrimProto {
+        uint32 user_logspace = 1;
+        uint64 user_tag      = 2;
+        uint64 trim_seqnum   = 3;
+    }
+    TrimProto trim_proto = 6;
+}
+
+// ====== Old protos ======
+// Will remove once the MetaLog design is implemented.
+
 enum FsmRecordType {
     INVALID    = 0;
     NEW_VIEW   = 1;
