@@ -2,6 +2,7 @@
 
 #include "utils/io.h"
 #include "utils/timerfd.h"
+#include "server/constants.h"
 
 namespace faas {
 namespace engine {
@@ -41,7 +42,7 @@ void Timer::Start(server::IOWorker* io_worker) {
         state_ = kScheduled;
     }
     URING_DCHECK_OK(current_io_uring()->StartRead(
-        timerfd_, server::IOWorker::kOctaBufGroup,
+        timerfd_, kOctaBufGroup,
         [this] (int status, std::span<const char> data) -> bool {
             if (state_ != kScheduled) {
                 return false;

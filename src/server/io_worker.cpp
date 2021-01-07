@@ -1,5 +1,7 @@
 #include "server/io_worker.h"
 
+#include "server/constants.h"
+
 #include <sys/eventfd.h>
 
 namespace faas {

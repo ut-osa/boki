@@ -5,7 +5,7 @@
 #include "ipc/fifo.h"
 #include "utils/io.h"
 #include "engine/flags.h"
-#include "engine/constants.h"
+#include "server/constants.h"
 #include "engine/engine.h"
 
 namespace faas {

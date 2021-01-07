@@ -47,8 +47,6 @@ public:
     IOWorker(std::string_view worker_name, size_t write_buffer_size);
     ~IOWorker();
 
-    static constexpr uint16_t kOctaBufGroup = 255;  // 8-byte buffer group
-
     std::string_view worker_name() const { return worker_name_; }
     IOUring* io_uring() { return &io_uring_; }
 

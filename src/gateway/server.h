@@ -1,7 +1,6 @@
 #pragma once
 
 #include "base/common.h"
-#include "base/thread.h"
 #include "common/zk.h"
 #include "common/stat.h"
 #include "common/protocol.h"

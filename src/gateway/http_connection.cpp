@@ -1,7 +1,7 @@
 #include "gateway/http_connection.h"
 
 #include "common/time.h"
-#include "gateway/constants.h"
+#include "server/constants.h"
 #include "gateway/server.h"
 
 #include <nlohmann/json.hpp>

@@ -13,7 +13,6 @@ public:
     IngressConnection(int type, int sockfd, size_t msghdr_size);
     virtual ~IngressConnection();
 
-    static constexpr uint16_t kDefaultBufGroup = 254;
     static constexpr size_t   kDefaultBufSize  = 65536;
 
     void Start(IOWorker* io_worker) override;

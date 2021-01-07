@@ -10,7 +10,7 @@
 #include "utils/docker.h"
 #include "worker/worker_lib.h"
 #include "gateway/flags.h"
-#include "gateway/constants.h"
+#include "server/constants.h"
 
 #define log_header_ "Server: "
 

@@ -1,5 +1,7 @@
 #include "server/ingress_connection.h"
 
+#include "server/constants.h"
+
 namespace faas {
 namespace server {
 
@@ -9,7 +11,7 @@ IngressConnection::IngressConnection(int type, int sockfd, size_t msghdr_size)
       state_(kCreated),
       sockfd_(sockfd),
       msghdr_size_(msghdr_size),
-      buf_group_(kDefaultBufGroup),
+      buf_group_(kDefaultIngressBufGroup),
       buf_size_(kDefaultBufSize),
       log_header_(fmt::format("IngressConn[{}-{}]: ", type, sockfd)) {}
 

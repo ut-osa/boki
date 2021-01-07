@@ -2,7 +2,7 @@
 
 #include "common/time.h"
 #include "common/http_status.h"
-#include "gateway/constants.h"
+#include "server/constants.h"
 #include "gateway/server.h"
 
 #include <arpa/inet.h>

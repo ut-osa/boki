@@ -10,7 +10,7 @@
 #include "utils/socket.h"
 #include "worker/worker_lib.h"
 #include "engine/flags.h"
-#include "engine/constants.h"
+#include "server/constants.h"
 #include "engine/sequencer_connection.h"
 
 #define log_header_ "Engine: "

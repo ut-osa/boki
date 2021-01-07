@@ -1,6 +1,7 @@
 #include "server/egress_hub.h"
 
 #include "common/flags.h"
+#include "server/constants.h"
 
 namespace faas {
 namespace server {
@@ -105,7 +106,7 @@ void EgressHub::OnSocketConnected(int sockfd, int status) {
     }
     // Setup Recv helps to detect disconnection from the other end
     URING_DCHECK_OK(current_io_uring()->StartRecv(
-        sockfd, IOWorker::kOctaBufGroup,
+        sockfd, kOctaBufGroup,
         [this, sockfd] (int status, std::span<const char> data) -> bool {
             if (status != 0) {
                 HPLOG(ERROR) << "Read error, will close this connection";

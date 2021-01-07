@@ -2,7 +2,7 @@
 
 #include "utils/socket.h"
 #include "engine/flags.h"
-#include "engine/constants.h"
+#include "server/constants.h"
 #include "engine/slog_engine.h"
 
 namespace faas {
