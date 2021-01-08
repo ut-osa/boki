@@ -12,7 +12,7 @@ namespace zk_utils {
 
 // Helper functions
 std::string_view EventName(zk::ZKEvent event);
-bool ParseSequenceNumber(std::string_view created_path, uint64_t* parsed);
+bool ParseSequenceNumber(std::string_view created_path, uint32_t* parsed);
 
 // Synchronous helper APIs
 // They cannot be called from callbacks of ZKSession's asynchronous APIs
@@ -31,7 +31,8 @@ zk::ZKStatus GetOrWaitSync(zk::ZKSession* session, std::string_view path,
 class DirWatcher {
 public:
     // The directory being watched MUST be flat
-    DirWatcher(zk::ZKSession* session, std::string_view directory);
+    DirWatcher(zk::ZKSession* session, std::string_view directory,
+               bool sequential_znodes = false);
     ~DirWatcher();
 
     typedef std::function<void(std::string_view /* path */,
@@ -53,6 +54,7 @@ public:
 private:
     zk::ZKSession* session_;
     std::string dir_full_path_;
+    bool sequential_znodes_;
 
     absl::flat_hash_set</* node_path */ std::string> nodes_;
 

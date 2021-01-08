@@ -84,6 +84,21 @@ message MetaLogProto {
     TrimProto trim_proto = 6;
 }
 
+message FinalizedViewProto {
+    uint32 view_id = 1;
+
+    // Gives the final position of all meta logs (for each physical log spaces)
+    repeated uint32 metalog_positions = 2;
+
+    message TailMetaLogProto {
+        repeated MetaLogProto metalogs = 1;
+    }
+    // Gives the last few meta logs for each physical log space
+    // The purpose is to help nodes catching up.
+    // If gaps still exist, nodes will communicate with sequencers to catch up.
+    repeated TailMetaLogProto tail_metalogs = 3;
+}
+
 // ====== Old protos ======
 // Will remove once the MetaLog design is implemented.
 

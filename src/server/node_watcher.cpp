@@ -50,6 +50,9 @@ bool NodeWatcher::ParseNodePath(std::string_view path,
     } else if (absl::StartsWith(path, "sequencer_")) {
         prefix = "sequencer_";
         *node_type = kSequencerNode;
+    } else if (absl::StartsWith(path, "storage_")) {
+        prefix = "storage_";
+        *node_type = kStorageNode;
     } else {
         LOG(ERROR) << "Unknown type of node: " << path;
         return false;

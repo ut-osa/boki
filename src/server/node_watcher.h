@@ -19,7 +19,8 @@ public:
         kGatewayNode   = 0,
         kEngineNode    = 1,
         kSequencerNode = 2,
-        kTotalNodeType = 3
+        kStorageNode   = 3,
+        kTotalNodeType = 4
     };
 
     typedef std::function<void(NodeType /* node_type */, uint16_t node_id)>

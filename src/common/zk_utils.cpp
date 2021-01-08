@@ -26,8 +26,11 @@ std::string_view EventName(ZKEvent event) {
     }
 }
 
-bool ParseSequenceNumber(std::string_view created_path, uint64_t* parsed) {
-    static constexpr size_t kSequenceNumberLength = 10;
+namespace {
+static constexpr size_t kSequenceNumberLength = 10;
+}
+
+bool ParseSequenceNumber(std::string_view created_path, uint32_t* parsed) {
     size_t length = created_path.length();
     if (length < kSequenceNumberLength) {
         return false;
@@ -100,8 +103,10 @@ ZKStatus GetOrWaitSync(ZKSession* session, std::string_view path, std::string* v
     return ret_status;
 }
 
-DirWatcher::DirWatcher(zk::ZKSession* session, std::string_view directory)
-    : session_(session) {
+DirWatcher::DirWatcher(zk::ZKSession* session, std::string_view directory,
+                       bool sequential_znodes)
+    : session_(session),
+      sequential_znodes_(sequential_znodes) {
     if (absl::StartsWith(directory, "/")) {
         dir_full_path_ = std::string(directory);
     } else {
@@ -208,7 +213,22 @@ void DirWatcher::GetChildrenCallback(ZKStatus status, const ZKResult& result, bo
         LOG(FATAL) << fmt::format("GetChildren failed on path {}: {}",
                                   dir_full_path_, status.ToString());
     }
-    for (std::string_view path : result.paths) {
+    std::vector<std::string_view> paths = result.paths;
+    if (sequential_znodes_) {
+        for (std::string_view path : paths) {
+            if (path.length() < kSequenceNumberLength) {
+                LOG(FATAL) << fmt::format("Path {} is not sequential znode");
+            }
+        }
+        std::sort(
+            paths.begin(), paths.end(),
+            [] (std::string_view lhs, std::string_view rhs) -> bool {
+                return lhs.substr(lhs.length() - kSequenceNumberLength)
+                        < rhs.substr(rhs.length() - kSequenceNumberLength);
+            }
+        );
+    }
+    for (std::string_view path : paths) {
         std::string node_path(path);
         if (!nodes_.contains(node_path)) {
             VLOG(1) << fmt::format("Seen new node {} in GetChildren", node_path);
