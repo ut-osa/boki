@@ -2,8 +2,8 @@
 /build/
 /bin/
 /deps/out*
-/.release_time
-/.debug_time
+/.all_time
+/worker/cpp/.release_time
 /worker/cpp/bin/
 /worker/cpp/build/
 /worker/golang/build/
@@ -26,7 +26,9 @@
 /.vscode/
 
 # Protobuf generated code
-/src/proto/*.pb.*
+/src/proto/*.pb.h
+/src/proto/*.pb.cc
+/src/proto/*.pb.cpp
 
 # jemalloc
 *.heap
