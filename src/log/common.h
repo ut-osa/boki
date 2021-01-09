@@ -47,5 +47,18 @@ struct LogRecord {
     std::string data;
 };
 
+struct LogMetaData {
+    uint32_t user_logspace;
+    uint32_t logspace_id;
+    uint64_t user_tag;
+    uint64_t seqnum;
+    uint64_t localid;
+};
+
+struct LogEntry {
+    LogMetaData meta_data;
+    std::string data;
+}
+
 }  // namespace log
 }  // namespace faas

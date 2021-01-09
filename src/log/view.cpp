@@ -4,8 +4,7 @@ namespace faas {
 namespace log {
 
 View::View(const ViewProto& view_proto)
-    : state_(kActive),
-      id_(gsl::narrow_cast<uint16_t>(view_proto.view_id())),
+    : id_(gsl::narrow_cast<uint16_t>(view_proto.view_id())),
       metalog_replicas_(view_proto.metalog_replicas()),
       userlog_replicas_(view_proto.userlog_replicas()),
       index_replicas_(view_proto.index_replicas()),

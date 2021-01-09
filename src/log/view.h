@@ -19,6 +19,10 @@ public:
     size_t userlog_replicas() const { return userlog_replicas_; }
     size_t index_replicas() const { return index_replicas_; }
 
+    size_t num_engine_nodes() const { return engine_node_ids_.size(); }
+    size_t num_sequencer_nodes() const { return sequencer_node_ids_.size(); }
+    size_t num_storage_nodes() const { return storage_node_ids_.size(); }
+
     typedef absl::FixedArray<uint16_t> NodeIdVec;
     const NodeIdVec& GetEngineNodes() const { return engine_node_ids_; }
     const NodeIdVec& GetSequencerNodes() const { return sequencer_node_ids_; }
