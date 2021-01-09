@@ -58,7 +58,7 @@ struct LogMetaData {
 struct LogEntry {
     LogMetaData meta_data;
     std::string data;
-}
+};
 
 }  // namespace log
 }  // namespace faas

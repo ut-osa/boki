@@ -87,13 +87,16 @@ enum class MessageType : uint16_t {
 
 enum class SharedLogOpType : uint16_t {
     INVALID     = 0x00,
-    APPEND      = 0x01,
-    READ_NEXT   = 0x02,
-    READ_PREV   = 0x03,
-    TRIM        = 0x04,
-    READ_AT     = 0x10,
-    REPLICATE   = 0x11,
-    INDEX_DATA  = 0x12,
+    APPEND      = 0x01,  // FuncWorker to Engine
+    READ_NEXT   = 0x02,  // FuncWorker to Engine, Engine to Index
+    READ_PREV   = 0x03,  // FuncWorker to Engine, Engine to Index
+    TRIM        = 0x04,  // FuncWorker to Engine, Engine to Sequencer
+    READ_AT     = 0x10,  // Index to Storage
+    REPLICATE   = 0x11,  // Engine to Storage
+    INDEX_DATA  = 0x12,  // Engine to Index
+    SHARD_PROG  = 0x13,  // Storage to Sequencer
+    METALOG     = 0x14,  // Sequencer to Engine, Storage, Index
+    META_PROG   = 0x15,  // Sequencer to Sequencer
     RESPONSE    = 0x20
 };
 
@@ -176,11 +179,16 @@ struct Message {
 static_assert(sizeof(Message) == __FAAS_MESSAGE_SIZE, "Unexpected Message size");
 
 enum class ConnType : uint16_t {
-    GATEWAY_TO_ENGINE     = 0,
-    ENGINE_TO_GATEWAY     = 1,
-    ENGINE_TO_SEQUENCER   = 2,
-    SEQUENCER_TO_ENGINE   = 3,
-    SLOG_ENGINE_TO_ENGINE = 4
+    GATEWAY_TO_ENGINE      = 0,
+    ENGINE_TO_GATEWAY      = 1,
+    SLOG_ENGINE_TO_ENGINE  = 2,   // Index
+    ENGINE_TO_SEQUENCER    = 3,   // Trim
+    SEQUENCER_TO_ENGINE    = 4,   // Meta log propagation
+    SEQUENCER_TO_SEQUENCER = 5,   // Meta log progress
+    ENGINE_TO_STORAGE      = 6,   // Replicate
+    STORAGE_TO_ENGINE      = 7,   // Read result
+    SEQUENCER_TO_STORAGE   = 8,   // Meta log
+    STORAGE_TO_SEQUENCER   = 9    // Meta log propagation
 };
 
 struct HandshakeMessage {
@@ -229,6 +237,35 @@ struct SequencerMessage {
 } __attribute__ ((packed));
 
 static_assert(sizeof(SequencerMessage) == 40, "Unexpected SequencerMessage size");
+
+struct SharedLogMessage {
+    uint16_t op_type;
+    uint16_t op_result;
+
+    uint16_t src_node_id;
+    uint16_t hop_times;
+    uint32_t payload_size;
+
+    uint32_t user_logspace;
+    union {
+        struct {
+            uint32_t metalog_position;
+            uint32_t logspace_id;
+        } __attribute__ ((packed));
+        uint64_t metalog_progress;
+    };
+    uint64_t user_tag;
+    uint64_t seqnum;
+    union {
+        uint64_t localid;
+        uint64_t trim_seqnum;
+    };
+    uint64_t client_data;
+
+    uint64_t padding; 
+} __attribute__ (( packed, aligned(__FAAS_CACHE_LINE_SIZE) ));
+
+static_assert(sizeof(SharedLogMessage) == 64, "Unexpected SharedLogMessage size");
 
 class MessageHelper {
 public:
@@ -606,6 +643,27 @@ public:
 
 private:
     DISALLOW_IMPLICIT_CONSTRUCTORS(SequencerMessageHelper);
+};
+
+class SharedLogMessageHelper {
+public:
+    static SharedLogOpType GetOpType(const SharedLogMessage& message) {
+        return static_cast<SharedLogOpType>(message.op_type);
+    }
+
+    static SharedLogResultType GetResultType(const SharedLogMessage& message) {
+        return static_cast<SharedLogResultType>(message.op_result);
+    }
+
+#define NEW_EMPTY_SHAREDLOG_MESSAGE(MSG_VAR) \
+    SharedLogMessage MSG_VAR; memset(&MSG_VAR, 0, sizeof(SharedLogMessage))
+
+
+
+#undef NEW_EMPTY_SHAREDLOG_MESSAGE
+
+private:
+    DISALLOW_IMPLICIT_CONSTRUCTORS(SharedLogMessageHelper);
 };
 
 }  // namespace protocol

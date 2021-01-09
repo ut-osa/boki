@@ -39,6 +39,13 @@ protected:
     typedef std::function<void(int /* client_sockfd */)> ConnectionCallback;
     void ListenForNewConnections(int server_sockfd, ConnectionCallback cb);
 
+    template<class T>
+    T* PickConnFromCurrentIOWorker(int conn_type);
+
+    template<class T>
+    T* PickOrCreateConnFromCurrentIOWorker(int conn_type,
+                                           std::function<T*(IOWorker*)> create_cb);
+
     // Supposed to be implemented by sub-class
     virtual void StartInternal() {}
     virtual void StopInternal() {}
@@ -71,6 +78,41 @@ private:
 
     DISALLOW_COPY_AND_ASSIGN(ServerBase);
 };
+
+template<class T>
+T* ServerBase::PickConnFromCurrentIOWorker(int conn_type) {
+    IOWorker* io_worker = IOWorker::current();
+    if (__FAAS_PREDICT_FALSE(io_worker == nullptr)) {
+        LOG(FATAL) << "Not in thread of some IOWorker";
+    }
+    ConnectionBase* conn = io_worker->PickConnection(conn_type);
+    if (conn == nullptr) {
+        return nullptr;
+    } else {
+        return conn->as_ptr<T>();
+    }
+}
+
+template<class T>
+T* ServerBase::PickOrCreateConnFromCurrentIOWorker(int conn_type,
+                                                   std::function<T*(IOWorker*)> create_cb) {
+    IOWorker* io_worker = IOWorker::current();
+    if (__FAAS_PREDICT_FALSE(io_worker == nullptr)) {
+        LOG(FATAL) << "Not in thread of some IOWorker";
+    }
+    ConnectionBase* conn = io_worker->PickConnection(conn_type);
+    if (conn == nullptr) {
+        T* created_conn = create_cb(io_worker);
+        if (created_conn != nullptr) {
+            DCHECK_EQ(conn_type, created_conn->type());
+            return created_conn;
+        } else {
+            return nullptr;
+        }
+    } else {
+        return conn->as_ptr<T>();
+    }
+}
 
 }  // namespace server
 }  // namespace faas

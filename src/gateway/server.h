@@ -128,6 +128,8 @@ private:
     void OnNewHttpConnection(int sockfd);
     void OnNewGrpcConnection(int sockfd);
 
+    server::EgressHub* CreateEngineEgressHub(uint16_t node_id, server::IOWorker* io_worker);
+
     DISALLOW_COPY_AND_ASSIGN(Server);
 };
 

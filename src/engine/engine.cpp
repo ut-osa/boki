@@ -591,14 +591,12 @@ void Engine::OnRecvMessage(MessageConnection* connection, const Message& message
 }
 
 void Engine::SendGatewayMessage(const GatewayMessage& message, std::span<const char> payload) {
-    server::IOWorker* io_worker = server::IOWorker::current();
-    DCHECK(io_worker != nullptr);
-    server::ConnectionBase* conn = io_worker->PickConnection(kGatewayEgressHubTypeId);
-    if (conn == nullptr) {
+    server::EgressHub* hub = PickConnFromCurrentIOWorker<server::EgressHub>(
+        kGatewayEgressHubTypeId);
+    if (hub == nullptr) {
         HLOG(ERROR) << "There is not GatewayEgressHub associated with current IOWorker";
         return;
     }
-    server::EgressHub* hub = conn->as_ptr<server::EgressHub>();
     std::span<const char> data(reinterpret_cast<const char*>(&message),
                                sizeof(GatewayMessage));
     hub->SendMessage(data, payload);

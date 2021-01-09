@@ -225,36 +225,12 @@ void Server::TryDispatchingPendingFuncCalls() {
 
 bool Server::SendMessageToEngine(uint16_t node_id, const GatewayMessage& message,
                                  std::span<const char> payload) {
-    server::IOWorker* io_worker = server::IOWorker::current();
-    server::ConnectionBase* conn = io_worker->PickConnection(
-        kEngineEgressHubTypeId + node_id);
-    server::EgressHub* hub = nullptr;
-    if (conn == nullptr) {
-        struct sockaddr_in addr;
-        if (!node_watcher()->GetNodeAddr(server::NodeWatcher::kEngineNode,
-                                         node_id, &addr)) {
-            return false;
-        }
-        auto egress_hub = std::make_unique<server::EgressHub>(
-            kEngineEgressHubTypeId + node_id,
-            &addr, absl::GetFlag(FLAGS_message_conn_per_worker));
-        egress_hub->set_log_header(fmt::format("EngineEgressHub[{}]: ", node_id));
-        egress_hub->SetHandshakeMessageCallback([] (std::string* handshake) {
-            *handshake = protocol::EncodeHandshakeMessage(
-                protocol::ConnType::GATEWAY_TO_ENGINE);
-        });
-        RegisterConnection(io_worker, egress_hub.get());
-        DCHECK_GE(egress_hub->id(), 0);
-        hub = egress_hub.get();
-        {
-            absl::MutexLock lk(&mu_);
-            DCHECK(!engine_egress_hubs_.contains(egress_hub->id()));
-            engine_egress_hubs_[egress_hub->id()] = std::move(egress_hub);
-        }
-    } else {
-        hub = conn->as_ptr<server::EgressHub>();
+    server::EgressHub* hub = PickOrCreateConnFromCurrentIOWorker<server::EgressHub>(
+        kEngineEgressHubTypeId + node_id,
+        absl::bind_front(&Server::CreateEngineEgressHub, this, node_id));
+    if (hub == nullptr) {
+        return false;
     }
-    DCHECK(hub != nullptr);
     std::span<const char> data(reinterpret_cast<const char*>(&message),
                                sizeof(GatewayMessage));
     hub->SendMessage(data, payload);
@@ -507,6 +483,31 @@ void Server::OnNewGrpcConnection(int sockfd) {
         DCHECK(!connections_.contains(connection->id()));
         connections_[connection->id()] = std::move(connection);
     }
+}
+
+server::EgressHub* Server::CreateEngineEgressHub(uint16_t node_id, 
+                                                 server::IOWorker* io_worker) {
+    struct sockaddr_in addr;
+    if (!node_watcher()->GetNodeAddr(server::NodeWatcher::kEngineNode, node_id, &addr)) {
+        return nullptr;
+    }
+    auto egress_hub = std::make_unique<server::EgressHub>(
+        kEngineEgressHubTypeId + node_id,
+        &addr, absl::GetFlag(FLAGS_message_conn_per_worker));
+    egress_hub->set_log_header(fmt::format("EngineEgressHub[{}]: ", node_id));
+    egress_hub->SetHandshakeMessageCallback([] (std::string* handshake) {
+        *handshake = protocol::EncodeHandshakeMessage(
+            protocol::ConnType::GATEWAY_TO_ENGINE);
+    });
+    RegisterConnection(io_worker, egress_hub.get());
+    DCHECK_GE(egress_hub->id(), 0);
+    server::EgressHub* hub = egress_hub.get();
+    {
+        absl::MutexLock lk(&mu_);
+        DCHECK(!engine_egress_hubs_.contains(egress_hub->id()));
+        engine_egress_hubs_[egress_hub->id()] = std::move(egress_hub);
+    }
+    return hub;
 }
 
 }  // namespace gateway
