@@ -12,7 +12,8 @@ template<class T>
 class LockablePtr {
 public:
     // LockablePtr takes ownership of target
-    explicit LockablePtr(std::unique_ptr<T> target) {
+    explicit LockablePtr(std::unique_ptr<T> target)
+        : inner_(nullptr) {
         if (target != nullptr) {
             inner_.reset(new Inner);
             inner_->target = std::move(target);
@@ -22,6 +23,11 @@ public:
     // LockablePtr is copyable, thus can be shared between threads
     LockablePtr(const LockablePtr& other) = default;
     LockablePtr(LockablePtr&& other) = default;
+
+    // Check if holds a target object
+    inline bool is_null() const noexcept { return inner_ == nullptr; }
+    inline bool not_null() const noexcept { return inner_ != nullptr; }
+    explicit operator bool() const noexcept { return not_null(); }
 
     class Guard {
     public:
@@ -34,19 +40,24 @@ public:
             }
         }
 
-        T& operator*() const noexcept { return *target_; }
-        T* operator->() const noexcept { return target_; }
+        T& operator*() const noexcept { return *DCHECK_NOTNULL(target_); }
+        T* operator->() const noexcept { return DCHECK_NOTNULL(target_); }
 
-        // Guard is movable
-        Guard(Guard&& other) noexcept {
-            mutex_ = other.mutex_;
-            target_ = other.target_;
+        // Guard is movable, but should avoid doing so explicitly
+        Guard(Guard&& other) noexcept
+            : mutex_(other.mutex_),
+              target_(other.target_) {
             other.mutex_ = nullptr;
+            other.target_ = nullptr;
         }
         Guard& operator=(Guard &&other) noexcept {
-            mutex_ = other.mutex_;
-            target_ = other.target_;
-            other.mutex_ = nullptr;
+            if (this != &other) {
+                mutex_ = other.mutex_;
+                target_ = other.target_;
+                other.mutex_ = nullptr;
+                other.target_ = nullptr;
+            }
+            return *this;
         }
 
     private:
@@ -71,19 +82,24 @@ public:
             }
         }
 
-        const T& operator*() const noexcept { return *target_; }
-        const T* operator->() const noexcept { return target_; }
+        const T& operator*() const noexcept { return *DCHECK_NOTNULL(target_); }
+        const T* operator->() const noexcept { return DCHECK_NOTNULL(target_); }
 
-        // ReaderGuard is movable
-        ReaderGuard(ReaderGuard&& other) noexcept {
-            mutex_ = other.mutex_;
-            target_ = other.target_;
+        // ReaderGuard is movable, but should avoid doing so explicitly
+        ReaderGuard(ReaderGuard&& other) noexcept
+            : mutex_(other.mutex_),
+              target_(other.target_) {
             other.mutex_ = nullptr;
+            other.target_ = nullptr;
         }
         ReaderGuard& operator=(ReaderGuard &&other) noexcept {
-            mutex_ = other.mutex_;
-            target_ = other.target_;
-            other.mutex_ = nullptr;
+            if (this != &other) {
+                mutex_ = other.mutex_;
+                target_ = other.target_;
+                other.mutex_ = nullptr;
+                other.target_ = nullptr;
+            }
+            return *this;
         }
 
     private:
@@ -123,5 +139,15 @@ private:
     };
     std::shared_ptr<Inner> inner_;
 };
+
+template<class T>
+bool operator==(const LockablePtr<T>& ptr, std::nullptr_t) noexcept {
+    return ptr.is_null();
+}
+
+template<class T>
+bool operator!=(const LockablePtr<T>& ptr, std::nullptr_t) noexcept {
+    return ptr.not_null();
+}
 
 }  // namespace faas
