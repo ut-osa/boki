@@ -3,14 +3,13 @@
 #include "ipc/base.h"
 #include "ipc/shm_region.h"
 #include "common/time.h"
-#include "common/zk_utils.h"
 #include "utils/fs.h"
 #include "utils/io.h"
 #include "utils/docker.h"
 #include "utils/socket.h"
 #include "worker/worker_lib.h"
-#include "engine/flags.h"
 #include "server/constants.h"
+#include "engine/flags.h"
 #include "engine/sequencer_connection.h"
 
 #define log_header_ "Engine: "
@@ -87,7 +86,6 @@ void Engine::SetupGatewayEgress() {
         auto egress_hub = std::make_unique<server::EgressHub>(
             kGatewayEgressHubTypeId,
             &addr, absl::GetFlag(FLAGS_message_conn_per_worker));
-        egress_hub->set_log_header("GatewayEgressHub: ");
         uint16_t node_id = node_id_;
         egress_hub->SetHandshakeMessageCallback([node_id] (std::string* handshake) {
             *handshake = protocol::EncodeHandshakeMessage(
@@ -691,7 +689,6 @@ void Engine::ProcessDiscardedFuncCallIfNecessary() {
 void Engine::CreateGatewayIngressConn(int sockfd) {
     auto connection = std::make_unique<server::IngressConnection>(
         kGatewayIngressTypeId, sockfd, sizeof(GatewayMessage));
-    connection->set_log_header("GatewayIngress: ");
     connection->SetMessageFullSizeCallback(
         &server::IngressConnection::GatewayMessageFullSizeCallback);
     connection->SetNewMessageCallback(
@@ -712,7 +709,6 @@ void Engine::OnRemoteMessageConn(const protocol::HandshakeMessage& handshake, in
     default:
         HLOG(ERROR) << "Invalid connection type: " << handshake.conn_type;
         close(sockfd);
-        return;
     }
 }
 

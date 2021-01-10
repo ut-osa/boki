@@ -11,9 +11,9 @@ ABSL_FLAG(std::string, func_config_file, "", "Path to function config file");
 
 namespace faas {
 
-static std::atomic<gateway::Server*> server_ptr{nullptr};
+static std::atomic<server::ServerBase*> server_ptr{nullptr};
 static void SignalHandlerToStopServer(int signal) {
-    gateway::Server* server = server_ptr.exchange(nullptr);
+    server::ServerBase* server = server_ptr.exchange(nullptr);
     if (server != nullptr) {
         server->ScheduleStop();
     }

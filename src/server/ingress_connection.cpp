@@ -13,7 +13,7 @@ IngressConnection::IngressConnection(int type, int sockfd, size_t msghdr_size)
       msghdr_size_(msghdr_size),
       buf_group_(kDefaultIngressBufGroup),
       buf_size_(kDefaultBufSize),
-      log_header_(fmt::format("IngressConn[{}-{}]: ", type, sockfd)) {}
+      log_header_(GetLogHeader(type, sockfd)) {}
 
 IngressConnection::~IngressConnection() {
     DCHECK(state_ == kCreated || state_ == kClosed);
@@ -86,6 +86,22 @@ bool IngressConnection::OnRecvData(int status, std::span<const char> data) {
     }
 }
 
+std::string IngressConnection::GetLogHeader(int type, int sockfd) {
+    int masked_type = type & kConnectionTypeMask;
+    switch (masked_type) {
+    case kGatewayIngressTypeId:
+        return "GatewayIngress: ";
+    case kEngineIngressTypeId:
+        return fmt::format("EngineIngress[{}]: ", type - masked_type);
+    case kSequencerIngressTypeId:
+        return fmt::format("SequencerIngress[{}]: ", type - masked_type);
+    case kStorageIngressTypeId:
+        return fmt::format("StorageIngress[{}]: ", type - masked_type);
+    default:
+        return fmt::format("IngressConn[{}-{}]: ", type, sockfd);
+    }
+}
+
 size_t IngressConnection::GatewayMessageFullSizeCallback(std::span<const char> header) {
     using protocol::GatewayMessage;
     DCHECK_EQ(header.size(), sizeof(GatewayMessage));
@@ -104,6 +120,28 @@ IngressConnection::NewMessageCallback IngressConnection::BuildNewGatewayMessageC
         std::span<const char> payload;
         if (data.size() > sizeof(GatewayMessage)) {
             payload = data.subspan(sizeof(GatewayMessage));
+        }
+        cb(*message, payload);
+    };
+}
+
+size_t IngressConnection::SharedLogMessageFullSizeCallback(std::span<const char> header) {
+    using protocol::SharedLogMessage;
+    DCHECK_EQ(header.size(), sizeof(SharedLogMessage));
+    const SharedLogMessage* message = reinterpret_cast<const SharedLogMessage*>(
+        header.data());
+    return sizeof(SharedLogMessage) + message->payload_size;
+}
+
+IngressConnection::NewMessageCallback IngressConnection::BuildNewSharedLogMessageCallback(
+        std::function<void(const protocol::SharedLogMessage&, std::span<const char>)> cb) {
+    using protocol::SharedLogMessage;
+    return [cb] (std::span<const char> data) {
+        DCHECK_GE(data.size(), sizeof(SharedLogMessage));
+        const SharedLogMessage* message = reinterpret_cast<const SharedLogMessage*>(data.data());
+        std::span<const char> payload;
+        if (data.size() > sizeof(SharedLogMessage)) {
+            payload = data.subspan(sizeof(SharedLogMessage));
         }
         cb(*message, payload);
     };

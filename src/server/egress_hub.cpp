@@ -11,7 +11,7 @@ EgressHub::EgressHub(int type, const struct sockaddr_in* addr, size_t num_conn)
       io_worker_(nullptr),
       state_(kCreated),
       sockfds_(num_conn, -1),
-      log_header_("EgressHub[{}]: ", type),
+      log_header_(GetLogHeader(type)),
       send_fn_scheduled_(false) {
     memcpy(&addr_, addr, sizeof(struct sockaddr_in));
 }
@@ -218,6 +218,22 @@ void EgressHub::SendPendingMessages() {
         ));
     } else {
         NOT_IMPLEMENTED();
+    }
+}
+
+std::string EgressHub::GetLogHeader(int type) {
+    int masked_type = type & kConnectionTypeMask;
+    switch (masked_type) {
+    case kGatewayEgressHubTypeId:
+        return "GatewayEgressHub: ";
+    case kEngineEgressHubTypeId:
+        return fmt::format("EngineEgressHub[{}]: ", type - masked_type);
+    case kSequencerEgressHubTypeId:
+        return fmt::format("SequencerEgressHub[{}]: ", type - masked_type);
+    case kStorageEgressHubTypeId:
+        return fmt::format("StorageEgressHub[{}]: ", type - masked_type);
+    default:
+        return fmt::format("EgressHub[{}]: ", type);
     }
 }
 

@@ -17,10 +17,6 @@ public:
     void Start(IOWorker* io_worker) override;
     void ScheduleClose() override;
 
-    void set_log_header(std::string_view log_header) {
-        log_header_ = std::string(log_header);
-    }
-
     typedef std::function<void(std::string* /* handshake */)>
             HandshakeMessageCallback;
     void SetHandshakeMessageCallback(HandshakeMessageCallback cb);
@@ -49,6 +45,8 @@ private:
     void RemoveSocket(int sockfd);
     void ScheduleSendFunction();
     void SendPendingMessages();
+
+    static std::string GetLogHeader(int type);
 
     DISALLOW_COPY_AND_ASSIGN(EgressHub);
 };

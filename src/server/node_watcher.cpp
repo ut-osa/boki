@@ -106,5 +106,37 @@ void NodeWatcher::OnZNodeDeleted(std::string_view path) {
     }
 }
 
+namespace {
+using protocol::ConnType;
+typedef std::pair<NodeWatcher::NodeType, NodeWatcher::NodeType> NodeTypePair;
+#define NODE_PAIR(A, B) { NodeWatcher::k##A##Node, NodeWatcher::k##B##Node }
+
+const absl::flat_hash_map<ConnType, NodeTypePair> kNodeTypeTable {
+    { ConnType::GATEWAY_TO_ENGINE,      NODE_PAIR(Gateway, Engine) },
+    { ConnType::ENGINE_TO_GATEWAY,      NODE_PAIR(Engine, Gateway) },
+    { ConnType::SLOG_ENGINE_TO_ENGINE,  NODE_PAIR(Engine, Engine) },
+    { ConnType::ENGINE_TO_SEQUENCER,    NODE_PAIR(Engine, Sequencer) },
+    { ConnType::SEQUENCER_TO_ENGINE,    NODE_PAIR(Sequencer, Engine) },
+    { ConnType::SEQUENCER_TO_SEQUENCER, NODE_PAIR(Sequencer, Sequencer) },
+    { ConnType::ENGINE_TO_STORAGE,      NODE_PAIR(Engine, Storage) },
+    { ConnType::STORAGE_TO_ENGINE,      NODE_PAIR(Storage, Engine) },
+    { ConnType::SEQUENCER_TO_STORAGE,   NODE_PAIR(Sequencer, Storage) },
+    { ConnType::STORAGE_TO_SEQUENCER,   NODE_PAIR(Storage, Sequencer) },
+};
+
+#undef NODE_PAIR
+
+}  // namespace
+
+NodeWatcher::NodeType NodeWatcher::GetSrcNodeType(protocol::ConnType conn_type) {
+    CHECK(kNodeTypeTable.contains(conn_type));
+    return kNodeTypeTable.at(conn_type).first;
+}
+
+NodeWatcher::NodeType NodeWatcher::GetDstNodeType(protocol::ConnType conn_type) {
+    CHECK(kNodeTypeTable.contains(conn_type));
+    return kNodeTypeTable.at(conn_type).second;
+}
+
 }  // namespace server
 }  // namespace faas

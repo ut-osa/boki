@@ -134,7 +134,6 @@ private:
                                Timer::Callback cb);
 
     void CreateGatewayIngressConn(int sockfd);
-    void OnNewRemoteMessageConn(int sockfd);
 
     void OnNewLocalIpcConn(int sockfd);
     void OnLocalIpcConnClosed(MessageConnection* conn);

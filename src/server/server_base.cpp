@@ -4,6 +4,7 @@
 #include "common/zk_utils.h"
 #include "utils/io.h"
 #include "utils/socket.h"
+#include "server/constants.h"
 
 #include <sys/types.h>
 #include <sys/eventfd.h>
@@ -267,6 +268,38 @@ void ServerBase::DoAcceptConnection(int server_sockfd) {
             connection_cbs_[server_sockfd](client_sockfd);
         }
     }
+}
+
+namespace {
+using protocol::ConnType;
+typedef std::pair<int, int> ConnTypeIdPair;
+#define CONN_ID_PAIR(A, B) { k##A##IngressTypeId, k##B##EgressHubTypeId }
+
+const absl::flat_hash_map<ConnType, ConnTypeIdPair> kConnTypeIdTable {
+    { ConnType::GATEWAY_TO_ENGINE,      CONN_ID_PAIR(Gateway, Engine) },
+    { ConnType::ENGINE_TO_GATEWAY,      CONN_ID_PAIR(Engine, Gateway) },
+    { ConnType::SLOG_ENGINE_TO_ENGINE,  CONN_ID_PAIR(Engine, Engine) },
+    { ConnType::ENGINE_TO_SEQUENCER,    CONN_ID_PAIR(Engine, Sequencer) },
+    { ConnType::SEQUENCER_TO_ENGINE,    CONN_ID_PAIR(Sequencer, Engine) },
+    { ConnType::SEQUENCER_TO_SEQUENCER, CONN_ID_PAIR(Sequencer, Sequencer) },
+    { ConnType::ENGINE_TO_STORAGE,      CONN_ID_PAIR(Engine, Storage) },
+    { ConnType::STORAGE_TO_ENGINE,      CONN_ID_PAIR(Storage, Engine) },
+    { ConnType::SEQUENCER_TO_STORAGE,   CONN_ID_PAIR(Sequencer, Storage) },
+    { ConnType::STORAGE_TO_SEQUENCER,   CONN_ID_PAIR(Storage, Sequencer) },
+};
+
+#undef CONN_ID_PAIR
+
+}  // namespace
+
+int ServerBase::GetIngressConnTypeId(protocol::ConnType conn_type, uint16_t node_id) {
+    CHECK(kConnTypeIdTable.contains(conn_type));
+    return kConnTypeIdTable.at(conn_type).first + node_id;
+}
+
+int ServerBase::GetEgressHubTypeId(protocol::ConnType conn_type, uint16_t node_id) {
+    CHECK(kConnTypeIdTable.contains(conn_type));
+    return kConnTypeIdTable.at(conn_type).second + node_id;
 }
 
 }  // namespace server

@@ -26,11 +26,11 @@ ABSL_FLAG(int, shared_log_tcp_port, 10010,
 
 namespace faas {
 
-static std::atomic<engine::Engine*> engine_ptr{nullptr};
-static void SignalHandlerToStopEngine(int signal) {
-    engine::Engine* engine = engine_ptr.exchange(nullptr);
-    if (engine != nullptr) {
-        engine->ScheduleStop();
+static std::atomic<server::ServerBase*> server_ptr{nullptr};
+static void SignalHandlerToStopServer(int signal) {
+    server::ServerBase* server = server_ptr.exchange(nullptr);
+    if (server != nullptr) {
+        server->ScheduleStop();
     }
 }
 
@@ -45,7 +45,7 @@ static uint16_t GenerateNodeId() {
 }
 
 void EngineMain(int argc, char* argv[]) {
-    signal(SIGINT, SignalHandlerToStopEngine);
+    signal(SIGINT, SignalHandlerToStopServer);
     base::InitMain(argc, argv);
     flags::PopulateHostnameIfEmpty();
     ipc::SetRootPathForIpc(absl::GetFlag(FLAGS_root_path_for_ipc), /* create= */ true);
@@ -73,7 +73,7 @@ void EngineMain(int argc, char* argv[]) {
     }
 
     engine->Start();
-    engine_ptr.store(engine.get());
+    server_ptr.store(engine.get());
     engine->WaitForFinish();
 }
 

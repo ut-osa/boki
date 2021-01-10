@@ -54,8 +54,6 @@ private:
     NodeManager node_manager_;
     absl::flat_hash_map</* id */ int, std::unique_ptr<server::IngressConnection>>
         engine_ingress_conns_;
-    absl::flat_hash_map</* id */ int, std::unique_ptr<server::EgressHub>>
-        engine_egress_hubs_;
 
     std::atomic<uint32_t> next_call_id_;
 
@@ -87,6 +85,8 @@ private:
     absl::flat_hash_map</* connection_id */ int,
                         std::shared_ptr<server::ConnectionBase>>
         connections_ ABSL_GUARDED_BY(mu_);
+    absl::flat_hash_map</* id */ int, std::unique_ptr<server::EgressHub>>
+        engine_egress_hubs_ ABSL_GUARDED_BY(mu_);
 
     int64_t last_request_timestamp_ ABSL_GUARDED_BY(mu_);
     stat::Counter incoming_requests_stat_ ABSL_GUARDED_BY(mu_);

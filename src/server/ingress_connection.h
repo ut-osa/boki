@@ -13,14 +13,10 @@ public:
     IngressConnection(int type, int sockfd, size_t msghdr_size);
     virtual ~IngressConnection();
 
-    static constexpr size_t   kDefaultBufSize  = 65536;
+    static constexpr size_t kDefaultBufSize  = 65536;
 
     void Start(IOWorker* io_worker) override;
     void ScheduleClose() override;
-
-    void set_log_header(std::string_view log_header) {
-        log_header_ = std::string(log_header);
-    }
 
     void set_buffer_group(uint16_t buf_group, size_t buf_size) {
         buf_group_ = buf_group;
@@ -38,6 +34,11 @@ public:
     static size_t GatewayMessageFullSizeCallback(std::span<const char> header);
     static NewMessageCallback BuildNewGatewayMessageCallback(
         std::function<void(const protocol::GatewayMessage&,
+                           std::span<const char> /* payload */)> cb);
+
+    static size_t SharedLogMessageFullSizeCallback(std::span<const char> header);
+    static NewMessageCallback BuildNewSharedLogMessageCallback(
+        std::function<void(const protocol::SharedLogMessage&,
                            std::span<const char> /* payload */)> cb);
 
 private:
@@ -59,6 +60,8 @@ private:
 
     void ProcessMessages();
     bool OnRecvData(int status, std::span<const char> data);
+
+    static std::string GetLogHeader(int type, int sockfd);
 
     DISALLOW_COPY_AND_ASSIGN(IngressConnection);
 };

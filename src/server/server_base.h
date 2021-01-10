@@ -52,6 +52,9 @@ protected:
     virtual void OnConnectionClose(ConnectionBase* connection) {}
     virtual void OnRemoteMessageConn(const protocol::HandshakeMessage& handshake, int sockfd);
 
+    static int GetIngressConnTypeId(protocol::ConnType conn_type, uint16_t node_id);
+    static int GetEgressHubTypeId(protocol::ConnType conn_type, uint16_t node_id);
+
 private:
     std::string node_name_;
 

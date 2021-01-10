@@ -1,16 +1,11 @@
 #include "gateway/server.h"
 
-#include "ipc/base.h"
-#include "ipc/shm_region.h"
 #include "common/time.h"
-#include "common/zk_utils.h"
 #include "utils/fs.h"
 #include "utils/io.h"
 #include "utils/socket.h"
-#include "utils/docker.h"
-#include "worker/worker_lib.h"
-#include "gateway/flags.h"
 #include "server/constants.h"
+#include "gateway/flags.h"
 
 #define log_header_ "Server: "
 
@@ -87,7 +82,6 @@ void Server::OnConnectionClose(server::ConnectionBase* connection) {
         DCHECK(connections_.contains(connection->id()));
         connections_.erase(connection->id());
     } else if (conn_type == kEngineIngressTypeId) {
-        absl::MutexLock lk(&mu_);
         DCHECK(engine_ingress_conns_.contains(connection->id()));
         engine_ingress_conns_.erase(connection->id());
     } else if (conn_type == kEngineEgressHubTypeId) {
@@ -448,7 +442,6 @@ void Server::OnRemoteMessageConn(const protocol::HandshakeMessage& handshake, in
     uint16_t node_id = handshake.src_node_id;
     auto connection = std::make_unique<server::IngressConnection>(
         kEngineIngressTypeId + node_id, sockfd, sizeof(GatewayMessage));
-    connection->set_log_header(fmt::format("EngineIngress[{}]: ", node_id));
     connection->SetMessageFullSizeCallback(
         &server::IngressConnection::GatewayMessageFullSizeCallback);
     connection->SetNewMessageCallback(
@@ -494,7 +487,6 @@ server::EgressHub* Server::CreateEngineEgressHub(uint16_t node_id,
     auto egress_hub = std::make_unique<server::EgressHub>(
         kEngineEgressHubTypeId + node_id,
         &addr, absl::GetFlag(FLAGS_message_conn_per_worker));
-    egress_hub->set_log_header(fmt::format("EngineEgressHub[{}]: ", node_id));
     egress_hub->SetHandshakeMessageCallback([] (std::string* handshake) {
         *handshake = protocol::EncodeHandshakeMessage(
             protocol::ConnType::GATEWAY_TO_ENGINE);
