@@ -5,6 +5,7 @@
 #endif
 
 #include "base/common.h"
+#include "base/thread.h"
 
 namespace faas {
 
@@ -32,12 +33,16 @@ public:
     class Guard {
     public:
         ~Guard() {
-            if (mutex_ != nullptr) {
-#if DCHECK_IS_ON()
-                mutex_->AssertHeld();
-#endif
-                mutex_->Unlock();
+            if (mutex_ == nullptr) {
+                return;
             }
+#if DCHECK_IS_ON()
+            mutex_->AssertHeld();
+            if (base::Thread::current() != thread_) {
+                LOG(FATAL) << "Guard moved between threads";
+            }
+#endif
+            mutex_->Unlock();
         }
 
         T& operator*() const noexcept { return *DCHECK_NOTNULL(target_); }
@@ -46,27 +51,33 @@ public:
         // Guard is movable, but should avoid doing so explicitly
         Guard(Guard&& other) noexcept
             : mutex_(other.mutex_),
-              target_(other.target_) {
+              target_(other.target_),
+              thread_(other.thread_) {
             other.mutex_ = nullptr;
             other.target_ = nullptr;
+            other.thread_ = nullptr;
         }
         Guard& operator=(Guard &&other) noexcept {
             if (this != &other) {
                 mutex_ = other.mutex_;
                 target_ = other.target_;
+                thread_ = other.thread_;
                 other.mutex_ = nullptr;
                 other.target_ = nullptr;
+                other.thread_ = nullptr;
             }
             return *this;
         }
 
     private:
         friend class LockablePtr;
-        absl::Mutex* mutex_;
-        T* target_;
+        absl::Mutex*  mutex_;
+        T*            target_;
+        base::Thread* thread_;
 
-        Guard(absl::Mutex* mutex, T* target)
-            : mutex_(mutex), target_(target) {}
+        Guard(absl::Mutex* mutex, T* target,
+              base::Thread* thread = nullptr)
+            : mutex_(mutex), target_(target), thread_(thread) {}
 
         DISALLOW_COPY_AND_ASSIGN(Guard);
     };
@@ -74,12 +85,16 @@ public:
     class ReaderGuard {
     public:
         ~ReaderGuard() {
-            if (mutex_ != nullptr) {
-#if DCHECK_IS_ON()
-                mutex_->AssertReaderHeld();
-#endif
-                mutex_->ReaderUnlock();
+            if (mutex_ == nullptr) {
+                return;
             }
+#if DCHECK_IS_ON()
+            mutex_->AssertReaderHeld();
+            if (base::Thread::current() != thread_) {
+                LOG(FATAL) << "ReaderGuard moved between threads";
+            }
+#endif
+            mutex_->ReaderUnlock();
         }
 
         const T& operator*() const noexcept { return *DCHECK_NOTNULL(target_); }
@@ -88,27 +103,33 @@ public:
         // ReaderGuard is movable, but should avoid doing so explicitly
         ReaderGuard(ReaderGuard&& other) noexcept
             : mutex_(other.mutex_),
-              target_(other.target_) {
+              target_(other.target_),
+              thread_(other.thread_) {
             other.mutex_ = nullptr;
             other.target_ = nullptr;
+            other.thread_ = nullptr;
         }
         ReaderGuard& operator=(ReaderGuard &&other) noexcept {
             if (this != &other) {
                 mutex_ = other.mutex_;
                 target_ = other.target_;
+                thread_ = other.thread_;
                 other.mutex_ = nullptr;
                 other.target_ = nullptr;
+                other.thread_ = nullptr;
             }
             return *this;
         }
 
     private:
         friend class LockablePtr;
-        absl::Mutex* mutex_;
-        const T* target_;
+        absl::Mutex*  mutex_;
+        const T*      target_;
+        base::Thread* thread_;
 
-        ReaderGuard(absl::Mutex* mutex, const T* target)
-            : mutex_(mutex), target_(target) {}
+        ReaderGuard(absl::Mutex* mutex, const T* target,
+                    base::Thread* thread = nullptr)
+            : mutex_(mutex), target_(target), thread_(thread) {}
 
         DISALLOW_COPY_AND_ASSIGN(ReaderGuard);
     };
@@ -122,14 +143,22 @@ public:
         inner_->mu.AssertNotHeld();
 #endif
         inner_->mu.Lock();
+#if DCHECK_IS_ON()
+        return Guard(&inner_->mu, inner_->target.get(), base::Thread::current());
+#else
         return Guard(&inner_->mu, inner_->target.get());
+#endif
     }
     ReaderGuard ReaderLock() ABSL_NO_THREAD_SAFETY_ANALYSIS {
         if (__FAAS_PREDICT_FALSE(inner_ == nullptr)) {
             LOG(FATAL) << "Cannot ReaderLock() on null pointer";
         }
         inner_->mu.ReaderLock();
+#if DCHECK_IS_ON()
+        return ReaderGuard(&inner_->mu, inner_->target.get(), base::Thread::current());
+#else
         return ReaderGuard(&inner_->mu, inner_->target.get());
+#endif
     }
 
 private:
