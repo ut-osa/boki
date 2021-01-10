@@ -242,7 +242,7 @@ struct SharedLogMessage {
     uint16_t op_type;
     uint16_t op_result;
 
-    uint16_t src_node_id;
+    uint16_t origin_node_id;
     uint16_t hop_times;
     uint32_t payload_size;
 

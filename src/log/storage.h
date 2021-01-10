@@ -3,9 +3,12 @@
 #include "log/common.h"
 #include "log/view.h"
 #include "log/view_watcher.h"
+#include "log/log_space.h"
+#include "log/log_space_utils.h"
 #include "server/server_base.h"
 #include "server/ingress_connection.h"
 #include "server/egress_hub.h"
+#include "utils/object_pool.h"
 
 #include <rocksdb/db.h>
 
@@ -20,7 +23,7 @@ public:
     void set_db_path(std::string_view path) { db_path_ = std::string(path); }
 
 private:
-    uint16_t node_id_;
+    const uint16_t node_id_;
 
     server::NodeWatcher node_watcher_;
     ViewWatcher view_watcher_;
@@ -31,10 +34,12 @@ private:
     absl::flat_hash_map</* id */ int, std::unique_ptr<server::IngressConnection>>
         ingress_conns_;
 
-    absl::Mutex mu_;
-
+    absl::Mutex conn_mu_;
     absl::flat_hash_map</* id */ int, std::unique_ptr<server::EgressHub>>
-        egress_hubs_ ABSL_GUARDED_BY(mu_);
+        egress_hubs_ ABSL_GUARDED_BY(conn_mu_);
+
+    absl::Mutex core_mu_;
+    LogSpaceCollection<LogStorage> log_space_collection_ ABSL_GUARDED_BY(core_mu_);
 
     void SetupRocksDB();
     void SetupZKWatchers();
@@ -55,6 +60,13 @@ private:
                              const protocol::SharedLogMessage& message,
                              std::span<const char> payload);
 
+    void OnRecvSharedLogMessage(int conn_type, uint16_t src_node_id,
+                                const protocol::SharedLogMessage& message,
+                                std::span<const char> payload);
+
+    bool SendSharedLogMessage(protocol::ConnType conn_type, uint16_t dst_node_id,
+                              const protocol::SharedLogMessage& message,
+                              std::span<const char> payload);
     bool SendSequencerMessage(uint16_t dst_node_id,
                               const protocol::SharedLogMessage& message,
                               std::span<const char> payload);
@@ -62,12 +74,6 @@ private:
                            const protocol::SharedLogMessage& message,
                            std::span<const char> payload);
 
-    bool SendSharedLogMessage(protocol::ConnType conn_type, uint16_t dst_node_id,
-                              const protocol::SharedLogMessage& message,
-                              std::span<const char> payload);
-    void OnRecvSharedLogMessage(int conn_type, uint16_t src_node_id,
-                                const protocol::SharedLogMessage& message,
-                                std::span<const char> payload);
     server::EgressHub* CreateEgressHub(protocol::ConnType conn_type,
                                        uint16_t dst_node_id,
                                        server::IOWorker* io_worker);

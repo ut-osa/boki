@@ -161,11 +161,14 @@ void Server::DiscardFuncCall(FuncCallContext* func_call_context) {
 }
 
 void Server::OnEngineNodeOnline(uint16_t node_id) {
+    DCHECK(zk_session()->WithinMyEventLoopThread());
     HLOG(INFO) << fmt::format("Engine node {} is online", node_id);
-    TryDispatchingPendingFuncCalls();
+    SomeIOWorker()->ScheduleFunction(
+        nullptr, absl::bind_front(&Server::TryDispatchingPendingFuncCalls, this));
 }
 
 void Server::OnEngineNodeOffline(uint16_t node_id) {
+    DCHECK(zk_session()->WithinMyEventLoopThread());
     HLOG(INFO) << fmt::format("Engine node {} is offline", node_id);
 }
 

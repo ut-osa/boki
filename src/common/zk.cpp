@@ -320,10 +320,6 @@ void ZKSession::ReclaimResource() {
     completed_watches_.clear();
 }
 
-bool ZKSession::WithinMyEventLoopThread() {
-    return base::Thread::current() == &event_loop_thread_;
-}
-
 void ZKSession::EventLoopThreadMain() {
     absl::InlinedVector<struct pollfd, 4> pollfds;
     bool stopped = false;

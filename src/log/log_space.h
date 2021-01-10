@@ -3,6 +3,7 @@
 #include "log/common.h"
 #include "log/view.h"
 #include "utils/object_pool.h"
+#include "utils/bits.h"
 
 namespace faas {
 namespace log {
@@ -11,12 +12,10 @@ class LogSpaceBase {
 public:
     virtual ~LogSpaceBase();
 
-    static uint32_t build_identifier(uint16_t view_id, uint16_t sequencer_id) {
-        return (view_id << 16) + sequencer_id;
-    }
-
+    uint16_t view_id() const { return view_->id(); }
+    uint16_t sequencer_id() const { return sequencer_id_; }
     uint32_t identifier() const {
-        return build_identifier(view_->id(), sequencer_id_);
+        return bits::JoinTwo16(view_->id(), sequencer_id_);
     }
 
     uint32_t metalog_position() const { return metalog_position_; }
@@ -127,6 +126,15 @@ public:
     LogStorage(uint16_t storage_id, const View* view, uint16_t sequencer_id);
 
     void Store(const LogMetaData& log_metadata, std::span<const char> log_data);
+    void ReadAt(uint64_t seqnum, const protocol::SharedLogMessage& original_request);
+
+    struct ReadResult {
+        enum Status { kOK, kLookDB, kFailed };
+        Status status;
+        std::shared_ptr<const LogEntry> log_entry;
+        protocol::SharedLogMessage original_request;
+    };
+    void PollReadResults(std::vector<ReadResult>* results);
 
 private:
     const View::Storage* storage_node_;

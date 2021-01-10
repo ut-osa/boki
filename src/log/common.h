@@ -47,6 +47,11 @@ struct LogRecord {
     std::string data;
 };
 
+struct SharedLogRequest {
+    protocol::SharedLogMessage message;
+    std::string payload;
+};
+
 struct LogMetaData {
     uint32_t user_logspace;
     uint32_t logspace_id;

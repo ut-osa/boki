@@ -94,6 +94,10 @@ public:
     // If succeeded, `result.paths` is set to paths of children
     void GetChildren(std::string_view path, WatcherFn watcher_fn, Callback cb);
 
+    bool WithinMyEventLoopThread() {
+        return base::Thread::current() == &event_loop_thread_;
+    }
+
 private:
     enum State { kCreated, kRunning, kStopped };
     std::atomic<State> state_;
@@ -145,7 +149,6 @@ private:
     void ReclaimResource();
 
     void EventLoopThreadMain();
-    bool WithinMyEventLoopThread();
 
     static ZKResult EmptyResult();
     static ZKResult StringResult(const char* string);

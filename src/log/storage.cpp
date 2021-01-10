@@ -11,17 +11,17 @@ namespace log {
 using protocol::SharedLogMessage;
 
 Storage::Storage(uint16_t node_id)
-    : ServerBase(fmt::format("storage_{}", node_id)) {}
+    : ServerBase(fmt::format("storage_{}", node_id)),
+      node_id_(node_id) {}
 
 Storage::~Storage() {}
 
 void Storage::StartInternal() {
     SetupRocksDB();
+    SetupZKWatchers();
 }
 
-void Storage::StopInternal() {
-
-}
+void Storage::StopInternal() {}
 
 void Storage::SetupRocksDB() {
     rocksdb::Options options;
@@ -46,11 +46,11 @@ void Storage::SetupZKWatchers() {
 }
 
 void Storage::OnViewCreated(const View* view) {
-
+    DCHECK(zk_session()->WithinMyEventLoopThread());
 }
 
 void Storage::OnViewFinalized(const FinalizedView* finalized_view) {
-
+    DCHECK(zk_session()->WithinMyEventLoopThread());
 }
 
 void Storage::OnRecvSequencerMessage(uint16_t src_node_id, const SharedLogMessage& message,
@@ -151,7 +151,7 @@ void Storage::OnConnectionClose(server::ConnectionBase* connection) {
         ABSL_FALLTHROUGH_INTENDED;
     case kEngineEgressHubTypeId:
         {
-            absl::MutexLock lk(&mu_);
+            absl::MutexLock lk(&conn_mu_);
             DCHECK(!egress_hubs_.contains(connection->id()));
             egress_hubs_.erase(connection->id());
         }
@@ -181,7 +181,7 @@ server::EgressHub* Storage::CreateEgressHub(protocol::ConnType conn_type,
     DCHECK_GE(egress_hub->id(), 0);
     server::EgressHub* hub = egress_hub.get();
     {
-        absl::MutexLock lk(&mu_);
+        absl::MutexLock lk(&conn_mu_);
         DCHECK(!egress_hubs_.contains(egress_hub->id()));
         egress_hubs_[egress_hub->id()] = std::move(egress_hub);
     }
