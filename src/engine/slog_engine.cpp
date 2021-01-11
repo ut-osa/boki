@@ -31,8 +31,7 @@ SLogEngine::SLogEngine(Engine* engine)
       sequencer_config_(&engine->sequencer_config_),
       core_(engine->node_id()),
       next_op_id_(1),
-      completed_actions_(nullptr),
-      statecheck_timer_(nullptr) {
+      completed_actions_(nullptr) {
     core_.SetLogPersistedCallback(
         absl::bind_front(&SLogEngine::LogPersisted, this));
     core_.SetLogDiscardedCallback(
@@ -132,23 +131,13 @@ inline void FillReadLogResponse(uint64_t seqnum, const LogRecord& record,
 }
 
 void SLogEngine::SetupTimers() {
-    size_t n_workers = absl::GetFlag(FLAGS_num_io_workers);
-    absl::Duration duration = EngineCore::local_cut_interval();
-    absl::Time initial = absl::Now() + absl::Milliseconds(200);
-    engine_->ForEachIOWorker([&, this] (server::IOWorker* io_worker) {
-        engine_->CreatePeriodicTimer(
-            kSLogLocalCutTimerTypeId, io_worker,
-            initial, duration * n_workers,
-            absl::bind_front(&SLogEngine::LocalCutTimerTriggered, this));
-        initial += duration;
-    });
-    if (absl::GetFlag(FLAGS_slog_enable_statecheck)) {
-        statecheck_timer_ = engine_->CreatePeriodicTimer(
-            kSLogStateCheckTimerTypeId, engine_->SomeIOWorker(),
-            absl::Now() + absl::Milliseconds(200),
-            absl::Seconds(absl::GetFlag(FLAGS_slog_statecheck_interval_sec)),
-            absl::bind_front(&SLogEngine::StateCheckTimerTriggered, this));
-    }
+    engine_->CreatePeriodicTimer(
+        kSLogLocalCutTimerTypeId, EngineCore::local_cut_interval(),
+        absl::bind_front(&SLogEngine::LocalCutTimerTriggered, this));
+    engine_->CreatePeriodicTimer(
+        kSLogStateCheckTimerTypeId,
+        absl::Seconds(absl::GetFlag(FLAGS_slog_statecheck_interval_sec)),
+        absl::bind_front(&SLogEngine::StateCheckTimerTriggered, this));
 }
 
 void SLogEngine::LocalCutTimerTriggered() {

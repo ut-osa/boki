@@ -192,23 +192,6 @@ void Engine::StopInternal() {
     }
 }
 
-Timer* Engine::CreateTimer(int timer_type, server::IOWorker* io_worker, Timer::Callback cb) {
-    Timer* timer = new Timer(timer_type, cb);
-    RegisterConnection(io_worker, timer);
-    timers_.insert(std::unique_ptr<Timer>(timer));
-    return timer;
-}
-
-Timer* Engine::CreatePeriodicTimer(int timer_type, server::IOWorker* io_worker,
-                                   absl::Time initial, absl::Duration duration,
-                                   Timer::Callback cb) {
-    Timer* timer = new Timer(timer_type, cb);
-    timer->SetPeriodic(initial, duration);
-    RegisterConnection(io_worker, timer);
-    timers_.insert(std::unique_ptr<Timer>(timer));
-    return timer;
-}
-
 void Engine::OnConnectionClose(server::ConnectionBase* connection) {
     DCHECK(WithinMyEventLoopThread());
     switch (connection->type() & kConnectionTypeMask) {
@@ -239,13 +222,6 @@ void Engine::OnConnectionClose(server::ConnectionBase* connection) {
     case kSLogMessageHubTypeId:
         if (state_.load() != kStopping) {
             HLOG(FATAL) << "SLogMessageHub should not be closed";
-        }
-        break;
-    case kTimerTypeId:
-        if (timers_.contains(connection->as_ptr<Timer>())) {
-            timers_.erase(connection->as_ptr<Timer>());
-        } else {
-            HLOG(FATAL) << "Cannot find timer in timers_";
         }
         break;
     default:
@@ -589,7 +565,7 @@ void Engine::OnRecvMessage(MessageConnection* connection, const Message& message
 }
 
 void Engine::SendGatewayMessage(const GatewayMessage& message, std::span<const char> payload) {
-    server::EgressHub* hub = PickConnFromCurrentIOWorker<server::EgressHub>(
+    server::EgressHub* hub = CurrentIOWorkerChecked()->PickConnectionAs<server::EgressHub>(
         kGatewayEgressHubTypeId);
     if (hub == nullptr) {
         HLOG(ERROR) << "There is not GatewayEgressHub associated with current IOWorker";

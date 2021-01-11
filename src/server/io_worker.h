@@ -69,6 +69,15 @@ public:
     // Pick a connection of given type managed by this IOWorker
     ConnectionBase* PickConnection(int type);
 
+    template<class T>
+    T* PickConnectionAs(int type) {
+        ConnectionBase* conn = PickConnection(type);
+        return conn != nullptr ? conn->as_ptr<T>() : nullptr;
+    }
+
+    template<class T>
+    T* PickOrCreateConnection(int type, std::function<T*(IOWorker*)> create_cb);
+
     // Schedule a function to run on this IO worker's event loop
     // thread. It can be called safely from other threads.
     // When the function is ready to run, IO worker will check if its
@@ -117,6 +126,21 @@ private:
 
     DISALLOW_COPY_AND_ASSIGN(IOWorker);
 };
+
+template<class T>
+T* IOWorker::PickOrCreateConnection(int type, std::function<T*(IOWorker*)> create_cb) {
+    T* conn = PickConnectionAs<T>(type);
+    if (conn != nullptr) {
+        return conn;
+    }
+    T* created_conn = create_cb(this);
+    if (created_conn != nullptr) {
+        DCHECK_EQ(type, created_conn->type());
+        return created_conn;
+    } else {
+        return nullptr;
+    }
+}
 
 }  // namespace server
 }  // namespace faas

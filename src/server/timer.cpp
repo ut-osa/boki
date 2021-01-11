@@ -1,16 +1,18 @@
-#include "engine/timer.h"
+#include "server/timer.h"
 
 #include "utils/io.h"
 #include "utils/timerfd.h"
 #include "server/constants.h"
 
 namespace faas {
-namespace engine {
+namespace server {
 
 Timer::Timer(int timer_type, Callback cb)
-    : server::ConnectionBase(timer_type),
+    : ConnectionBase(timer_type),
       periodic_(false),
-      cb_(cb), io_worker_(nullptr), state_(kCreated),
+      cb_(cb),
+      io_worker_(nullptr),
+      state_(kCreated),
       timerfd_(-1) {}
 
 Timer::~Timer() {
@@ -18,11 +20,11 @@ Timer::~Timer() {
     DCHECK(timerfd_ == -1);
 }
 
-void Timer::SetPeriodic(absl::Time initial, absl::Duration duration) {
-    DCHECK(!periodic_);
+void Timer::SetPeriodic(absl::Time initial, absl::Duration interval) {
+    DCHECK(!periodic_ && state_ == kCreated);
     periodic_ = true;
     initial_ = initial;
-    duration_ = duration;
+    interval_ = interval;
 }
 
 void Timer::Start(server::IOWorker* io_worker) {
@@ -36,9 +38,10 @@ void Timer::Start(server::IOWorker* io_worker) {
     if (periodic_) {
         absl::Duration initial_duration = initial_ - absl::Now();
         if (initial_duration < absl::ZeroDuration()) {
+            LOG(WARNING) << "Has past the initial duration";
             initial_duration = absl::Microseconds(1);
         }
-        CHECK(io_utils::SetupTimerFdPeriodic(timerfd_, initial_duration, duration_));
+        CHECK(io_utils::SetupTimerFdPeriodic(timerfd_, initial_duration, interval_));
         state_ = kScheduled;
     }
     URING_DCHECK_OK(current_io_uring()->StartRead(
@@ -78,5 +81,5 @@ bool Timer::TriggerIn(absl::Duration d) {
     return true;
 }
 
-}  // namespace engine
+}  // namespace server
 }  // namespace faas

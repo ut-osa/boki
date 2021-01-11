@@ -12,7 +12,6 @@ namespace faas {
 namespace engine {
 
 class Engine;
-class Timer;
 
 class SLogEngine {
 public:
@@ -114,8 +113,6 @@ private:
     std::multimap</* min_progress */ uint32_t, PendingRequest*>
         pending_requests_[log::EngineCore::kTotalProgressKinds]
         ABSL_GUARDED_BY(pending_requests_mu_);
-
-    Timer* statecheck_timer_;
 
     FuncCallContext GetFuncContext(const protocol::FuncCall& func_call);
     void UpdateFuncFsmProgress(const protocol::FuncCall& func_call,

@@ -6,6 +6,7 @@
 #include "utils/appendable_buffer.h"
 #include "server/io_worker.h"
 #include "server/node_watcher.h"
+#include "server/timer.h"
 
 namespace faas {
 namespace server {
@@ -28,23 +29,22 @@ protected:
     zk::ZKSession* zk_session() { return &zk_session_; }
     NodeWatcher* node_watcher() { return &node_watcher_; }
 
-    bool WithinMyEventLoopThread();
+    bool WithinMyEventLoopThread() const;
 
-    void ForEachIOWorker(std::function<void(IOWorker* io_worker)> cb);
+    void ForEachIOWorker(std::function<void(IOWorker* io_worker)> cb) const;
     IOWorker* PickIOWorkerForConnType(int conn_type);
-    IOWorker* SomeIOWorker();
+    IOWorker* SomeIOWorker() const;
+
+    static IOWorker* CurrentIOWorker() { return IOWorker::current(); }
+    static IOWorker* CurrentIOWorkerChecked() { return DCHECK_NOTNULL(IOWorker::current()); }
 
     void RegisterConnection(IOWorker* io_worker, ConnectionBase* connection);
 
     typedef std::function<void(int /* client_sockfd */)> ConnectionCallback;
     void ListenForNewConnections(int server_sockfd, ConnectionCallback cb);
 
-    template<class T>
-    T* PickConnFromCurrentIOWorker(int conn_type);
-
-    template<class T>
-    T* PickOrCreateConnFromCurrentIOWorker(int conn_type,
-                                           std::function<T*(IOWorker*)> create_cb);
+    Timer* CreateTimer(int timer_type, IOWorker* io_worker, Timer::Callback cb);
+    void CreatePeriodicTimer(int timer_type, absl::Duration interval, Timer::Callback cb);
 
     // Supposed to be implemented by sub-class
     virtual void StartInternal() {}
@@ -64,11 +64,14 @@ private:
     zk::ZKSession zk_session_;
     NodeWatcher node_watcher_;
 
+    mutable std::atomic<size_t> next_io_worker_for_pick_;
+
     std::vector<std::unique_ptr<IOWorker>> io_workers_;
     absl::flat_hash_map<IOWorker*, /* fd */ int> pipes_to_io_worker_;
     absl::flat_hash_map</* fd */ int, ConnectionCallback> connection_cbs_;
     absl::flat_hash_map</* conn_type */ int, size_t> next_io_worker_id_;
     std::atomic<int> next_connection_id_;
+    absl::flat_hash_set<std::unique_ptr<Timer>> timers_;
 
     void SetupIOWorkers();
     void SetupMessageServer();
@@ -81,41 +84,6 @@ private:
 
     DISALLOW_COPY_AND_ASSIGN(ServerBase);
 };
-
-template<class T>
-T* ServerBase::PickConnFromCurrentIOWorker(int conn_type) {
-    IOWorker* io_worker = IOWorker::current();
-    if (__FAAS_PREDICT_FALSE(io_worker == nullptr)) {
-        LOG(FATAL) << "Not in thread of some IOWorker";
-    }
-    ConnectionBase* conn = io_worker->PickConnection(conn_type);
-    if (conn == nullptr) {
-        return nullptr;
-    } else {
-        return conn->as_ptr<T>();
-    }
-}
-
-template<class T>
-T* ServerBase::PickOrCreateConnFromCurrentIOWorker(int conn_type,
-                                                   std::function<T*(IOWorker*)> create_cb) {
-    IOWorker* io_worker = IOWorker::current();
-    if (__FAAS_PREDICT_FALSE(io_worker == nullptr)) {
-        LOG(FATAL) << "Not in thread of some IOWorker";
-    }
-    ConnectionBase* conn = io_worker->PickConnection(conn_type);
-    if (conn == nullptr) {
-        T* created_conn = create_cb(io_worker);
-        if (created_conn != nullptr) {
-            DCHECK_EQ(conn_type, created_conn->type());
-            return created_conn;
-        } else {
-            return nullptr;
-        }
-    } else {
-        return conn->as_ptr<T>();
-    }
-}
 
 }  // namespace server
 }  // namespace faas

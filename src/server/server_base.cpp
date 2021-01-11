@@ -25,6 +25,7 @@ ServerBase::ServerBase(std::string_view node_name)
                          absl::bind_front(&ServerBase::EventLoopThreadMain, this)),
       zk_session_(absl::GetFlag(FLAGS_zookeeper_host),
                   absl::GetFlag(FLAGS_zookeeper_root_path)),
+      next_io_worker_for_pick_(0),
       next_connection_id_(0) {
     PCHECK(stop_eventfd_ >= 0) << "Failed to create eventfd";
 }
@@ -60,13 +61,13 @@ void ServerBase::WaitForFinish() {
     HLOG(INFO) << "Stopped";
 }
 
-bool ServerBase::WithinMyEventLoopThread() {
+bool ServerBase::WithinMyEventLoopThread() const {
     return base::Thread::current() == &event_loop_thread_;
 }
 
-void ServerBase::ForEachIOWorker(std::function<void(IOWorker* io_worker)> cb) {
+void ServerBase::ForEachIOWorker(std::function<void(IOWorker* io_worker)> cb) const {
     for (size_t i = 0; i < io_workers_.size(); i++) {
-        cb(io_workers_[i].get());
+        cb(io_workers_.at(i).get());
     }
 }
 
@@ -77,8 +78,9 @@ IOWorker* ServerBase::PickIOWorkerForConnType(int conn_type) {
     return io_workers_[idx].get();
 }
 
-IOWorker* ServerBase::SomeIOWorker() {
-    return io_workers_.front().get();
+IOWorker* ServerBase::SomeIOWorker() const {
+    size_t idx = next_io_worker_for_pick_.fetch_add(1, std::memory_order_relaxed);
+    return io_workers_.at(idx % io_workers_.size()).get();
 }
 
 void ServerBase::OnRemoteMessageConn(const protocol::HandshakeMessage& handshake, int sockfd) {
@@ -249,7 +251,13 @@ void ServerBase::DoReadClosedConnection(int pipefd) {
             }
         }
         CHECK_EQ(ret, __FAAS_PTR_SIZE);
-        OnConnectionClose(connection);
+        if ((connection->type() & kConnectionTypeMask) == kTimerTypeId) {
+            Timer* timer = connection->as_ptr<Timer>();
+            DCHECK(timers_.contains(timer));
+            timers_.erase(timer);
+        } else {
+            OnConnectionClose(connection);
+        }
     }
 }
 
@@ -268,6 +276,26 @@ void ServerBase::DoAcceptConnection(int server_sockfd) {
             connection_cbs_[server_sockfd](client_sockfd);
         }
     }
+}
+
+Timer* ServerBase::CreateTimer(int timer_type, IOWorker* io_worker, Timer::Callback cb) {
+    Timer* timer = new Timer(timer_type, cb);
+    RegisterConnection(io_worker, timer);
+    timers_.insert(std::unique_ptr<Timer>(timer));
+    return timer;
+}
+
+void ServerBase::CreatePeriodicTimer(int timer_type, absl::Duration interval,
+                                     Timer::Callback cb) {
+    DCHECK(state_.load() == kBootstrapping);
+    absl::Time initial = absl::Now() + absl::Seconds(1);
+    ForEachIOWorker([&, this] (IOWorker* io_worker) {
+        Timer* timer = new Timer(timer_type, cb);
+        RegisterConnection(io_worker, timer);
+        timer->SetPeriodic(initial, interval * io_workers_.size());
+        timers_.insert(std::unique_ptr<Timer>(timer));
+        initial += interval;
+    });
 }
 
 namespace {
