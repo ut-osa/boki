@@ -239,32 +239,35 @@ struct SequencerMessage {
 static_assert(sizeof(SequencerMessage) == 40, "Unexpected SequencerMessage size");
 
 struct SharedLogMessage {
-    uint16_t op_type;
-    uint16_t op_result;
+    uint16_t op_type;         // [0:2]
+    uint16_t op_result;       // [2:4]
 
-    uint16_t origin_node_id;
-    uint16_t hop_times;
-    uint32_t payload_size;
+    uint16_t origin_node_id;  // [4:6]
+    uint16_t hop_times;       // [6:8]
+    uint32_t payload_size;    // [8:12]
 
     union {
         struct {
-            uint16_t sequencer_id;
-            uint16_t view_id;
+            uint16_t sequencer_id;   // [12:14]
+            uint16_t view_id;        // [14:16]
         } __attribute__ ((packed));
-        uint32_t logspace_id;
+        uint32_t logspace_id;        // [12:16]
     };
-    uint32_t metalog_position;
+    uint32_t metalog_position;       // [16:20]
 
-    uint32_t user_logspace;
-    uint64_t user_tag;
-    uint64_t seqnum;
+    uint32_t user_logspace;   // [20:24]
+    uint64_t user_tag;        // [24:32]
+    uint32_t seqnum;          // [32:36]
+
+    uint32_t _0_padding_0_;
+
     union {
-        uint64_t localid;
-        uint64_t trim_seqnum;
+        uint64_t localid;       // [40:48]
+        uint64_t trim_seqnum;   // [40:48]
     };
-    uint64_t client_data;
+    uint64_t client_data;       // [48:56]
 
-    uint64_t padding; 
+    uint64_t _8_padding_8_; 
 } __attribute__ (( packed, aligned(__FAAS_CACHE_LINE_SIZE) ));
 
 static_assert(sizeof(SharedLogMessage) == 64, "Unexpected SharedLogMessage size");
