@@ -64,7 +64,7 @@ private:
                         std::span<const char> payload);
 
     void ProcessReadResults(const LogStorage::ReadResultVec& results);
-    void ProcessReadFromDB(const protocol::SharedLogMessage& read_request);
+    void ProcessReadFromDB(const protocol::SharedLogMessage& request);
 
     bool SendSequencerMessage(uint16_t sequencer_id,
                               protocol::SharedLogMessage* message,
@@ -83,6 +83,10 @@ private:
     server::EgressHub* CreateEgressHub(protocol::ConnType conn_type,
                                        uint16_t dst_node_id,
                                        server::IOWorker* io_worker);
+
+    static inline std::string GetDBKey(uint32_t logspace_id, uint32_t seqnum) {
+        return fmt::format("{0:08x}{1:08x}", logspace_id, seqnum);
+    }
 
     DISALLOW_COPY_AND_ASSIGN(Storage);
 };

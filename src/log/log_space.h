@@ -125,14 +125,19 @@ class LogStorage final : public LogSpaceBase {
 public:
     LogStorage(uint16_t storage_id, const View* view, uint16_t sequencer_id);
 
-    void Store(const LogMetaData& log_metadata, std::span<const char> log_data);
-    void ReadAt(uint32_t seqnum, SharedLogRequest&& original_request);
+    bool Store(const LogMetaData& log_metadata, std::span<const char> log_data);
+    void ReadAt(const protocol::SharedLogMessage& request);
+
+    bool GrabLogEntriesForPersistence(
+            std::vector<std::shared_ptr<const LogEntry>>* log_entries,
+            uint32_t* new_position);
+    void LogEntriesPersisted(uint32_t new_position);
 
     struct ReadResult {
         enum Status { kOK, kLookupDB, kFailed };
         Status status;
         std::shared_ptr<const LogEntry> log_entry;
-        SharedLogRequest original_request;
+        protocol::SharedLogMessage original_request;
     };
     typedef absl::InlinedVector<ReadResult, 4> ReadResultVec;
     void PollReadResults(ReadResultVec* results);
@@ -140,9 +145,29 @@ public:
 private:
     const View::Storage* storage_node_;
 
+    absl::flat_hash_map</* engine_id */ uint16_t,
+                        /* localid */ uint32_t> shard_progrsses_;
+
+    uint32_t persisted_seqnum_position_;
+    std::deque<uint32_t> live_seqnums_;
+    absl::flat_hash_map</* seqnum */ uint32_t,
+                        std::shared_ptr<const LogEntry>>
+        live_log_entries_;
+
+    absl::flat_hash_map</* localid */ uint64_t,
+                        std::unique_ptr<LogEntry>>
+        pending_log_entries_;
+    
+    std::multimap</* seqnum */ uint32_t,
+                  protocol::SharedLogMessage> pending_read_requests_;
+    ReadResultVec pending_read_results_;
+
     void OnNewLogs(uint32_t start_seqnum, uint64_t start_localid,
                    uint32_t delta) override;
     void OnFinalized() override;
+
+    void AdvanceShardProgress(uint16_t engine_id);
+    void ShrinkLiveEntriesIfNeeded();
 
     DISALLOW_COPY_AND_ASSIGN(LogStorage);
 };

@@ -56,25 +56,25 @@ void Storage::OnViewFinalized(const FinalizedView* finalized_view) {
     DCHECK(zk_session()->WithinMyEventLoopThread());
 }
 
-void Storage::HandleReadAtRequest(const SharedLogMessage& message) {
+void Storage::HandleReadAtRequest(const SharedLogMessage& request) {
     LockablePtr<LogStorage> storage_ptr;
     {
         absl::ReaderMutexLock core_lk(&core_mu_);
-        if (storage_collection_.is_from_future_view(message.logspace_id)) {
+        if (storage_collection_.is_from_future_view(request.logspace_id)) {
             absl::MutexLock future_request_lk(&future_request_mu_);
-            future_requests_.OnHoldRequest(SharedLogRequest(message));
+            future_requests_.OnHoldRequest(SharedLogRequest(request));
             return;
         }
-        storage_ptr = storage_collection_.GetLogSpace(message.logspace_id);
+        storage_ptr = storage_collection_.GetLogSpace(request.logspace_id);
     }
     if (storage_ptr == nullptr) {
-        ProcessReadFromDB(message);
+        ProcessReadFromDB(request);
         return;
     }
     LogStorage::ReadResultVec results;
     {
         auto locked_storage = storage_ptr.Lock();
-        locked_storage->ReadAt(message.seqnum, SharedLogRequest(message));
+        locked_storage->ReadAt(request);
         locked_storage->PollReadResults(&results);
     }
     ProcessReadResults(results);
@@ -82,7 +82,35 @@ void Storage::HandleReadAtRequest(const SharedLogMessage& message) {
 
 void Storage::HandleReplicateRequest(const SharedLogMessage& message,
                                      std::span<const char> payload) {
-
+    LockablePtr<LogStorage> storage_ptr;
+    {
+        uint32_t logspace_id = message.logspace_id;
+        absl::ReaderMutexLock core_lk(&core_mu_);
+        if (storage_collection_.is_from_future_view(logspace_id)) {
+            absl::MutexLock future_request_lk(&future_request_mu_);
+            future_requests_.OnHoldRequest(SharedLogRequest(message, payload));
+            return;
+        }
+        if (!storage_collection_.is_from_future_view(logspace_id)) {
+            HLOG(WARNING) << fmt::format("Receive outdate replicate request from view {}",
+                                         bits::HighHalf32(logspace_id));
+            return;
+        }
+        storage_ptr = storage_collection_.GetLogSpace(logspace_id);
+        if (storage_ptr == nullptr) {
+            HLOG(ERROR) << fmt::format("Failed to find log space {}",
+                                       bits::HexStr0x(logspace_id));
+            return;
+        }
+    }
+    LogMetaData metadata;
+    PopulateMetaDataFromRequest(message, &metadata);
+    {
+        auto locked_storage = storage_ptr.Lock();
+        if (!locked_storage->Store(metadata, payload)) {
+            HLOG(ERROR) << "Failed to store log entry";
+        }
+    }
 }
 
 void Storage::OnRecvNewMetaLogs(const SharedLogMessage& message,
@@ -109,12 +137,12 @@ void Storage::MessageHandler(const SharedLogMessage& message,
 
 void Storage::ProcessReadResults(const LogStorage::ReadResultVec& results) {
     for (const LogStorage::ReadResult& result : results) {
-        const SharedLogMessage& request = result.original_request.message;
+        const SharedLogMessage& request = result.original_request;
         SharedLogMessage response;
         switch (result.status) {
         case LogStorage::ReadResult::kOK:
             response = SharedLogMessageHelper::NewReadOkResponse();
-            PopulateLogMetaData(result.log_entry->metadata, &response);
+            PopulateMetaDataToResponse(result.log_entry->metadata, &response);
             DCHECK_EQ(response.logspace_id, request.logspace_id);
             DCHECK_EQ(response.seqnum, request.seqnum);
             response.metalog_position = request.metalog_position;
@@ -137,8 +165,31 @@ void Storage::ProcessReadResults(const LogStorage::ReadResultVec& results) {
     }
 }
 
-void Storage::ProcessReadFromDB(const SharedLogMessage& read_request) {
-
+void Storage::ProcessReadFromDB(const SharedLogMessage& request) {
+    std::string db_key = GetDBKey(request.logspace_id, request.seqnum);
+    std::string data;
+    auto status = db_->Get(rocksdb::ReadOptions(), db_key, &data);
+    if (status.IsNotFound()) {
+        HLOG(ERROR) << fmt::format("Failed to read log data (logspace={}, seqnum={})",
+                                   bits::HexStr0x(request.logspace_id),
+                                   bits::HexStr0x(request.seqnum));
+        SharedLogMessage response = SharedLogMessageHelper::NewDataLostResponse();
+        SendEngineResponse(request, &response);
+        return;
+    }
+    if (!status.ok()) {
+        HLOG(FATAL) << "RocksDB Get() failed: " << status.ToString();
+    }
+    LogEntryProto log_entry;
+    if (!log_entry.ParseFromString(data)) {
+        HLOG(FATAL) << "Failed to parse LogEntryProto";
+    }
+    SharedLogMessage response = SharedLogMessageHelper::NewReadOkResponse();
+    PopulateMetaDataToResponse(log_entry, &response);
+    DCHECK_EQ(response.logspace_id, request.logspace_id);
+    DCHECK_EQ(response.seqnum, request.seqnum);
+    response.metalog_position = request.metalog_position;
+    SendEngineResponse(request, &response, STRING_TO_SPAN(log_entry.data()));
 }
 
 bool Storage::SendSequencerMessage(uint16_t sequencer_id,
@@ -279,16 +330,6 @@ void RocksDBStorage::Add(uint64_t seqnum, std::span<const char> data) {
     if (!status.ok()) {
         LOG(FATAL) << "RocksDB put failed: " << status.ToString();
     }
-}
-
-bool RocksDBStorage::Read(uint64_t seqnum, std::string* data) {
-    auto status = db_->Get(rocksdb::ReadOptions(),
-                           /* key= */   SeqNumHexStr(seqnum),
-                           /* value= */ data);
-    if (!status.ok() && !status.IsNotFound()) {
-        LOG(FATAL) << "RocksDB get failed: " << status.ToString();
-    }
-    return status.ok();
 }
 #endif
 
