@@ -20,7 +20,7 @@ void FutureRequests::OnNewView(const View* view,
     next_view_id_++;
 }
 
-void FutureRequests::OnHoldRequest(SharedLogRequest&& request) {
+void FutureRequests::OnHoldRequest(SharedLogRequest request) {
     uint16_t view_id = request.message.view_id;
     if (view_id < next_view_id_) {
         LOG(FATAL) << fmt::format("Receive request from view not in the future: "

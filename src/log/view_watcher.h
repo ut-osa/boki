@@ -25,18 +25,6 @@ public:
     typedef std::function<void(const FinalizedView*)> ViewFinalizedCallback;
     void SetViewFinalizedCallback(ViewFinalizedCallback cb);
 
-    uint16_t next_view_id() const {
-        return gsl::narrow_cast<uint16_t>(views_.size());
-    }
-
-    const View* current_view() const {
-        return views_.empty() ? nullptr : views_.back().get();
-    }
-
-    const View* view_with_id(uint16_t view_id) const {
-        return view_id < views_.size() ? views_.at(view_id).get() : nullptr;
-    }
-
 private:
     std::unique_ptr<zk_utils::DirWatcher> watcher_;
 
@@ -46,6 +34,18 @@ private:
     ViewCallback          view_created_cb_;
     ViewCallback          view_frozen_cb_;
     ViewFinalizedCallback view_finalized_cb_;
+
+    inline uint16_t next_view_id() const {
+        return gsl::narrow_cast<uint16_t>(views_.size());
+    }
+
+    inline const View* current_view() const {
+        return views_.empty() ? nullptr : views_.back().get();
+    }
+
+    inline const View* view_with_id(uint16_t view_id) const {
+        return view_id < views_.size() ? views_.at(view_id).get() : nullptr;
+    }
 
     void InstallNextView(const ViewProto& view_proto);
     void FinalizeCurrentView(const FinalizedViewProto& finalized_view_proto);
@@ -61,21 +61,21 @@ public:
 
     const View* view() const { return view_; }
 
-    uint32_t final_metalog_position(uint16_t sequencer_id) const {
-        DCHECK(final_metalog_positions_.contains(sequencer_id));
-        return final_metalog_positions_.at(sequencer_id);
+    uint32_t final_metalog_position(uint32_t logspace_id) const {
+        DCHECK(final_metalog_positions_.contains(logspace_id));
+        return final_metalog_positions_.at(logspace_id);
     }
 
     typedef std::vector<MetaLogProto> MetaLogVec;
-    const MetaLogVec& tail_metalogs(uint16_t sequencer_id) const {
-        DCHECK(tail_metalogs_.contains(sequencer_id));
-        return tail_metalogs_.at(sequencer_id);
+    const MetaLogVec& tail_metalogs(uint32_t logspace_id) const {
+        DCHECK(tail_metalogs_.contains(logspace_id));
+        return tail_metalogs_.at(logspace_id);
     }
 
 private:
     const View* view_;
-    absl::flat_hash_map<uint16_t, uint32_t> final_metalog_positions_;
-    absl::flat_hash_map<uint16_t, MetaLogVec> tail_metalogs_;
+    absl::flat_hash_map<uint32_t, uint32_t> final_metalog_positions_;
+    absl::flat_hash_map<uint32_t, MetaLogVec> tail_metalogs_;
 
     DISALLOW_COPY_AND_ASSIGN(FinalizedView);
 };

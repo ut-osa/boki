@@ -1,5 +1,7 @@
 #include "log/view_watcher.h"
 
+#include "utils/bits.h"
+
 #define log_header_ "ViewWatcher: "
 
 namespace faas {
@@ -92,14 +94,14 @@ FinalizedView::FinalizedView(const View* view,
     DCHECK_EQ(gsl::narrow_cast<size_t>(finalized_view_proto.tail_metalogs_size()),
               sequencer_node_ids.size());
     for (size_t i = 0; i < sequencer_node_ids.size(); i++) {
-        uint16_t node_id = sequencer_node_ids[i];
-        final_metalog_positions_[node_id] = finalized_view_proto.metalog_positions(i);
+        uint32_t logspace_id = bits::JoinTwo16(view_->id(), sequencer_node_ids[i]);
+        final_metalog_positions_[logspace_id] = finalized_view_proto.metalog_positions(i);
         std::vector<MetaLogProto> metalogs;
         const auto& tail_metalog_proto = finalized_view_proto.tail_metalogs(i);
         for (const MetaLogProto& metalog : tail_metalog_proto.metalogs()) {
             metalogs.push_back(metalog);
         }
-        tail_metalogs_[node_id] = std::move(metalogs);
+        tail_metalogs_[logspace_id] = std::move(metalogs);
     }
 }
 

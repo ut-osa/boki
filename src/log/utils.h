@@ -52,7 +52,7 @@ public:
     ~FutureRequests();
 
     void OnNewView(const View* view, std::vector<SharedLogRequest>* ready_requests);
-    void OnHoldRequest(SharedLogRequest&& request);
+    void OnHoldRequest(SharedLogRequest request);
 
 private:
     uint16_t next_view_id_;
