@@ -1,5 +1,6 @@
 #pragma once
 
+#include "base/thread.h"
 #include "log/storage_base.h"
 #include "log/log_space.h"
 #include "log/utils.h"
@@ -30,6 +31,9 @@ private:
 
     void ProcessReadResults(const LogStorage::ReadResultVec& results);
     void ProcessReadFromDB(const protocol::SharedLogMessage& request);
+    void ProcessRequests(const std::vector<SharedLogRequest>& requests);
+
+    void BackgroundThreadMain() override;
 
     DISALLOW_COPY_AND_ASSIGN(Storage);
 };

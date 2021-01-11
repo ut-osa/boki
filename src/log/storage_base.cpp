@@ -20,16 +20,20 @@ using server::NodeWatcher;
 
 StorageBase::StorageBase(uint16_t node_id)
     : ServerBase(fmt::format("storage_{}", node_id)),
-      node_id_(node_id) {}
+      node_id_(node_id),
+      background_thread_("Background", [this] { this->BackgroundThreadMain(); }) {}
 
 StorageBase::~StorageBase() {}
 
 void StorageBase::StartInternal() {
     SetupRocksDB();
     SetupZKWatchers();
+    background_thread_.Start();
 }
 
-void StorageBase::StopInternal() {}
+void StorageBase::StopInternal() {
+    background_thread_.Join();
+}
 
 void StorageBase::SetupRocksDB() {
     rocksdb::Options options;

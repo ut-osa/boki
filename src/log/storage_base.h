@@ -31,6 +31,8 @@ protected:
     virtual void OnRecvNewMetaLogs(const protocol::SharedLogMessage& message,
                                    std::span<const char> payload) = 0;
 
+    virtual void BackgroundThreadMain() = 0;
+
     void MessageHandler(const protocol::SharedLogMessage& message,
                         std::span<const char> payload);
     bool GetLogEntryFromDB(uint32_t logspace_id, uint32_t seqnum,
@@ -52,6 +54,8 @@ private:
 
     std::string db_path_;
     std::unique_ptr<rocksdb::DB> db_;
+
+    base::Thread background_thread_;
 
     absl::flat_hash_map</* id */ int, std::unique_ptr<server::IngressConnection>>
         ingress_conns_;
