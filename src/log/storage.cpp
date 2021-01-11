@@ -25,6 +25,7 @@ void Storage::OnViewFinalized(const FinalizedView* finalized_view) {
 }
 
 void Storage::HandleReadAtRequest(const SharedLogMessage& request) {
+    DCHECK(SharedLogMessageHelper::GetOpType(request) == SharedLogOpType::READ_AT);
     LockablePtr<LogStorage> storage_ptr;
     {
         absl::ReaderMutexLock core_lk(&core_mu_);
@@ -50,6 +51,7 @@ void Storage::HandleReadAtRequest(const SharedLogMessage& request) {
 
 void Storage::HandleReplicateRequest(const SharedLogMessage& message,
                                      std::span<const char> payload) {
+    DCHECK(SharedLogMessageHelper::GetOpType(message) == SharedLogOpType::REPLICATE);
     LockablePtr<LogStorage> storage_ptr;
     {
         uint32_t logspace_id = message.logspace_id;
@@ -83,7 +85,7 @@ void Storage::HandleReplicateRequest(const SharedLogMessage& message,
 
 void Storage::OnRecvNewMetaLogs(const SharedLogMessage& message,
                                 std::span<const char> payload) {
-
+    DCHECK(SharedLogMessageHelper::GetOpType(message) == SharedLogOpType::METALOGS);
 }
 
 void Storage::ProcessReadResults(const LogStorage::ReadResultVec& results) {

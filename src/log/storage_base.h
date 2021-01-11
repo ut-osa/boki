@@ -31,6 +31,8 @@ protected:
     virtual void OnRecvNewMetaLogs(const protocol::SharedLogMessage& message,
                                    std::span<const char> payload) = 0;
 
+    void MessageHandler(const protocol::SharedLogMessage& message,
+                        std::span<const char> payload);
     bool GetLogEntryFromDB(uint32_t logspace_id, uint32_t seqnum,
                            LogEntryProto* log_entry_proto);
     void PutLogEntryToDB(const LogEntry* log_entry);
@@ -66,9 +68,6 @@ private:
     void OnConnectionClose(server::ConnectionBase* connection) override;
     void OnRemoteMessageConn(const protocol::HandshakeMessage& handshake,
                              int sockfd) override;
-
-    void MessageHandler(const protocol::SharedLogMessage& message,
-                        std::span<const char> payload);
 
     void OnRecvSharedLogMessage(int conn_type, uint16_t src_node_id,
                                 const protocol::SharedLogMessage& message,
