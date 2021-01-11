@@ -83,5 +83,14 @@ inline void PopulateLogMetaData(const LogMetaData& metadata,
     read_response->localid = metadata.localid;
 }
 
+inline void PopulateLogMetaData(const LogEntryProto& log_entry,
+                                protocol::SharedLogMessage* read_response) {
+    read_response->logspace_id = log_entry.logspace_id();
+    read_response->user_logspace = log_entry.user_logspace();
+    read_response->user_tag = log_entry.user_tag();
+    read_response->seqnum = log_entry.seqnum();
+    read_response->localid = log_entry.localid();
+}
+
 }  // namespace log
 }  // namespace faas

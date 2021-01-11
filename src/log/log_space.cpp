@@ -124,7 +124,7 @@ void LogSpaceBase::ApplyMetaLog(const MetaLogProto& meta_log) {
         {
             const auto& new_logs = meta_log.new_logs_proto();
             const View::NodeIdVec& engine_node_ids = view_->GetEngineNodes();
-            uint64_t start_seqnum = new_logs.start_seqnum();
+            uint32_t start_seqnum = new_logs.start_seqnum();
             for (size_t i = 0; i < engine_node_ids.size(); i++) {
                 uint64_t start_localid = BuildLocalId(
                     view_->id(), engine_node_ids[i], new_logs.shard_starts(i));
@@ -182,7 +182,7 @@ LogStorage::LogStorage(uint16_t storage_id, const View* view, uint16_t sequencer
     state_ = kNormal;
 }
 
-void LogStorage::ReadAt(uint64_t seqnum, SharedLogRequest&& original_request) {
+void LogStorage::ReadAt(uint32_t seqnum, SharedLogRequest&& original_request) {
 
 }
 

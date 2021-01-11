@@ -19,7 +19,7 @@ public:
     }
 
     uint32_t metalog_position() const { return metalog_position_; }
-    uint64_t seqnum_position() const { return seqnum_position_; }
+    uint32_t seqnum_position() const { return seqnum_position_; }
     // Return true if metalog_position changed
     bool ProvideMetaLog(const MetaLogProto& meta_log_proto);
 
@@ -40,7 +40,7 @@ protected:
     void AddInterestedShard(uint16_t engine_id);
 
     typedef absl::FixedArray<uint32_t> OffsetVec;
-    virtual void OnNewLogs(uint64_t start_seqnum, uint64_t start_localid,
+    virtual void OnNewLogs(uint32_t start_seqnum, uint64_t start_localid,
                            uint32_t delta) {}
     virtual void OnTrim(uint32_t user_logspace, uint64_t user_tag,
                         uint64_t trim_seqnum) {}
@@ -54,7 +54,7 @@ protected:
     const View* view_;
     uint16_t sequencer_id_;
     uint32_t metalog_position_;
-    uint64_t seqnum_position_;
+    uint32_t seqnum_position_;
     std::string log_header_;
 
 private:
@@ -104,7 +104,7 @@ public:
     void AppendLocally(LogMetaData* log_metadata,
                        std::span<const char> log_data);
 
-    typedef std::function<void(uint64_t /* localid */, uint64_t /* seqnum */)>
+    typedef std::function<void(uint64_t /* localid */, uint64_t /* user_seqnum */)>
             LogPersistedCallback;
     void SetLogPersistedCallback(LogPersistedCallback cb);
 
@@ -113,7 +113,7 @@ public:
     void SetLogDiscardedCallback(LogDiscardedCallback cb);
 
 private:
-    void OnNewLogs(uint64_t start_seqnum, uint64_t start_localid,
+    void OnNewLogs(uint32_t start_seqnum, uint64_t start_localid,
                    uint32_t delta) override;
     void OnFinalized() override;
 
@@ -126,7 +126,7 @@ public:
     LogStorage(uint16_t storage_id, const View* view, uint16_t sequencer_id);
 
     void Store(const LogMetaData& log_metadata, std::span<const char> log_data);
-    void ReadAt(uint64_t seqnum, SharedLogRequest&& original_request);
+    void ReadAt(uint32_t seqnum, SharedLogRequest&& original_request);
 
     struct ReadResult {
         enum Status { kOK, kLookupDB, kFailed };
@@ -140,7 +140,7 @@ public:
 private:
     const View::Storage* storage_node_;
 
-    void OnNewLogs(uint64_t start_seqnum, uint64_t start_localid,
+    void OnNewLogs(uint32_t start_seqnum, uint64_t start_localid,
                    uint32_t delta) override;
     void OnFinalized() override;
 

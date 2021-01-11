@@ -55,12 +55,8 @@ message ViewProto {
 }
 
 message MetaLogProto {
-    // Below two determines the physical log space
-    uint32 view_id        = 1;
-    uint32 sequencer_id   = 2;
-
-    // Monotonically increasing
-    uint32 metalog_seqnum = 3;
+    uint32 logspace_id    = 1;
+    uint32 metalog_seqnum = 2;
 
     enum Type {
         INVALID  = 0;
@@ -70,7 +66,7 @@ message MetaLogProto {
     Type type = 4;
 
     message NewLogsProto {
-        uint64          start_seqnum = 1;
+        uint32          start_seqnum = 1;
         repeated uint32 shard_starts = 2;
         repeated uint32 shard_deltas = 3;
     }
@@ -98,6 +94,15 @@ message FinalizedViewProto {
     // The purpose is to help nodes catching up.
     // If gaps still exist, nodes will communicate with sequencers to catch up.
     repeated MetaLogsProto tail_metalogs = 3;
+}
+
+message LogEntryProto {
+    uint32 logspace_id   = 1;
+    uint32 user_logspace = 2;
+    uint64 user_tag      = 3;
+    uint32 seqnum        = 4;
+    uint64 localid       = 5;
+    bytes  data          = 6;
 }
 
 // ====== Old protos ======
