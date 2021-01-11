@@ -2,6 +2,7 @@
 
 #include "common/flags.h"
 #include "server/constants.h"
+#include "utils/bits.h"
 
 #define log_header_ "Storage: "
 
@@ -9,6 +10,8 @@ namespace faas {
 namespace log {
 
 using protocol::SharedLogMessage;
+using protocol::SharedLogMessageHelper;
+using protocol::SharedLogOpType;
 
 Storage::Storage(uint16_t node_id)
     : ServerBase(fmt::format("storage_{}", node_id)),
@@ -53,43 +56,122 @@ void Storage::OnViewFinalized(const FinalizedView* finalized_view) {
     DCHECK(zk_session()->WithinMyEventLoopThread());
 }
 
-void Storage::OnRecvSequencerMessage(uint16_t src_node_id, const SharedLogMessage& message,
+void Storage::HandleReadAtRequest(const SharedLogMessage& message) {
+    LockablePtr<LogStorage> storage_ptr;
+    {
+        absl::ReaderMutexLock core_lk(&core_mu_);
+        if (storage_collection_.is_from_future_view(message.logspace_id)) {
+            absl::MutexLock future_request_lk(&future_request_mu_);
+            future_requests_.OnHoldRequest(SharedLogRequest(message));
+            return;
+        }
+        storage_ptr = storage_collection_.GetLogSpace(message.logspace_id);
+    }
+    if (storage_ptr == nullptr) {
+        ProcessReadFromDB(message);
+        return;
+    }
+    LogStorage::ReadResultVec results;
+    {
+        auto locked_storage = storage_ptr.Lock();
+        locked_storage->ReadAt(message.seqnum, SharedLogRequest(message));
+        locked_storage->PollReadResults(&results);
+    }
+    ProcessReadResults(results);
+}
+
+void Storage::HandleReplicateRequest(const SharedLogMessage& message,
                                      std::span<const char> payload) {
 
 }
 
-void Storage::OnRecvEngineMessage(uint16_t src_node_id, const SharedLogMessage& message,
-                                  std::span<const char> payload) {
-
-}
-
-bool Storage::SendSequencerMessage(uint16_t dst_node_id,
-                                   const SharedLogMessage& message,
-                                   std::span<const char> payload) {
-    return SendSharedLogMessage(protocol::ConnType::STORAGE_TO_SEQUENCER,
-                                dst_node_id, message, payload);
-}
-
-bool Storage::SendEngineMessage(uint16_t dst_node_id,
-                                const SharedLogMessage& message,
+void Storage::OnRecvNewMetaLogs(const SharedLogMessage& message,
                                 std::span<const char> payload) {
+
+}
+
+void Storage::MessageHandler(const SharedLogMessage& message,
+                             std::span<const char> payload) {
+    switch (SharedLogMessageHelper::GetOpType(message)) {
+    case SharedLogOpType::READ_AT:
+        HandleReadAtRequest(message);
+        break;
+    case SharedLogOpType::REPLICATE:
+        HandleReplicateRequest(message, payload);
+        break;
+    case SharedLogOpType::METALOGS:
+        OnRecvNewMetaLogs(message, payload);
+        break;
+    default:
+        UNREACHABLE();
+    }
+}
+
+void Storage::ProcessReadResults(const LogStorage::ReadResultVec& results) {
+    for (const LogStorage::ReadResult& result : results) {
+        const SharedLogMessage& request = result.original_request.message;
+        SharedLogMessage response;
+        switch (result.status) {
+        case LogStorage::ReadResult::kOK:
+            response = SharedLogMessageHelper::NewReadOkResponse();
+            PopulateLogMetaData(result.log_entry->metadata, &response);
+            DCHECK_EQ(response.logspace_id, request.logspace_id);
+            DCHECK_EQ(response.seqnum, request.seqnum);
+            response.metalog_position = request.metalog_position;
+            SendEngineResponse(request, &response,
+                               STRING_TO_SPAN(result.log_entry->data));
+            break;
+        case LogStorage::ReadResult::kLookupDB:
+            ProcessReadFromDB(request);
+            break;
+        case LogStorage::ReadResult::kFailed:
+            HLOG(ERROR) << fmt::format("Failed to read log data (logspace={}, seqnum={})",
+                                       bits::HexStr0x(request.logspace_id),
+                                       bits::HexStr0x(request.seqnum));
+            response = SharedLogMessageHelper::NewDataLostResponse();
+            SendEngineResponse(request, &response);
+            break;
+        default:
+            UNREACHABLE();
+        }
+    }
+}
+
+void Storage::ProcessReadFromDB(const SharedLogMessage& read_request) {
+
+}
+
+bool Storage::SendSequencerMessage(uint16_t sequencer_id,
+                                   SharedLogMessage* message,
+                                   std::span<const char> payload) {
+    message->origin_node_id = node_id_;
+    message->payload_size = payload.size();
+    return SendSharedLogMessage(protocol::ConnType::STORAGE_TO_SEQUENCER,
+                                sequencer_id, *message, payload);
+}
+
+bool Storage::SendEngineResponse(const SharedLogMessage& request,
+                                 SharedLogMessage* response,
+                                 std::span<const char> payload) {
+    response->origin_node_id = node_id_;
+    response->hop_times = request.hop_times + 1;
+    response->payload_size = payload.size();
+    response->client_data = request.client_data;
     return SendSharedLogMessage(protocol::ConnType::STORAGE_TO_ENGINE,
-                                dst_node_id, message, payload);
+                                request.origin_node_id, *response, payload);
 }
 
 void Storage::OnRecvSharedLogMessage(int conn_type, uint16_t src_node_id,
                                      const SharedLogMessage& message,
                                      std::span<const char> payload) {
-    switch (conn_type & kConnectionTypeMask) {
-    case kSequencerIngressTypeId:
-        OnRecvSequencerMessage(src_node_id, message, payload);
-        break;
-    case kEngineIngressTypeId:
-        OnRecvEngineMessage(src_node_id, message, payload);
-        break;
-    default:
-        UNREACHABLE();
-    }
+    SharedLogOpType op_type = SharedLogMessageHelper::GetOpType(message);
+    DCHECK(
+        (conn_type == kSequencerIngressTypeId && op_type == SharedLogOpType::METALOGS)
+     || (conn_type == kEngineIngressTypeId && op_type == SharedLogOpType::READ_AT)
+     || (conn_type == kEngineIngressTypeId && op_type == SharedLogOpType::REPLICATE)
+    ) << fmt::format("Invalid combination: conn_type={:#x}, op_type={:#x}",
+                     conn_type, message.op_type);
+    MessageHandler(message, payload);
 }
 
 bool Storage::SendSharedLogMessage(protocol::ConnType conn_type, uint16_t dst_node_id,
@@ -131,7 +213,8 @@ void Storage::OnRemoteMessageConn(const protocol::HandshakeMessage& handshake,
     connection->SetNewMessageCallback(
         server::IngressConnection::BuildNewSharedLogMessageCallback(
             absl::bind_front(&Storage::OnRecvSharedLogMessage, this,
-                             conn_type_id, src_node_id)));
+                             conn_type_id & kConnectionTypeMask,
+                             src_node_id)));
     RegisterConnection(PickIOWorkerForConnType(conn_type_id), connection.get());
     DCHECK_GE(connection->id(), 0);
     DCHECK(!ingress_conns_.contains(connection->id()));

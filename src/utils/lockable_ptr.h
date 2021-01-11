@@ -12,9 +12,10 @@ namespace faas {
 template<class T>
 class LockablePtr {
 public:
+    LockablePtr() : inner_(nullptr) {}
+
     // LockablePtr takes ownership of target
-    explicit LockablePtr(std::unique_ptr<T> target)
-        : inner_(nullptr) {
+    explicit LockablePtr(std::unique_ptr<T> target) : inner_(nullptr) {
         if (target != nullptr) {
             inner_.reset(new Inner);
             inner_->target = std::move(target);
@@ -24,6 +25,14 @@ public:
     // LockablePtr is copyable, thus can be shared between threads
     LockablePtr(const LockablePtr& other) = default;
     LockablePtr(LockablePtr&& other) = default;
+    LockablePtr& operator=(LockablePtr&& other) noexcept {
+        this->inner_ = std::move(other.inner_);
+        return *this;
+    }
+    LockablePtr& operator=(const LockablePtr& other) noexcept {
+        this->inner_ = other.inner_;
+        return *this;
+    }
 
     // Check if holds a target object
     inline bool is_null() const noexcept { return inner_ == nullptr; }
@@ -57,7 +66,7 @@ public:
             other.target_ = nullptr;
             other.thread_ = nullptr;
         }
-        Guard& operator=(Guard &&other) noexcept {
+        Guard& operator=(Guard&& other) noexcept {
             if (this != &other) {
                 mutex_ = other.mutex_;
                 target_ = other.target_;
@@ -109,7 +118,7 @@ public:
             other.target_ = nullptr;
             other.thread_ = nullptr;
         }
-        ReaderGuard& operator=(ReaderGuard &&other) noexcept {
+        ReaderGuard& operator=(ReaderGuard&& other) noexcept {
             if (this != &other) {
                 mutex_ = other.mutex_;
                 target_ = other.target_;

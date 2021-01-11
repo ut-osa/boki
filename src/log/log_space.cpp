@@ -182,5 +182,13 @@ LogStorage::LogStorage(uint16_t storage_id, const View* view, uint16_t sequencer
     state_ = kNormal;
 }
 
+void LogStorage::ReadAt(uint64_t seqnum, SharedLogRequest&& original_request) {
+
+}
+
+void LogStorage::PollReadResults(ReadResultVec* results) {
+
+}
+
 }  // namespace log
 }  // namespace faas

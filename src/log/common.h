@@ -49,7 +49,16 @@ struct LogRecord {
 
 struct SharedLogRequest {
     protocol::SharedLogMessage message;
-    std::string payload;
+    std::string                payload;
+
+    explicit SharedLogRequest(const protocol::SharedLogMessage& message,
+                              std::span<const char> payload = std::span<const char>())
+        : message(message),
+          payload() {
+        if (payload.size() > 0) {
+            this->payload.assign(payload.data(), payload.size());
+        }
+    }
 };
 
 struct LogMetaData {
@@ -61,9 +70,18 @@ struct LogMetaData {
 };
 
 struct LogEntry {
-    LogMetaData meta_data;
+    LogMetaData metadata;
     std::string data;
 };
+
+inline void PopulateLogMetaData(const LogMetaData& metadata,
+                                protocol::SharedLogMessage* read_response) {
+    read_response->logspace_id = metadata.logspace_id;
+    read_response->user_logspace = metadata.user_logspace;
+    read_response->user_tag = metadata.user_tag;
+    read_response->seqnum = metadata.seqnum;
+    read_response->localid = metadata.localid;
+}
 
 }  // namespace log
 }  // namespace faas

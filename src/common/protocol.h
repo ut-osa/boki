@@ -95,7 +95,7 @@ enum class SharedLogOpType : uint16_t {
     REPLICATE   = 0x11,  // Engine to Storage
     INDEX_DATA  = 0x12,  // Engine to Index
     SHARD_PROG  = 0x13,  // Storage to Sequencer
-    METALOG     = 0x14,  // Sequencer to Engine, Storage, Index
+    METALOGS    = 0x14,  // Sequencer to Engine, Storage, Index
     META_PROG   = 0x15,  // Sequencer to Sequencer
     RESPONSE    = 0x20
 };
@@ -246,14 +246,16 @@ struct SharedLogMessage {
     uint16_t hop_times;
     uint32_t payload_size;
 
-    uint32_t user_logspace;
     union {
         struct {
-            uint32_t metalog_position;
-            uint32_t logspace_id;
+            uint16_t sequencer_id;
+            uint16_t view_id;
         } __attribute__ ((packed));
-        uint64_t metalog_progress;
+        uint32_t logspace_id;
     };
+    uint32_t metalog_position;
+
+    uint32_t user_logspace;
     uint64_t user_tag;
     uint64_t seqnum;
     union {
@@ -658,7 +660,20 @@ public:
 #define NEW_EMPTY_SHAREDLOG_MESSAGE(MSG_VAR) \
     SharedLogMessage MSG_VAR; memset(&MSG_VAR, 0, sizeof(SharedLogMessage))
 
+    static SharedLogMessage NewResponse(SharedLogResultType result) {
+        NEW_EMPTY_SHAREDLOG_MESSAGE(message);
+        message.op_type = static_cast<uint16_t>(SharedLogOpType::RESPONSE);
+        message.op_result = static_cast<uint16_t>(result);
+        return message;
+    }
 
+    static SharedLogMessage NewReadOkResponse() {
+        return NewResponse(SharedLogResultType::READ_OK);
+    }
+
+    static SharedLogMessage NewDataLostResponse() {
+        return NewResponse(SharedLogResultType::DATA_LOST);
+    }
 
 #undef NEW_EMPTY_SHAREDLOG_MESSAGE
 

@@ -126,15 +126,16 @@ public:
     LogStorage(uint16_t storage_id, const View* view, uint16_t sequencer_id);
 
     void Store(const LogMetaData& log_metadata, std::span<const char> log_data);
-    void ReadAt(uint64_t seqnum, const protocol::SharedLogMessage& original_request);
+    void ReadAt(uint64_t seqnum, SharedLogRequest&& original_request);
 
     struct ReadResult {
-        enum Status { kOK, kLookDB, kFailed };
+        enum Status { kOK, kLookupDB, kFailed };
         Status status;
         std::shared_ptr<const LogEntry> log_entry;
-        protocol::SharedLogMessage original_request;
+        SharedLogRequest original_request;
     };
-    void PollReadResults(std::vector<ReadResult>* results);
+    typedef absl::InlinedVector<ReadResult, 4> ReadResultVec;
+    void PollReadResults(ReadResultVec* results);
 
 private:
     const View::Storage* storage_node_;
