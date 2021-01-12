@@ -202,8 +202,7 @@ void StorageBase::OnRemoteMessageConn(const protocol::HandshakeMessage& handshak
     connection->SetNewMessageCallback(
         IngressConnection::BuildNewSharedLogMessageCallback(
             absl::bind_front(&StorageBase::OnRecvSharedLogMessage, this,
-                             conn_type_id & kConnectionTypeMask,
-                             src_node_id)));
+                             conn_type_id & kConnectionTypeMask, src_node_id)));
     RegisterConnection(PickIOWorkerForConnType(conn_type_id), connection.get());
     DCHECK_GE(connection->id(), 0);
     DCHECK(!ingress_conns_.contains(connection->id()));

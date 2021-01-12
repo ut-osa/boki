@@ -1,5 +1,6 @@
 #pragma once
 
+#include "base/thread.h"
 #include "log/common.h"
 #include "log/view.h"
 #include "log/view_watcher.h"
@@ -25,7 +26,7 @@ protected:
     virtual void OnViewCreated(const View* view) = 0;
     virtual void OnViewFinalized(const FinalizedView* finalized_view) = 0;
 
-    virtual void HandleReadAtRequest(const protocol::SharedLogMessage& message) = 0;
+    virtual void HandleReadAtRequest(const protocol::SharedLogMessage& request) = 0;
     virtual void HandleReplicateRequest(const protocol::SharedLogMessage& message,
                                         std::span<const char> payload) = 0;
     virtual void OnRecvNewMetaLogs(const protocol::SharedLogMessage& message,
