@@ -13,6 +13,8 @@ public:
     ~Sequencer();
 
 private:
+    std::string log_header_;
+
     absl::Mutex core_mu_;
     const View* current_view_ ABSL_GUARDED_BY(core_mu_);
 
@@ -24,6 +26,7 @@ private:
     FutureRequests future_requests_ ABSL_GUARDED_BY(future_request_mu_);
 
     void OnViewCreated(const View* view) override;
+    void OnViewFrozen(const View* view) override;
     void OnViewFinalized(const FinalizedView* finalized_view) override;
 
     void HandleTrimRequest(const protocol::SharedLogMessage& request) override;

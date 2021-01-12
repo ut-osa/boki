@@ -11,23 +11,31 @@ public:
     MetaLogPrimary(const View* view, uint16_t sequencer_id);
     ~MetaLogPrimary();
 
+    uint32_t replicated_metalog_position() const {
+        return replicated_metalog_position_;
+    }
+    bool metalog_replicated() const {
+        return replicated_metalog_position_ == metalog_position();
+    }
+
     void UpdateStorageProgress(uint16_t storage_id,
                                const std::vector<uint32_t>& progress);
     void UpdateReplicaProgress(uint16_t sequencer_id, uint32_t metalog_position);
     bool MarkNextCut(MetaLogProto* meta_log_proto);
 
 private:
-    bool cut_dirty_;
+    absl::flat_hash_set</* engine_id */ uint16_t> dirty_shards_;
     absl::flat_hash_map</* engine_id */ uint16_t, uint32_t> last_cut_;
     absl::flat_hash_map<std::pair</* engine_id */  uint16_t,
                                   /* storage_id */ uint16_t>,
                         uint32_t> shard_progrsses_;
-    
+
     absl::flat_hash_map</* sequencer_id */ uint16_t,
                         uint32_t> metalog_progresses_;
+    uint32_t replicated_metalog_position_;
 
     uint32_t GetShardReplicatedPosition(uint16_t engine_id) const;
-    bool CheckMetaLogReplicated() const;
+    void UpdateMetaLogReplicatedPosition();
 
     DISALLOW_COPY_AND_ASSIGN(MetaLogPrimary);
 };

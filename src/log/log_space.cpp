@@ -7,7 +7,7 @@ namespace log {
 
 MetaLogPrimary::MetaLogPrimary(const View* view, uint16_t sequencer_id)
     : LogSpaceBase(LogSpaceBase::kFullMode, view, sequencer_id),
-      cut_dirty_(false) {
+      replicated_metalog_position_(0) {
     for (uint16_t engine_id : view_->GetEngineNodes()) {
         const View::Engine* engine_node = view_->GetEngineNode(engine_id);
         for (uint16_t storage_id : engine_node->GetStorageNodes()) {
@@ -49,7 +49,7 @@ void MetaLogPrimary::UpdateStorageProgress(uint16_t storage_id,
             uint32_t current_position = GetShardReplicatedPosition(engine_id);
             DCHECK_GE(current_position, last_cut_.at(engine_id));
             if (current_position > last_cut_.at(engine_id)) {
-                cut_dirty_ = true;
+                dirty_shards_.insert(engine_id);
             }
         }
     }
@@ -67,11 +67,55 @@ void MetaLogPrimary::UpdateReplicaProgress(uint16_t sequencer_id,
     }
     if (metalog_position > metalog_progresses_[sequencer_id]) {
         metalog_progresses_[sequencer_id] = metalog_position;
+        UpdateMetaLogReplicatedPosition();
     }
 }
 
 bool MetaLogPrimary::MarkNextCut(MetaLogProto* meta_log_proto) {
-    return false;
+    if (dirty_shards_.empty()) {
+        return false;
+    }
+    meta_log_proto->Clear();
+    meta_log_proto->set_logspace_id(identifier());
+    meta_log_proto->set_metalog_seqnum(metalog_position());
+    meta_log_proto->set_type(MetaLogProto::NEW_LOGS);
+    auto* new_logs_proto = meta_log_proto->mutable_new_logs_proto();
+    new_logs_proto->set_start_seqnum(seqnum_position());
+    for (uint16_t engine_id : view_->GetEngineNodes()) {
+        new_logs_proto->add_shard_starts(last_cut_.at(engine_id));
+        uint32_t delta = 0;
+        if (dirty_shards_.contains(engine_id)) {
+            uint32_t current_position = GetShardReplicatedPosition(engine_id);
+            DCHECK_GT(current_position, last_cut_.at(engine_id));
+            delta = current_position - last_cut_.at(engine_id);
+            last_cut_[engine_id] = current_position;
+        }
+        new_logs_proto->add_shard_deltas(delta);
+    }
+    if (!ProvideMetaLog(*meta_log_proto)) {
+        HLOG(FATAL) << "Failed to advance metalog position";
+    }
+    return true;
+}
+
+void MetaLogPrimary::UpdateMetaLogReplicatedPosition() {
+    if (replicated_metalog_position_ == metalog_position_) {
+        return;
+    }
+    if (metalog_progresses_.empty()) {
+        return;
+    }
+    std::vector<uint32_t> progress;
+    progress.reserve(metalog_progresses_.size());
+    for (const auto& item : metalog_progresses_) {
+        progress.push_back(item.second);
+    }
+    absl::c_sort(progress);
+    size_t mid = progress.size() / 2;
+    DCHECK_LT(mid, progress.size());
+    DCHECK_GE(progress[mid], replicated_metalog_position_);
+    DCHECK_LE(progress[mid], metalog_position_);
+    replicated_metalog_position_ = progress[mid];
 }
 
 uint32_t MetaLogPrimary::GetShardReplicatedPosition(uint16_t engine_id) const {
@@ -84,22 +128,6 @@ uint32_t MetaLogPrimary::GetShardReplicatedPosition(uint16_t engine_id) const {
     }
     DCHECK_LT(min_value, std::numeric_limits<uint32_t>::max());
     return min_value;
-}
-
-bool MetaLogPrimary::CheckMetaLogReplicated() const {
-    if (metalog_progresses_.empty()) {
-        return true;
-    }
-    std::vector<uint32_t> progress;
-    progress.reserve(metalog_progresses_.size());
-    for (const auto& item : metalog_progresses_) {
-        progress.push_back(item.second);
-    }
-    absl::c_sort(progress);
-    size_t mid = progress.size() / 2;
-    DCHECK_LT(mid, progress.size());
-    DCHECK_LE(progress[mid], metalog_position_);
-    return progress[mid] == metalog_position_;
 }
 
 MetaLogBackup::MetaLogBackup(const View* view, uint16_t sequencer_id)

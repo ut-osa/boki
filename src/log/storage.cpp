@@ -2,8 +2,6 @@
 
 #include "utils/bits.h"
 
-#define log_header_ "Storage: "
-
 namespace faas {
 namespace log {
 
@@ -13,6 +11,7 @@ using protocol::SharedLogOpType;
 
 Storage::Storage(uint16_t node_id)
     : StorageBase(node_id),
+      log_header_(fmt::format("Storage[{}]: ", node_id)),
       current_view_(nullptr) {}
 
 Storage::~Storage() {}
@@ -20,10 +19,13 @@ Storage::~Storage() {}
 void Storage::OnViewCreated(const View* view) {
     DCHECK(zk_session()->WithinMyEventLoopThread());
     std::vector<std::unique_ptr<LogStorage>> new_storages;
-    new_storages.reserve(view->num_sequencer_nodes());
-    for (uint16_t sequencer_id : view->GetSequencerNodes()) {
-        new_storages.push_back(std::make_unique<LogStorage>(
-            my_node_id(), view, sequencer_id));
+    bool contains_myself = view->contains_storage_node(my_node_id());
+    if (contains_myself) {
+        new_storages.reserve(view->num_sequencer_nodes());
+        for (uint16_t sequencer_id : view->GetSequencerNodes()) {
+            new_storages.push_back(std::make_unique<LogStorage>(
+                my_node_id(), view, sequencer_id));
+        }
     }
     std::vector<SharedLogRequest> ready_requests;
     {
@@ -36,6 +38,10 @@ void Storage::OnViewCreated(const View* view) {
         current_view_ = view;
     }
     if (!ready_requests.empty()) {
+        if (!contains_myself) {
+            HLOG(FATAL) << fmt::format("Have pending requests for view {} not including myself",
+                                       view->id());
+        }
         SomeIOWorker()->ScheduleFunction(
             nullptr, [this, requests = std::move(ready_requests)] {
                 ProcessRequests(requests);
@@ -50,7 +56,7 @@ void Storage::OnViewFinalized(const FinalizedView* finalized_view) {
     DCHECK_EQ(finalized_view->view()->id(), current_view_->id());
     storage_collection_.ForEachActiveLogSpace(
         finalized_view->view(),
-        [finalized_view] (uint32_t logspace_id, LockablePtr<LogStorage> storage_ptr) {
+        [finalized_view, this] (uint32_t logspace_id, LockablePtr<LogStorage> storage_ptr) {
             auto locked_storage = storage_ptr.Lock();
             bool success = locked_storage->Finalize(
                 finalized_view->final_metalog_position(logspace_id),

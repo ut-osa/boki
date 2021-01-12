@@ -13,6 +13,8 @@ public:
     ~Storage();
 
 private:
+    std::string log_header_;
+
     absl::Mutex core_mu_;
     const View* current_view_ ABSL_GUARDED_BY(core_mu_);
     LogSpaceCollection<LogStorage> storage_collection_ ABSL_GUARDED_BY(core_mu_);
