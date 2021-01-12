@@ -28,6 +28,16 @@ public:
     const NodeIdVec& GetSequencerNodes() const { return sequencer_node_ids_; }
     const NodeIdVec& GetStorageNodes() const { return storage_node_ids_; }
 
+    bool contains_engine_node(uint16_t node_id) const {
+        return engine_nodes_.contains(node_id);
+    }
+    bool contains_sequencer_node(uint16_t node_id) const {
+        return sequencer_nodes_.contains(node_id);
+    }
+    bool contains_storage_node(uint16_t node_id) const {
+        return storage_nodes_.contains(node_id);
+    }
+
     class Engine {
     public:
         Engine(Engine&& other) = default;
@@ -59,7 +69,8 @@ public:
     };
 
     const Engine* GetEngineNode(uint16_t node_id) const {
-        return engine_nodes_.contains(node_id) ? engine_nodes_.at(node_id) : nullptr;
+        DCHECK(engine_nodes_.contains(node_id));
+        return engine_nodes_.at(node_id);
     }
 
     class Sequencer {
@@ -103,7 +114,8 @@ public:
     };
 
     const Sequencer* GetSequencerNode(uint16_t node_id) const {
-        return sequencer_nodes_.contains(node_id) ? sequencer_nodes_.at(node_id) : nullptr;
+        DCHECK(sequencer_nodes_.contains(node_id));
+        return sequencer_nodes_.at(node_id);
     }
 
     const Sequencer* LogSpaceToSequencer(uint32_t log_space) const {
@@ -143,7 +155,8 @@ public:
     };
 
     const Storage* GetStorageNode(uint16_t node_id) const {
-        return storage_nodes_.contains(node_id) ? storage_nodes_.at(node_id) : nullptr;
+        DCHECK(storage_nodes_.contains(node_id));
+        return storage_nodes_.at(node_id);
     }
 
 private:

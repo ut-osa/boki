@@ -131,7 +131,7 @@ void Storage::OnRecvNewMetaLogs(const SharedLogMessage& message,
     if (metalogs_proto.metalogs_size() == 0) {
         HLOG(FATAL) << "Empty MetaLogsProto";
     }
-    uint32_t logspace_id = metalogs_proto.metalogs(0).logspace_id();
+    uint32_t logspace_id = message.logspace_id;
     for (const MetaLogProto& metalog_proto : metalogs_proto.metalogs()) {
         if (metalog_proto.logspace_id() != logspace_id) {
             HLOG(FATAL) << "Meta logs in on MetaLogsProto must have the same logspace_id";

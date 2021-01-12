@@ -1,5 +1,7 @@
 #include "log/log_space_base.h"
 
+#include "utils/bits.h"
+
 namespace faas {
 namespace log {
 
@@ -7,7 +9,7 @@ LogSpaceBase::LogSpaceBase(Mode mode, const View* view, uint16_t sequencer_id)
     : mode_(mode),
       state_(kCreated),
       view_(view),
-      sequencer_id_(sequencer_id),
+      sequencer_node_(view->GetSequencerNode(sequencer_id)),
       metalog_position_(0),
       seqnum_position_(0),
       log_header_(fmt::format("LogSpace[{}-{}]: ", view->id(), sequencer_id)),
@@ -128,14 +130,13 @@ void LogSpaceBase::ApplyMetaLog(const MetaLogProto& meta_log) {
             const View::NodeIdVec& engine_node_ids = view_->GetEngineNodes();
             uint32_t start_seqnum = new_logs.start_seqnum();
             for (size_t i = 0; i < engine_node_ids.size(); i++) {
-                uint64_t start_localid = BuildLocalId(
-                    view_->id(), engine_node_ids[i], new_logs.shard_starts(i));
+                uint64_t start_localid = bits::JoinTwo32(
+                    engine_node_ids[i], new_logs.shard_starts(i));
                 uint32_t delta = new_logs.shard_deltas(i);
-                if (mode_ == kFullMode) {
+                if (mode_ == kFullMode || interested_shards_.contains(i)) {
                     OnNewLogs(start_seqnum, start_localid, delta);
-                } else if (interested_shards_.contains(i)) {
-                    shard_progrsses_[i] = new_logs.shard_starts(i) + delta;
                 }
+                shard_progrsses_[i] = new_logs.shard_starts(i) + delta;
                 start_seqnum += delta;
             }
             DCHECK_GT(start_seqnum, seqnum_position_);

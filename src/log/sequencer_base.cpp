@@ -74,14 +74,57 @@ void SequencerBase::MessageHandler(const SharedLogMessage& message,
     }
 }
 
+namespace {
+static std::string SerializedMetaLogs(const MetaLogProto& metalog) {
+    MetaLogsProto metalogs_proto;
+    metalogs_proto.add_metalogs()->CopyFrom(metalog);
+    std::string serialized;
+    metalogs_proto.SerializeToString(&serialized);
+    return serialized;
+}
+}  // namespace
+
 void SequencerBase::ReplicateMetaLog(const MetaLogProto& metalog,
                                      const NodeIdVec& sequencer_nodes) {
-    
+    SharedLogMessage message = SharedLogMessageHelper::NewMetaLogsMessage(metalog.logspace_id());
+    std::string payload = SerializedMetaLogs(metalog);
+    message.origin_node_id = node_id_;
+    message.payload_size = payload.size();
+    for (uint16_t sequencer_id : sequencer_nodes) {
+        bool success = SendSharedLogMessage(
+            protocol::ConnType::SEQUENCER_TO_SEQUENCER, sequencer_id,
+            message, STRING_TO_SPAN(payload));
+        if (!success) {
+            HLOG(ERROR) << fmt::format("Failed to send metalog message to sequencer {}",
+                                       sequencer_id);
+        }
+    }
 }
 
 void SequencerBase::PropagateMetaLog(const MetaLogProto& metalog, const NodeIdVec& engine_nodes,
                                      const NodeIdVec& storage_nodes) {
-
+    SharedLogMessage message = SharedLogMessageHelper::NewMetaLogsMessage(metalog.logspace_id());
+    std::string payload = SerializedMetaLogs(metalog);
+    message.origin_node_id = node_id_;
+    message.payload_size = payload.size();
+    for (uint16_t engine_id : engine_nodes) {
+        bool success = SendSharedLogMessage(
+            protocol::ConnType::SEQUENCER_TO_ENGINE, engine_id,
+            message, STRING_TO_SPAN(payload));
+        if (!success) {
+            HLOG(ERROR) << fmt::format("Failed to send metalog message to engine {}",
+                                       engine_id);
+        }
+    }
+    for (uint16_t storage_id : storage_nodes) {
+        bool success = SendSharedLogMessage(
+            protocol::ConnType::SEQUENCER_TO_STORAGE, storage_id,
+            message, STRING_TO_SPAN(payload));
+        if (!success) {
+            HLOG(ERROR) << fmt::format("Failed to send metalog message to storage {}",
+                                       storage_id);
+        }
+    }
 }
 
 bool SequencerBase::SendSequencerMessage(uint16_t sequencer_id,

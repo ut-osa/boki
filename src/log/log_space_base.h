@@ -14,10 +14,8 @@ public:
     virtual ~LogSpaceBase();
 
     uint16_t view_id() const { return view_->id(); }
-    uint16_t sequencer_id() const { return sequencer_id_; }
-    uint32_t identifier() const {
-        return bits::JoinTwo16(view_->id(), sequencer_id_);
-    }
+    uint16_t sequencer_id() const { return sequencer_node_->node_id(); }
+    uint32_t identifier() const { return bits::JoinTwo16(view_id(), sequencer_id()); }
 
     uint32_t metalog_position() const { return metalog_position_; }
     uint32_t seqnum_position() const { return seqnum_position_; }
@@ -53,7 +51,7 @@ protected:
     Mode mode_;
     State state_;
     const View* view_;
-    uint16_t sequencer_id_;
+    const View::Sequencer* sequencer_node_;
     uint32_t metalog_position_;
     uint32_t seqnum_position_;
     std::string log_header_;

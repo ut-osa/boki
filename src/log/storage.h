@@ -23,7 +23,7 @@ private:
     void OnViewCreated(const View* view) override;
     void OnViewFinalized(const FinalizedView* finalized_view) override;
 
-    void HandleReadAtRequest(const protocol::SharedLogMessage& message) override;
+    void HandleReadAtRequest(const protocol::SharedLogMessage& request) override;
     void HandleReplicateRequest(const protocol::SharedLogMessage& message,
                                 std::span<const char> payload) override;
     void OnRecvNewMetaLogs(const protocol::SharedLogMessage& message,

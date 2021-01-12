@@ -7,12 +7,100 @@ namespace log {
 
 MetaLogPrimary::MetaLogPrimary(const View* view, uint16_t sequencer_id)
     : LogSpaceBase(LogSpaceBase::kFullMode, view, sequencer_id),
-      sequencer_node_(view->GetSequencerNode(sequencer_id)) {
+      cut_dirty_(false) {
+    for (uint16_t engine_id : view_->GetEngineNodes()) {
+        const View::Engine* engine_node = view_->GetEngineNode(engine_id);
+        for (uint16_t storage_id : engine_node->GetStorageNodes()) {
+            auto pair = std::make_pair(engine_id, storage_id);
+            shard_progrsses_[pair] = 0;
+        }
+        last_cut_[engine_id] = 0;
+    }
+    for (uint16_t sequencer_id : sequencer_node_->GetReplicaSequencerNodes()) {
+        metalog_progresses_[sequencer_id] = 0;
+    }
     log_header_ = fmt::format("MetaLogPrimary[{}]: ", view->id());
+    if (metalog_progresses_.empty()) {
+        HLOG(WARNING) << "No meta log replication";
+    }
     state_ = kNormal;
 }
 
 MetaLogPrimary::~MetaLogPrimary() {}
+
+void MetaLogPrimary::UpdateStorageProgress(uint16_t storage_id,
+                                           const std::vector<uint32_t>& progress) {
+    if (!view_->contains_storage_node(storage_id)) {
+        HLOG(FATAL) << fmt::format("View {} does not has storage node {}",
+                                   view_->id(), storage_id);
+    }
+    const View::Storage* storage_node = view_->GetStorageNode(storage_id);
+    const View::NodeIdVec& engine_node_ids = storage_node->GetSourceEngineNodes();
+    if (progress.size() != engine_node_ids.size()) {
+        HLOG(FATAL) << fmt::format("Size does not match: have={}, expected={}",
+                                   progress.size(), engine_node_ids.size());
+    }
+    for (size_t i = 0; i < progress.size(); i++) {
+        uint16_t engine_id = engine_node_ids[i];
+        auto pair = std::make_pair(engine_id, storage_id);
+        DCHECK(shard_progrsses_.contains(pair));
+        if (progress[i] > shard_progrsses_[pair]) {
+            shard_progrsses_[pair] = progress[i];
+            uint32_t current_position = GetShardReplicatedPosition(engine_id);
+            DCHECK_GE(current_position, last_cut_.at(engine_id));
+            if (current_position > last_cut_.at(engine_id)) {
+                cut_dirty_ = true;
+            }
+        }
+    }
+}
+
+void MetaLogPrimary::UpdateReplicaProgress(uint16_t sequencer_id,
+                                           uint32_t metalog_position) {
+    if (!sequencer_node_->IsReplicaSequencerNode(sequencer_id)) {
+        HLOG(FATAL) << fmt::format("Should not receive META_PROG message from sequencer {}",
+                                    sequencer_id);
+    }
+    if (metalog_position > metalog_position_) {
+        HLOG(FATAL) << fmt::format("Receive future position: received={}, current={}",
+                                   metalog_position, metalog_position_);
+    }
+    if (metalog_position > metalog_progresses_[sequencer_id]) {
+        metalog_progresses_[sequencer_id] = metalog_position;
+    }
+}
+
+bool MetaLogPrimary::MarkNextCut(MetaLogProto* meta_log_proto) {
+    return false;
+}
+
+uint32_t MetaLogPrimary::GetShardReplicatedPosition(uint16_t engine_id) const {
+    uint32_t min_value = std::numeric_limits<uint32_t>::max();
+    const View::Engine* engine_node = view_->GetEngineNode(engine_id);
+    for (uint16_t storage_id : engine_node->GetStorageNodes()) {
+        auto pair = std::make_pair(engine_id, storage_id);
+        DCHECK(shard_progrsses_.contains(pair));
+        min_value = std::min(min_value, shard_progrsses_.at(pair));
+    }
+    DCHECK_LT(min_value, std::numeric_limits<uint32_t>::max());
+    return min_value;
+}
+
+bool MetaLogPrimary::CheckMetaLogReplicated() const {
+    if (metalog_progresses_.empty()) {
+        return true;
+    }
+    std::vector<uint32_t> progress;
+    progress.reserve(metalog_progresses_.size());
+    for (const auto& item : metalog_progresses_) {
+        progress.push_back(item.second);
+    }
+    absl::c_sort(progress);
+    size_t mid = progress.size() / 2;
+    DCHECK_LT(mid, progress.size());
+    DCHECK_LE(progress[mid], metalog_position_);
+    return progress[mid] == metalog_position_;
+}
 
 MetaLogBackup::MetaLogBackup(const View* view, uint16_t sequencer_id)
     : LogSpaceBase(LogSpaceBase::kFullMode, view, sequencer_id) {

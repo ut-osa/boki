@@ -663,6 +663,13 @@ public:
 #define NEW_EMPTY_SHAREDLOG_MESSAGE(MSG_VAR) \
     SharedLogMessage MSG_VAR; memset(&MSG_VAR, 0, sizeof(SharedLogMessage))
 
+    static SharedLogMessage NewMetaLogsMessage(uint32_t logspace_id) {
+        NEW_EMPTY_SHAREDLOG_MESSAGE(message);
+        message.op_type = static_cast<uint16_t>(SharedLogOpType::METALOGS);
+        message.logspace_id = logspace_id;
+        return message;
+    }
+
     static SharedLogMessage NewShardProgressMessage(uint32_t logspace_id) {
         NEW_EMPTY_SHAREDLOG_MESSAGE(message);
         message.op_type = static_cast<uint16_t>(SharedLogOpType::SHARD_PROG);
