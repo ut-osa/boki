@@ -95,7 +95,7 @@ enum class SharedLogOpType : uint16_t {
     REPLICATE   = 0x11,  // Engine to Storage
     INDEX_DATA  = 0x12,  // Engine to Index
     SHARD_PROG  = 0x13,  // Storage to Sequencer
-    METALOGS    = 0x14,  // Sequencer to Engine, Storage, Index
+    METALOGS    = 0x14,  // Sequencer to Sequencer, Engine, Storage, Index
     META_PROG   = 0x15,  // Sequencer to Sequencer
     RESPONSE    = 0x20
 };

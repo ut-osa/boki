@@ -20,6 +20,7 @@ constexpr int kTimerTypeId                  = 0x10 << 16;
 constexpr int kSLogLocalCutTimerTypeId      = kTimerTypeId + 1;
 constexpr int kSLogStateCheckTimerTypeId    = kTimerTypeId + 2;
 constexpr int kSendShardProgressTimerId     = kTimerTypeId + 3;
+constexpr int kMetaLogCutTimerId            = kTimerTypeId + 3;
 
 // Used by Gateway
 constexpr int kHttpConnectionTypeId         = 0x20 << 16;

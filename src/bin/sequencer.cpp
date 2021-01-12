@@ -1,20 +1,19 @@
 #include "base/init.h"
 #include "base/common.h"
+#include "common/flags.h"
 #include "utils/env_variables.h"
-#include "sequencer/server.h"
+#include "log/sequencer.h"
 
 #include <signal.h>
-#include <absl/flags/flag.h>
 
-ABSL_FLAG(std::string, raft_datadir, "", "Path to saving raft data");
-ABSL_FLAG(std::string, config_file, "", "Path to config file of sequencers");
-ABSL_FLAG(int, sequencer_id, -1, "My sequencer ID");
+ABSL_FLAG(int, node_id, -1,
+          "My node ID. Also settable through environment variable FAAS_NODE_ID.");
 
 namespace faas {
 
-static std::atomic<sequencer::Server*> server_ptr{nullptr};
+static std::atomic<server::ServerBase*> server_ptr{nullptr};
 static void SignalHandlerToStopServer(int signal) {
-    sequencer::Server* server = server_ptr.exchange(nullptr);
+    server::ServerBase* server = server_ptr.exchange(nullptr);
     if (server != nullptr) {
         server->ScheduleStop();
     }
@@ -23,19 +22,20 @@ static void SignalHandlerToStopServer(int signal) {
 void SequencerMain(int argc, char* argv[]) {
     signal(SIGINT, SignalHandlerToStopServer);
     base::InitMain(argc, argv);
+    flags::PopulateHostnameIfEmpty();
 
-    int sequencer_id = absl::GetFlag(FLAGS_sequencer_id);
-    if (sequencer_id == -1) {
-        sequencer_id = utils::GetEnvVariableAsInt("FAAS_SEQUENCER_ID", -1);
+    int node_id = absl::GetFlag(FLAGS_node_id);
+    if (node_id == -1) {
+        node_id = utils::GetEnvVariableAsInt("FAAS_NODE_ID", -1);
     }
-    auto server = std::make_unique<sequencer::Server>(
-        gsl::narrow_cast<uint16_t>(sequencer_id));
-    server->set_config_path(absl::GetFlag(FLAGS_config_file));
-    server->set_raft_data_dir(absl::GetFlag(FLAGS_raft_datadir));
+    if (node_id == -1) {
+        LOG(FATAL) << "Node ID not set!";
+    }
+    auto sequencer = std::make_unique<log::Sequencer>(node_id);
 
-    server->Start();
-    server_ptr.store(server.get());
-    server->WaitForFinish();
+    sequencer->Start();
+    server_ptr.store(sequencer.get());
+    sequencer->WaitForFinish();
 }
 
 }  // namespace faas
