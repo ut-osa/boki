@@ -6,8 +6,6 @@
 namespace faas {
 namespace server {
 
-class ServerBase;
-
 class Timer final : public server::ConnectionBase {
 public:
     typedef std::function<void()> Callback;
@@ -22,7 +20,6 @@ public:
     bool TriggerIn(absl::Duration d);
 
 private:
-    friend class ServerBase;
     enum State { kCreated, kIdle, kScheduled, kClosing, kClosed };
 
     bool periodic_;

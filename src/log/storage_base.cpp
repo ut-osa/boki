@@ -112,16 +112,16 @@ bool StorageBase::GetLogEntryFromDB(uint32_t logspace_id, uint32_t seqnum,
     return true;
 }
 
-void StorageBase::PutLogEntryToDB(const LogEntry* log_entry) {
-    std::string db_key = GetDBKey(log_entry->metadata.logspace_id,
-                                  log_entry->metadata.seqnum);
+void StorageBase::PutLogEntryToDB(const LogEntry& log_entry) {
+    std::string db_key = GetDBKey(log_entry.metadata.logspace_id,
+                                  log_entry.metadata.seqnum);
     LogEntryProto log_entry_proto;
-    log_entry_proto.set_logspace_id(log_entry->metadata.logspace_id);
-    log_entry_proto.set_user_logspace(log_entry->metadata.user_logspace);
-    log_entry_proto.set_user_tag(log_entry->metadata.user_tag);
-    log_entry_proto.set_seqnum(log_entry->metadata.seqnum);
-    log_entry_proto.set_localid(log_entry->metadata.localid);
-    log_entry_proto.set_data(log_entry->data);
+    log_entry_proto.set_logspace_id(log_entry.metadata.logspace_id);
+    log_entry_proto.set_user_logspace(log_entry.metadata.user_logspace);
+    log_entry_proto.set_user_tag(log_entry.metadata.user_tag);
+    log_entry_proto.set_seqnum(log_entry.metadata.seqnum);
+    log_entry_proto.set_localid(log_entry.metadata.localid);
+    log_entry_proto.set_data(log_entry.data);
     std::string data;
     log_entry_proto.SerializeToString(&data);
     auto status = db_->Put(rocksdb::WriteOptions(), db_key, data);

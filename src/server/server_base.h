@@ -47,10 +47,11 @@ protected:
     void CreatePeriodicTimer(int timer_type, absl::Duration interval, Timer::Callback cb);
 
     // Supposed to be implemented by sub-class
-    virtual void StartInternal() {}
-    virtual void StopInternal() {}
-    virtual void OnConnectionClose(ConnectionBase* connection) {}
-    virtual void OnRemoteMessageConn(const protocol::HandshakeMessage& handshake, int sockfd);
+    virtual void StartInternal() = 0;
+    virtual void StopInternal() = 0;
+    virtual void OnConnectionClose(ConnectionBase* connection) = 0;
+    virtual void OnRemoteMessageConn(const protocol::HandshakeMessage& handshake,
+                                     int sockfd) = 0;
 
     static int GetIngressConnTypeId(protocol::ConnType conn_type, uint16_t node_id);
     static int GetEgressHubTypeId(protocol::ConnType conn_type, uint16_t node_id);
