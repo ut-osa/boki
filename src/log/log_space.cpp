@@ -12,11 +12,15 @@ MetaLogPrimary::MetaLogPrimary(const View* view, uint16_t sequencer_id)
     state_ = kNormal;
 }
 
+MetaLogPrimary::~MetaLogPrimary() {}
+
 MetaLogBackup::MetaLogBackup(const View* view, uint16_t sequencer_id)
     : LogSpaceBase(LogSpaceBase::kFullMode, view, sequencer_id) {
     log_header_ = fmt::format("MetaLogBackup[{}-{}]: ", view->id(), sequencer_id);
     state_ = kNormal;
 }
+
+MetaLogBackup::~MetaLogBackup() {}
 
 LogProducer::LogProducer(uint16_t engine_id, const View* view, uint16_t sequencer_id)
     : LogSpaceBase(LogSpaceBase::kLiteMode, view, sequencer_id) {
@@ -25,9 +29,12 @@ LogProducer::LogProducer(uint16_t engine_id, const View* view, uint16_t sequence
     state_ = kNormal;
 }
 
+LogProducer::~LogProducer() {}
+
 LogStorage::LogStorage(uint16_t storage_id, const View* view, uint16_t sequencer_id)
     : LogSpaceBase(LogSpaceBase::kLiteMode, view, sequencer_id),
       storage_node_(view_->GetStorageNode(storage_id)),
+      shard_progrss_dirty_(false),
       persisted_seqnum_position_(0) {
     for (uint16_t engine_id : storage_node_->GetSourceEngineNodes()) {
         AddInterestedShard(engine_id);
@@ -36,6 +43,8 @@ LogStorage::LogStorage(uint16_t storage_id, const View* view, uint16_t sequencer
     log_header_ = fmt::format("LogStorage[{}-{}]: ", view->id(), sequencer_id);
     state_ = kNormal;
 }
+
+LogStorage::~LogStorage() {}
 
 bool LogStorage::Store(const LogMetaData& log_metadata,
                        std::span<const char> log_data) {
@@ -104,6 +113,18 @@ void LogStorage::PollReadResults(ReadResultVec* results) {
     pending_read_results_.clear();
 }
 
+bool LogStorage::GrabShardProgressForSending(std::vector<uint32_t>* progress) {
+    if (!shard_progrss_dirty_) {
+        return false;
+    }
+    progress->clear();
+    for (uint16_t engine_id : storage_node_->GetSourceEngineNodes()) {
+        progress->push_back(shard_progrsses_[engine_id]);
+    }
+    shard_progrss_dirty_ = false;
+    return true;
+}
+
 void LogStorage::OnNewLogs(uint32_t start_seqnum, uint64_t start_localid,
                            uint32_t delta) {
     auto iter = pending_read_requests_.begin();
@@ -162,7 +183,10 @@ void LogStorage::AdvanceShardProgress(uint16_t engine_id) {
     while (pending_log_entries_.contains(bits::JoinTwo32(engine_id, current))) {
         current++;
     }
-    shard_progrsses_[engine_id] = current;
+    if (current > shard_progrsses_[engine_id]) {
+        shard_progrss_dirty_ = true;
+        shard_progrsses_[engine_id] = current;
+    }
 }
 
 void LogStorage::ShrinkLiveEntriesIfNeeded() {

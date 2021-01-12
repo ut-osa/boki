@@ -1,6 +1,6 @@
 #include "log/storage_base.h"
 
-#include "common/flags.h"
+#include "log/flags.h"
 #include "server/constants.h"
 
 #define log_header_ "StorageBase: "
@@ -28,6 +28,7 @@ StorageBase::~StorageBase() {}
 void StorageBase::StartInternal() {
     SetupRocksDB();
     SetupZKWatchers();
+    SetupTimers();
     background_thread_.Start();
 }
 
@@ -61,6 +62,14 @@ void StorageBase::SetupZKWatchers() {
         }
     );
     view_watcher_.StartWatching(zk_session());
+}
+
+void StorageBase::SetupTimers() {
+    CreatePeriodicTimer(
+        kSendShardProgressTimerId,
+        absl::Microseconds(absl::GetFlag(FLAGS_slog_local_cut_interval_us)),
+        [this] () { this->SendShardProgressIfNeeded(); }
+    );
 }
 
 void StorageBase::MessageHandler(const SharedLogMessage& message,

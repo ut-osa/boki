@@ -32,6 +32,7 @@ protected:
                                    std::span<const char> payload) = 0;
 
     virtual void BackgroundThreadMain() = 0;
+    virtual void SendShardProgressIfNeeded() = 0;
 
     void MessageHandler(const protocol::SharedLogMessage& message,
                         std::span<const char> payload);
@@ -66,6 +67,7 @@ private:
 
     void SetupRocksDB();
     void SetupZKWatchers();
+    void SetupTimers();
 
     void StartInternal() override;
     void StopInternal() override;

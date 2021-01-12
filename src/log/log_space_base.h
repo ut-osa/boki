@@ -92,7 +92,9 @@ public:
     // Only finalized LogSpace can be removed
     bool RemoveLogSpace(uint32_t identifier);
 
-    bool GetAllActiveLogSpaces(uint16_t view_id, std::vector<LockablePtr<T>>* results) const;
+    typedef std::function<void(/* identifier */ uint32_t, LockablePtr<T>)> IterCallback;
+    void ForEachActiveLogSpace(const View* view, IterCallback cb) const;
+
     LockablePtr<T> GetNextActiveLogSpace(uint32_t min_identifier) const;
     LockablePtr<T> GetNextFinalizedLogSpace(uint32_t min_identifier) const;
 
@@ -158,21 +160,18 @@ bool LogSpaceCollection<T>::RemoveLogSpace(uint32_t identifier) {
 }
 
 template<class T>
-bool LogSpaceCollection<T>::GetAllActiveLogSpaces(uint16_t view_id,
-                                                  std::vector<LockablePtr<T>>* results) const {
-    if (view_id >= next_view_id_) {
-        return false;
+void LogSpaceCollection<T>::ForEachActiveLogSpace(const View* view, IterCallback cb) const {
+    if (view->id() >= next_view_id_) {
+        return;
     }
-    results->clear();
-    auto iter = active_log_spaces_.lower_bound(bits::JoinTwo16(view_id, 0));
+    auto iter = active_log_spaces_.lower_bound(bits::JoinTwo16(view->id(), 0));
     while (iter != active_log_spaces_.end()) {
-        if (bits::HighHalf32(*iter) > view_id) {
+        if (bits::HighHalf32(*iter) > view->id()) {
             break;
         }
         DCHECK(log_spaces_.contains(*iter));
-        results->push_back(log_spaces_.at(*iter));
+        cb(*iter, log_spaces_.at(*iter));
     }
-    return !results->empty();
 }
 
 template<class T>

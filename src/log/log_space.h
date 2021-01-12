@@ -9,6 +9,7 @@ namespace log {
 class MetaLogPrimary final : public LogSpaceBase {
 public:
     MetaLogPrimary(const View* view, uint16_t sequencer_id);
+    ~MetaLogPrimary();
 
     void UpdateStorageProgress(uint16_t stroage_id,
                                const std::vector<uint32_t>& progress);
@@ -25,6 +26,7 @@ private:
 class MetaLogBackup final : public LogSpaceBase {
 public:
     MetaLogBackup(const View* view, uint16_t sequencer_id);
+    ~MetaLogBackup();
 
 private:
     DISALLOW_COPY_AND_ASSIGN(MetaLogBackup);
@@ -34,6 +36,7 @@ private:
 class LogProducer final : public LogSpaceBase {
 public:
     LogProducer(uint16_t engine_id, const View* view, uint16_t sequencer_id);
+    ~LogProducer();
 
     // Will store localid in Log_metadata
     void AppendLocally(LogMetaData* log_metadata,
@@ -59,6 +62,7 @@ private:
 class LogStorage final : public LogSpaceBase {
 public:
     LogStorage(uint16_t storage_id, const View* view, uint16_t sequencer_id);
+    ~LogStorage();
 
     bool Store(const LogMetaData& log_metadata, std::span<const char> log_data);
     void ReadAt(const protocol::SharedLogMessage& request);
@@ -77,9 +81,12 @@ public:
     typedef absl::InlinedVector<ReadResult, 4> ReadResultVec;
     void PollReadResults(ReadResultVec* results);
 
+    bool GrabShardProgressForSending(std::vector<uint32_t>* progress);
+
 private:
     const View::Storage* storage_node_;
 
+    bool shard_progrss_dirty_;
     absl::flat_hash_map</* engine_id */ uint16_t,
                         /* localid */ uint32_t> shard_progrsses_;
 

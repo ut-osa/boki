@@ -15,6 +15,7 @@ public:
 
 private:
     absl::Mutex core_mu_;
+    const View* current_view_ ABSL_GUARDED_BY(core_mu_);
     LogSpaceCollection<LogStorage> storage_collection_ ABSL_GUARDED_BY(core_mu_);
 
     absl::Mutex future_request_mu_ ABSL_ACQUIRED_AFTER(core_mu_);
@@ -34,6 +35,7 @@ private:
     void ProcessRequests(const std::vector<SharedLogRequest>& requests);
 
     void BackgroundThreadMain() override;
+    void SendShardProgressIfNeeded() override;
 
     DISALLOW_COPY_AND_ASSIGN(Storage);
 };

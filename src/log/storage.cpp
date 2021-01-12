@@ -12,7 +12,8 @@ using protocol::SharedLogMessageHelper;
 using protocol::SharedLogOpType;
 
 Storage::Storage(uint16_t node_id)
-    : StorageBase(node_id) {}
+    : StorageBase(node_id),
+      current_view_(nullptr) {}
 
 Storage::~Storage() {}
 
@@ -32,6 +33,7 @@ void Storage::OnViewCreated(const View* view) {
             absl::MutexLock future_request_lk(&future_request_mu_);
             future_requests_.OnNewView(view, &ready_requests);
         }
+        current_view_ = view;
     }
     if (!ready_requests.empty()) {
         SomeIOWorker()->ScheduleFunction(
@@ -44,20 +46,21 @@ void Storage::OnViewCreated(const View* view) {
 
 void Storage::OnViewFinalized(const FinalizedView* finalized_view) {
     DCHECK(zk_session()->WithinMyEventLoopThread());
-    const View* view = finalized_view->view();
-    absl::MutexLock core_lk(&core_mu_);
-    for (uint16_t sequencer_id : view->GetSequencerNodes()) {
-        uint32_t logspace_id = bits::JoinTwo16(view->id(), sequencer_id);
-        LockablePtr<LogStorage> storage_ptr = storage_collection_.GetLogSpace(logspace_id);
-        auto locked_storage = storage_ptr.Lock();
-        bool success = locked_storage->Finalize(
-            finalized_view->final_metalog_position(logspace_id),
-            finalized_view->tail_metalogs(logspace_id));
-        if (!success) {
-            HLOG(FATAL) << fmt::format("Failed to finalize log space {}",
-                                        bits::HexStr0x(logspace_id));
+    absl::ReaderMutexLock core_lk(&core_mu_);
+    DCHECK_EQ(finalized_view->view()->id(), current_view_->id());
+    storage_collection_.ForEachActiveLogSpace(
+        finalized_view->view(),
+        [finalized_view] (uint32_t logspace_id, LockablePtr<LogStorage> storage_ptr) {
+            auto locked_storage = storage_ptr.Lock();
+            bool success = locked_storage->Finalize(
+                finalized_view->final_metalog_position(logspace_id),
+                finalized_view->tail_metalogs(logspace_id));
+            if (!success) {
+                HLOG(FATAL) << fmt::format("Failed to finalize log space {}",
+                                            bits::HexStr0x(logspace_id));
+            }
         }
-    }
+    );
 }
 
 void Storage::HandleReadAtRequest(const SharedLogMessage& request) {
@@ -222,8 +225,34 @@ void Storage::ProcessRequests(const std::vector<SharedLogRequest>& requests) {
 void Storage::BackgroundThreadMain() {
     bool running = true;
     while (running) {
-
+        absl::SleepFor(absl::Milliseconds(100));
         running = state_.load(std::memory_order_acquire) != kStopping;
+    }
+}
+
+void Storage::SendShardProgressIfNeeded() {
+    std::vector<std::pair<uint32_t, std::vector<uint32_t>>> progress_to_send;
+    {
+        absl::ReaderMutexLock core_lk(&core_mu_);
+        if (current_view_ == nullptr) {
+            return;
+        }
+        storage_collection_.ForEachActiveLogSpace(
+            current_view_,
+            [&progress_to_send] (uint32_t logspace_id, LockablePtr<LogStorage> storage_ptr) {
+                auto locked_storage = storage_ptr.Lock();
+                std::vector<uint32_t> progress;
+                if (locked_storage->GrabShardProgressForSending(&progress)) {
+                    progress_to_send.emplace_back(logspace_id, std::move(progress));
+                }
+            }
+        );
+    }
+    for (const auto& entry : progress_to_send) {
+        uint32_t logspace_id = entry.first;
+        SharedLogMessage message = SharedLogMessageHelper::NewShardProgressMessage(logspace_id);
+        SendSequencerMessage(bits::LowHalf32(logspace_id), &message,
+                             VECTOR_TO_CHAR_SPAN(entry.second));
     }
 }
 

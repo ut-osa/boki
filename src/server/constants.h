@@ -19,6 +19,7 @@ constexpr int kStorageEgressHubTypeId       = 0x07 << 16;
 constexpr int kTimerTypeId                  = 0x10 << 16;
 constexpr int kSLogLocalCutTimerTypeId      = kTimerTypeId + 1;
 constexpr int kSLogStateCheckTimerTypeId    = kTimerTypeId + 2;
+constexpr int kSendShardProgressTimerId     = kTimerTypeId + 3;
 
 // Used by Gateway
 constexpr int kHttpConnectionTypeId         = 0x20 << 16;
@@ -34,6 +35,8 @@ constexpr int kSLogMessageHubTypeId         = 0x33 << 16;
 
 // 8-byte buffer group
 constexpr uint16_t kOctaBufGroup                   = 0x00;
+// Default buffer group for IngressConnection
+// Default buffer size is 64KB
 constexpr uint16_t kDefaultIngressBufGroup         = 0x01;
 
 // Used by Gateway
