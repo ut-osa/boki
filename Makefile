@@ -26,7 +26,7 @@ ABSL_LIBRARIES = $(shell find deps/out/lib/libabsl_*.a -printf '%f\n' \
                    | sed -e 's/libabsl_\([a-z0-9_]\+\)\.a/-labsl_\1/g')
 LINK_FLAGS = -Ldeps/out/lib \
     -Wl,-Bstatic -luv_a -lhttp_parser -lnghttp2 \
-	-luring -lprotobuf-lite -lraft -lrocksdb -lzookeeper_st \
+	-luring -lprotobuf-lite -lrocksdb -lzookeeper_st \
     -Wl,--start-group $(ABSL_LIBRARIES) -Wl,--end-group \
 	-lzstd -ljemalloc \
 	-Wl,-Bdynamic -lpthread -ldl \
