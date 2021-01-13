@@ -51,7 +51,6 @@ protected:
 private:
     const uint16_t node_id_;
 
-    server::NodeWatcher node_watcher_;
     ViewWatcher view_watcher_;
 
     std::string db_path_;

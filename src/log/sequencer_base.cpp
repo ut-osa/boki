@@ -33,7 +33,6 @@ void SequencerBase::StartInternal() {
 void SequencerBase::StopInternal() {}
 
 void SequencerBase::SetupZKWatchers() {
-    node_watcher_.StartWatching(zk_session());
     view_watcher_.SetViewCreatedCallback(
         [this] (const View* view) {
             this->OnViewCreated(view);
@@ -271,8 +270,8 @@ EgressHub* SequencerBase::CreateEgressHub(protocol::ConnType conn_type,
                                           uint16_t dst_node_id,
                                           IOWorker* io_worker) {
     struct sockaddr_in addr;
-    if (!node_watcher_.GetNodeAddr(NodeWatcher::GetDstNodeType(conn_type),
-                                   dst_node_id, &addr)) {
+    if (!node_watcher()->GetNodeAddr(NodeWatcher::GetDstNodeType(conn_type),
+                                     dst_node_id, &addr)) {
         return nullptr;
     }
     auto egress_hub = std::make_unique<EgressHub>(

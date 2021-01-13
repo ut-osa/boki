@@ -47,7 +47,6 @@ protected:
 private:
     const uint16_t node_id_;
 
-    server::NodeWatcher node_watcher_;
     ViewWatcher view_watcher_;
 
     absl::flat_hash_map</* id */ int, std::unique_ptr<server::IngressConnection>>
