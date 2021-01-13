@@ -11,7 +11,7 @@ using protocol::SharedLogOpType;
 
 Sequencer::Sequencer(uint16_t node_id)
     : SequencerBase(node_id),
-      log_header_(fmt::format("Sequencer[{}]: ", node_id)),
+      log_header_(fmt::format("Sequencer[{}-N]: ", node_id)),
       current_view_(nullptr) {}
 
 Sequencer::~Sequencer() {}
@@ -40,6 +40,7 @@ void Sequencer::OnViewCreated(const View* view) {
             future_requests_.OnNewView(view, contains_myself ? &ready_requests : nullptr);
         }
         current_view_ = view;
+        log_header_ = fmt::format("Sequencer[{}-{}]: ", my_node_id(), view->id());
     }
     if (!ready_requests.empty()) {
         SomeIOWorker()->ScheduleFunction(
@@ -52,10 +53,33 @@ void Sequencer::OnViewCreated(const View* view) {
 
 void Sequencer::OnViewFrozen(const View* view) {
     DCHECK(zk_session()->WithinMyEventLoopThread());
+    absl::ReaderMutexLock core_lk(&core_mu_);
+    // TODO: publish tail metalogs
+    DCHECK_EQ(view->id(), current_view_->id());
+    if (current_primary_ != nullptr) {
+        FreezeLogSpace<MetaLogPrimary>(current_primary_);
+    }
+    backup_collection_.ForEachActiveLogSpace(
+        view,
+        [this] (uint32_t, LockablePtr<MetaLogBackup> logspace_ptr) {
+            FreezeLogSpace<MetaLogBackup>(std::move(logspace_ptr));
+        }
+    );
 }
 
 void Sequencer::OnViewFinalized(const FinalizedView* finalized_view) {
     DCHECK(zk_session()->WithinMyEventLoopThread());
+    absl::ReaderMutexLock core_lk(&core_mu_);
+    DCHECK_EQ(finalized_view->view()->id(), current_view_->id());
+    if (current_primary_ != nullptr) {
+        FinalizedLogSpace<MetaLogPrimary>(current_primary_, finalized_view);
+    }
+    backup_collection_.ForEachActiveLogSpace(
+        finalized_view->view(),
+        [finalized_view, this] (uint32_t, LockablePtr<MetaLogBackup> logspace_ptr) {
+            FinalizedLogSpace<MetaLogBackup>(std::move(logspace_ptr), finalized_view);
+        }
+    );
 }
 
 #define ONHOLD_IF_FROM_FUTURE_VIEW(MESSAGE_VAR, PAYLOAD_VAR)        \
@@ -88,6 +112,17 @@ void Sequencer::OnViewFinalized(const FinalizedView* finalized_view) {
         }                                                           \
     } while (0)
 
+#define RETURN_IF_LOGSPACE_FROZEN(LOGSPACE_PTR)                     \
+    do {                                                            \
+        if ((LOGSPACE_PTR)->frozen()) {                             \
+            uint32_t logspace_id = (LOGSPACE_PTR)->identifier();    \
+            HLOG(WARNING) << fmt::format(                           \
+                "LogSpace {} is frozen",                            \
+                bits::HexStr0x(logspace_id));                       \
+            return;                                                 \
+        }                                                           \
+    } while (0)
+
 void Sequencer::HandleTrimRequest(const SharedLogMessage& request) {
     DCHECK(SharedLogMessageHelper::GetOpType(request) == SharedLogOpType::TRIM);
     NOT_IMPLEMENTED();
@@ -96,16 +131,32 @@ void Sequencer::HandleTrimRequest(const SharedLogMessage& request) {
 void Sequencer::OnRecvMetaLogProgress(const SharedLogMessage& message) {
     DCHECK(SharedLogMessageHelper::GetOpType(message) == SharedLogOpType::META_PROG);
     LockablePtr<MetaLogPrimary> logspace_ptr;
+    const View* view = nullptr;
     {
         absl::ReaderMutexLock core_lk(&core_mu_);
         PANIC_IF_FROM_FUTURE_VIEW(message);  // I believe this will never happen
         IGNORE_IF_FROM_PAST_VIEW(message);
         logspace_ptr = primary_collection_.GetLogSpaceChecked(message.logspace_id);
+        view = current_view_;
     }
+    std::vector<MetaLogProto> new_replicated_metalogs;
     {
         auto locked_logspace = logspace_ptr.Lock();
+        RETURN_IF_LOGSPACE_FROZEN(locked_logspace);
+        uint32_t old_position = locked_logspace->replicated_metalog_position();
         locked_logspace->UpdateReplicaProgress(
             message.origin_node_id, message.metalog_position);
+        uint32_t new_position = locked_logspace->replicated_metalog_position();
+        if (new_position > old_position) {
+            if (!locked_logspace->GetMetaLogs(old_position, new_position,
+                                              &new_replicated_metalogs)) {
+                HLOG(FATAL) << fmt::format("Cannot get meta log between {} and {}",
+                                           old_position, new_position);
+            }
+        }
+    }
+    for (const MetaLogProto& metalog_proto : new_replicated_metalogs) {
+        PropagateMetaLog(DCHECK_NOTNULL(view), metalog_proto);
     }
 }
 
@@ -121,6 +172,7 @@ void Sequencer::OnRecvShardProgress(const SharedLogMessage& message,
     }
     {
         auto locked_logspace = logspace_ptr.Lock();
+        RETURN_IF_LOGSPACE_FROZEN(locked_logspace);
         std::vector<uint32_t> progress(payload.size() / sizeof(uint32_t), 0);
         memcpy(progress.data(), payload.data(), payload.size());
         locked_logspace->UpdateStorageProgress(message.origin_node_id, progress);
@@ -130,19 +182,21 @@ void Sequencer::OnRecvShardProgress(const SharedLogMessage& message,
 void Sequencer::OnRecvNewMetaLogs(const SharedLogMessage& message,
                                   std::span<const char> payload) {
     DCHECK(SharedLogMessageHelper::GetOpType(message) == SharedLogOpType::METALOGS);
+    uint32_t logspace_id = message.logspace_id;
     MetaLogsProto metalogs_proto = log_utils::MetaLogsFromPayload(payload);
-    DCHECK_EQ(metalogs_proto.logspace_id(), message.logspace_id);
+    DCHECK_EQ(metalogs_proto.logspace_id(), logspace_id);
     LockablePtr<MetaLogBackup> logspace_ptr;
     {
         absl::ReaderMutexLock core_lk(&core_mu_);
         ONHOLD_IF_FROM_FUTURE_VIEW(message, payload);
         IGNORE_IF_FROM_PAST_VIEW(message);
-        logspace_ptr = backup_collection_.GetLogSpaceChecked(message.logspace_id);
+        logspace_ptr = backup_collection_.GetLogSpaceChecked(logspace_id);
     }
     uint32_t old_metalog_position;
     uint32_t new_metalog_position;
     {
         auto locked_logspace = logspace_ptr.Lock();
+        RETURN_IF_LOGSPACE_FROZEN(locked_logspace);
         old_metalog_position = locked_logspace->metalog_position();
         for (const MetaLogProto& metalog_proto : metalogs_proto.metalogs()) {
             locked_logspace->ProvideMetaLog(metalog_proto);
@@ -151,7 +205,7 @@ void Sequencer::OnRecvNewMetaLogs(const SharedLogMessage& message,
     }
     if (new_metalog_position > old_metalog_position) {
         SharedLogMessage response = SharedLogMessageHelper::NewMetaLogProgressMessage(
-            message.logspace_id, new_metalog_position);
+            logspace_id, new_metalog_position);
         SendSequencerMessage(message.sequencer_id, &response);
     }
 }
@@ -167,8 +221,33 @@ void Sequencer::ProcessRequests(const std::vector<SharedLogRequest>& requests) {
 }
 
 void Sequencer::MarkNextCutIfDoable() {
-
+    LockablePtr<MetaLogPrimary> logspace_ptr;
+    const View* view = nullptr;
+    {
+        absl::ReaderMutexLock core_lk(&core_mu_);
+        logspace_ptr = current_primary_;
+        view = current_view_;
+    }
+    if (logspace_ptr == nullptr || view == nullptr) {
+        return;
+    }
+    MetaLogProto meta_log_proto;
+    bool has_new_cut = false;
+    {
+        auto locked_logspace = logspace_ptr.Lock();
+        RETURN_IF_LOGSPACE_FROZEN(locked_logspace);
+        if (!locked_logspace->all_metalog_replicated()) {
+            HLOG(INFO) << "Not all meta log replicated, will not mark new cut";
+            return;
+        }
+        has_new_cut = locked_logspace->MarkNextCut(&meta_log_proto);
+    }
+    if (has_new_cut) {
+        ReplicateMetaLog(view, meta_log_proto);
+    }
 }
+
+#undef RETURN_IF_LOGSPACE_FROZEN
 
 }  // namespace log
 }  // namespace faas

@@ -33,11 +33,9 @@ protected:
 
     void MessageHandler(const protocol::SharedLogMessage& message,
                         std::span<const char> payload);
-    
-    typedef absl::InlinedVector<uint16_t, 16> NodeIdVec;
-    void ReplicateMetaLog(const MetaLogProto& metalog, const NodeIdVec& sequencer_nodes);
-    void PropagateMetaLog(const MetaLogProto& metalog, const NodeIdVec& engine_nodes,
-                          const NodeIdVec& storage_nodes);
+
+    void ReplicateMetaLog(const View* view, const MetaLogProto& metalog);
+    void PropagateMetaLog(const View* view, const MetaLogProto& metalog);
 
     bool SendSequencerMessage(uint16_t sequencer_id,
                               protocol::SharedLogMessage* message,

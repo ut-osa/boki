@@ -2,6 +2,7 @@
 
 #include "log/flags.h"
 #include "server/constants.h"
+#include "utils/bits.h"
 
 #define log_header_ "SequencerBase: "
 
@@ -82,6 +83,7 @@ void SequencerBase::MessageHandler(const SharedLogMessage& message,
 namespace {
 static std::string SerializedMetaLogs(const MetaLogProto& metalog) {
     MetaLogsProto metalogs_proto;
+    metalogs_proto.set_logspace_id(metalog.logspace_id());
     metalogs_proto.add_metalogs()->CopyFrom(metalog);
     std::string serialized;
     metalogs_proto.SerializeToString(&serialized);
@@ -89,13 +91,15 @@ static std::string SerializedMetaLogs(const MetaLogProto& metalog) {
 }
 }  // namespace
 
-void SequencerBase::ReplicateMetaLog(const MetaLogProto& metalog,
-                                     const NodeIdVec& sequencer_nodes) {
-    SharedLogMessage message = SharedLogMessageHelper::NewMetaLogsMessage(metalog.logspace_id());
+void SequencerBase::ReplicateMetaLog(const View* view, const MetaLogProto& metalog) {
+    uint32_t logspace_id = metalog.logspace_id();
+    DCHECK_EQ(bits::LowHalf32(logspace_id), my_node_id());
+    SharedLogMessage message = SharedLogMessageHelper::NewMetaLogsMessage(logspace_id);
     std::string payload = SerializedMetaLogs(metalog);
     message.origin_node_id = node_id_;
     message.payload_size = payload.size();
-    for (uint16_t sequencer_id : sequencer_nodes) {
+    const View::Sequencer* sequencer_node = view->GetSequencerNode(my_node_id());
+    for (uint16_t sequencer_id : sequencer_node->GetReplicaSequencerNodes()) {
         bool success = SendSharedLogMessage(
             protocol::ConnType::SEQUENCER_TO_SEQUENCER, sequencer_id,
             message, STRING_TO_SPAN(payload));
@@ -106,8 +110,31 @@ void SequencerBase::ReplicateMetaLog(const MetaLogProto& metalog,
     }
 }
 
-void SequencerBase::PropagateMetaLog(const MetaLogProto& metalog, const NodeIdVec& engine_nodes,
-                                     const NodeIdVec& storage_nodes) {
+void SequencerBase::PropagateMetaLog(const View* view, const MetaLogProto& metalog) {
+    uint32_t logspace_id = metalog.logspace_id();
+    DCHECK_EQ(bits::LowHalf32(logspace_id), my_node_id());
+    absl::flat_hash_set<uint16_t> engine_nodes;
+    absl::flat_hash_set<uint16_t> storage_nodes;
+    switch (metalog.type()) {
+    case MetaLogProto::NEW_LOGS:
+        for (size_t i = 0; i < view->num_engine_nodes(); i++) {
+            if (metalog.new_logs_proto().shard_deltas(i) > 0) {
+                uint16_t engine_id = view->GetEngineNodes().at(i);
+                engine_nodes.insert(engine_id);
+                const View::Engine* engine_node = view->GetEngineNode(engine_id);
+                for (uint16_t storage_id : engine_node->GetStorageNodes()) {
+                    storage_nodes.insert(storage_id);
+                }
+            }
+        }
+        // TODO: add index engine nodes
+        break;
+    case MetaLogProto::TRIM:
+        NOT_IMPLEMENTED();
+        break;
+    default:
+        UNREACHABLE();
+    }
     SharedLogMessage message = SharedLogMessageHelper::NewMetaLogsMessage(metalog.logspace_id());
     std::string payload = SerializedMetaLogs(metalog);
     message.origin_node_id = node_id_;

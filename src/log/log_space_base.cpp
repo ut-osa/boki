@@ -25,6 +25,19 @@ void LogSpaceBase::AddInterestedShard(uint16_t engine_id) {
     interested_shards_.insert(idx);
 }
 
+bool LogSpaceBase::GetMetaLogs(uint32_t start_pos, uint32_t end_pos,
+                               std::vector<MetaLogProto>* metalogs) const {
+    DCHECK(mode_ == kFullMode);
+    if (start_pos >= end_pos || end_pos >= applied_metalogs_.size()) {
+        return false;
+    }
+    metalogs->resize(end_pos - start_pos);
+    for (uint32_t i = start_pos; i < end_pos; i++) {
+        metalogs->at(i - start_pos).CopyFrom(*applied_metalogs_.at(i));
+    }
+    return true;
+}
+
 bool LogSpaceBase::ProvideMetaLog(const MetaLogProto& meta_log) {
     DCHECK(state_ == kNormal);
     if (mode_ == kLiteMode && meta_log.type() == MetaLogProto::TRIM) {
@@ -33,6 +46,9 @@ bool LogSpaceBase::ProvideMetaLog(const MetaLogProto& meta_log) {
         return false;
     }
     uint32_t seqnum = meta_log.metalog_seqnum();
+    if (seqnum < metalog_position_) {
+        return false;
+    }
     MetaLogProto* meta_log_copy = metalog_pool_.Get();
     meta_log_copy->CopyFrom(meta_log);
     pending_metalogs_[seqnum] = meta_log_copy;

@@ -19,6 +19,10 @@ public:
 
     uint32_t metalog_position() const { return metalog_position_; }
     uint32_t seqnum_position() const { return seqnum_position_; }
+
+    bool GetMetaLogs(uint32_t start_pos, uint32_t end_pos,
+                     std::vector<MetaLogProto>* metalogs) const;
+
     // Return true if metalog_position changed
     bool ProvideMetaLog(const MetaLogProto& meta_log_proto);
 

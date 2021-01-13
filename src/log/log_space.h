@@ -14,7 +14,7 @@ public:
     uint32_t replicated_metalog_position() const {
         return replicated_metalog_position_;
     }
-    bool metalog_replicated() const {
+    bool all_metalog_replicated() const {
         return replicated_metalog_position_ == metalog_position();
     }
 

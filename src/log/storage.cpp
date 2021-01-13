@@ -11,7 +11,7 @@ using protocol::SharedLogOpType;
 
 Storage::Storage(uint16_t node_id)
     : StorageBase(node_id),
-      log_header_(fmt::format("Storage[{}]: ", node_id)),
+      log_header_(fmt::format("Storage[{}-N]: ", node_id)),
       current_view_(nullptr) {}
 
 Storage::~Storage() {}
@@ -33,6 +33,7 @@ void Storage::OnViewCreated(const View* view) {
             future_requests_.OnNewView(view, contains_myself ? &ready_requests : nullptr);
         }
         current_view_ = view;
+        log_header_ = fmt::format("Storage[{}-{}]: ", my_node_id(), view->id());
     }
     if (!ready_requests.empty()) {
         if (!contains_myself) {
@@ -212,6 +213,8 @@ void Storage::ProcessRequests(const std::vector<SharedLogRequest>& requests) {
 void Storage::BackgroundThreadMain() {
     bool running = true;
     while (running) {
+        // TODO: flush log entries to DB
+        //       cleanup outdated LogSpace
         absl::SleepFor(absl::Milliseconds(100));
         running = state_.load(std::memory_order_acquire) != kStopping;
     }
