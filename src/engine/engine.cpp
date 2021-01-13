@@ -9,32 +9,35 @@
 #include "utils/socket.h"
 #include "worker/worker_lib.h"
 #include "server/constants.h"
+#include "log/engine.h"
 #include "engine/flags.h"
-#include "engine/sequencer_connection.h"
 
 #define log_header_ "Engine: "
 
 namespace faas {
 namespace engine {
 
-using server::NodeWatcher;
 using protocol::FuncCall;
 using protocol::Message;
 using protocol::MessageHelper;
 using protocol::GatewayMessage;
 using protocol::GatewayMessageHelper;
-using protocol::SharedLogOpType;
+using protocol::SharedLogMessage;
+
+using server::IOWorker;
+using server::ConnectionBase;
+using server::IngressConnection;
+using server::EgressHub;
+using server::NodeWatcher;
 
 Engine::Engine(uint16_t node_id)
     : ServerBase(fmt::format("engine_{}", node_id)),
       engine_tcp_port_(-1),
       enable_shared_log_(false),
-      shared_log_tcp_port_(-1),
       node_id_(node_id),
       func_worker_use_engine_socket_(absl::GetFlag(FLAGS_func_worker_use_engine_socket)),
       use_fifo_for_nested_call_(absl::GetFlag(FLAGS_use_fifo_for_nested_call)),
       ipc_sockfd_(-1),
-      shared_log_sockfd_(-1),
       worker_manager_(new WorkerManager(this)),
       monitor_(absl::GetFlag(FLAGS_enable_monitor) ? new Monitor(this) : nullptr),
       tracer_(new Tracer(this)),
@@ -64,38 +67,29 @@ void Engine::StartInternal() {
     CHECK(func_config_.Load(func_config_json_));
     SetupLocalIpc();
     if (enable_shared_log_) {
-        SetupSharedLog();
+        shared_log_engine_.reset(new log::Engine(this));
+        shared_log_engine_->Start();
     }
     // Setup callbacks for node watcher
     node_watcher()->SetNodeOnlineCallback(
         absl::bind_front(&Engine::OnNodeOnline, this));
-    node_watcher()->SetNodeOfflineCallback(
-        absl::bind_front(&Engine::OnNodeOffline, this));
     // Initialize tracer
     tracer_->Init();
 }
 
 void Engine::SetupGatewayEgress() {
-    struct sockaddr_in addr;
-    if (!node_watcher()->GetNodeAddr(NodeWatcher::kGatewayNode, 0, &addr)) {
-        HLOG(ERROR) << "Cannot get address of gateway";
-        ScheduleStop();
-        return;
-    }
-    ForEachIOWorker([&addr, this] (server::IOWorker* io_worker) {
-        auto egress_hub = std::make_unique<server::EgressHub>(
-            kGatewayEgressHubTypeId,
-            &addr, absl::GetFlag(FLAGS_message_conn_per_worker));
-        uint16_t node_id = node_id_;
-        egress_hub->SetHandshakeMessageCallback([node_id] (std::string* handshake) {
-            *handshake = protocol::EncodeHandshakeMessage(
-                protocol::ConnType::ENGINE_TO_GATEWAY, node_id);
-        });
-        RegisterConnection(io_worker, egress_hub.get());
-        DCHECK_GE(egress_hub->id(), 0);
-        DCHECK(!gateway_egress_hubs_.contains(egress_hub->id()));
-        gateway_egress_hubs_[egress_hub->id()] = std::move(egress_hub);
+    bool failed = false;
+    ForEachIOWorker([&failed, this] (IOWorker* io_worker) {
+        EgressHub* hub = CreateEgressHub(
+            protocol::ConnType::ENGINE_TO_GATEWAY, 0, io_worker);
+        if (hub == nullptr) {
+            HLOG(ERROR) << "Failed to create EgressHub for gateway";
+            failed = true;
+        }
     });
+    if (failed) {
+        ScheduleStop();
+    }
 }
 
 void Engine::SetupLocalIpc() {
@@ -122,73 +116,18 @@ void Engine::SetupLocalIpc() {
     ListenForNewConnections(ipc_sockfd_, absl::bind_front(&Engine::OnNewLocalIpcConn, this));
 }
 
-void Engine::SetupSharedLog() {
-    DCHECK(enable_shared_log_);
-    if (!sequencer_config_.LoadFromFile(sequencer_config_file_)) {
-        HLOG(FATAL) << "Failed to load sequencer config";
-    }
-    slog_engine_.reset(new SLogEngine(this));
-    // Listen on shared_log_tcp_port
-    std::string address = absl::GetFlag(FLAGS_listen_addr);
-    CHECK(!address.empty());
-    CHECK_NE(shared_log_tcp_port_, -1);
-    shared_log_sockfd_ = utils::TcpSocketBindAndListen(
-        address, shared_log_tcp_port_, absl::GetFlag(FLAGS_socket_listen_backlog));
-    CHECK(shared_log_sockfd_ != -1)
-        << fmt::format("Failed to listen on {}:{}", address, shared_log_tcp_port_);
-    HLOG(INFO) << fmt::format("Listen on {}:{} for shared log related connections",
-                              address, shared_log_tcp_port_);
-    ListenForNewConnections(shared_log_sockfd_,
-                            absl::bind_front(&Engine::OnNewSLogConnection, this));
-    // Connect to sequencer
-    sequencer_config_.ForEachPeer([this] (const SequencerConfig::Peer* peer) {
-        ForEachIOWorker([peer, this] (server::IOWorker* io_worker) {
-            int total_conn = absl::GetFlag(FLAGS_sequencer_conn_per_worker);
-            for (int i = 0; i < total_conn; i++) {
-                int sockfd = -1;
-                bool success = utils::NetworkOpWithRetry(
-                    /* max_retry= */ 10, /* sleep_sec=*/ 3,
-                    [peer, &sockfd] {
-                        sockfd = utils::TcpSocketConnect(peer->host_addr, peer->engine_conn_port);
-                        return sockfd != -1;
-                    }
-                );
-                if (!success) {
-                    HLOG(FATAL) << fmt::format("Failed to connect to sequencer {}:{}",
-                                            peer->host_addr, peer->engine_conn_port);
-                }
-                std::shared_ptr<server::ConnectionBase> connection(
-                    new SequencerConnection(this, slog_engine_.get(), peer->id, sockfd));
-                RegisterConnection(io_worker, connection.get());
-                DCHECK_GE(connection->id(), 0);
-                DCHECK(!sequencer_connections_.contains(connection->id()));
-                sequencer_connections_[connection->id()] = std::move(connection);
-            }
-        });
-    });
-    // Setup SharedLogMessageHub for each server::IOWorker
-    ForEachIOWorker([this] (server::IOWorker* io_worker) {
-        auto hub = std::make_unique<SLogMessageHub>(slog_engine_.get());
-        RegisterConnection(io_worker, hub.get());
-        slog_message_hubs_.insert(std::move(hub));
-    });
-}
-
 void Engine::OnNodeOnline(NodeWatcher::NodeType node_type, uint16_t node_id) {
     if (node_type == NodeWatcher::kGatewayNode) {
         SetupGatewayEgress();
     }
 }
 
-void Engine::OnNodeOffline(NodeWatcher::NodeType node_type, uint16_t node_id) {
-}
-
 void Engine::StopInternal() {
     if (ipc_sockfd_ != -1) {
         PCHECK(close(ipc_sockfd_) == 0) << "Failed to close local IPC server fd";
     }
-    if (shared_log_sockfd_ != -1) {
-        PCHECK(close(shared_log_sockfd_) == 0) << "Failed to close server fd";
+    if (enable_shared_log_) {
+        DCHECK_NOTNULL(shared_log_engine_)->Stop();
     }
 }
 
@@ -210,20 +149,24 @@ void Engine::OnConnectionClose(server::ConnectionBase* connection) {
             ScheduleStop();
         }
         break;
-    case kSequencerConnectionTypeId:
-        DCHECK(sequencer_connections_.contains(connection->id()));
-        HLOG(WARNING) << "Sequencer connection disconencted";
-        sequencer_connections_.erase(connection->id());
+    case kSequencerIngressTypeId:
+        ABSL_FALLTHROUGH_INTENDED;
+    case kEngineIngressTypeId:
+        ABSL_FALLTHROUGH_INTENDED;
+    case kStorageIngressTypeId:
+        DCHECK(ingress_conns_.contains(connection->id()));
+        ingress_conns_.erase(connection->id());
         break;
-    case kIncomingSLogConnectionTypeId:
-        DCHECK(slog_connections_.contains(connection->id()));
-        slog_connections_.erase(connection->id());
-        break;
-    case kSLogMessageHubTypeId:
-        if (state_.load() != kStopping) {
-            HLOG(FATAL) << "SLogMessageHub should not be closed";
+    case kSequencerEgressHubTypeId:
+        ABSL_FALLTHROUGH_INTENDED;
+    case kEngineEgressHubTypeId:
+        ABSL_FALLTHROUGH_INTENDED;
+    case kStorageEgressHubTypeId:
+        {
+            absl::MutexLock lk(&conn_mu_);
+            DCHECK(!egress_hubs_.contains(connection->id()));
+            egress_hubs_.erase(connection->id());
         }
-        break;
     default:
         HLOG(FATAL) << "Unknown connection type: " << connection->type();
     }
@@ -335,8 +278,9 @@ void Engine::HandleInvokeFuncMessage(const Message& message) {
             async_func_calls_[func_call.full_call_id] = std::move(async_call);
         }
     }
-    if (slog_engine_ != nullptr) {
-        slog_engine_->OnNewInternalFuncCall(func_call, parent_func_call);
+    if (enable_shared_log_) {
+        DCHECK_NOTNULL(shared_log_engine_)->OnNewInternalFuncCall(
+            func_call, parent_func_call);
     }
     bool success = false;
     if (dispatcher != nullptr) {
@@ -355,8 +299,8 @@ void Engine::HandleInvokeFuncMessage(const Message& message) {
     }
     if (!success) {
         HLOG(ERROR) << "Dispatcher failed for func_id " << func_call.func_id;
-        if (slog_engine_ != nullptr) {
-            slog_engine_->OnFuncCallCompleted(func_call);
+        if (enable_shared_log_) {
+            DCHECK_NOTNULL(shared_log_engine_)->OnFuncCallCompleted(func_call);
         }
         if (is_async) {
             absl::MutexLock lk(&mu_);
@@ -389,8 +333,8 @@ void Engine::HandleFuncCallCompleteMessage(const Message& message) {
         dispatcher = GetOrCreateDispatcherLocked(func_call.func_id);
         is_async_call = GrabFromMap(async_func_calls_, func_call, &async_call);
     }
-    if (slog_engine_ != nullptr) {
-        slog_engine_->OnFuncCallCompleted(func_call);
+    if (enable_shared_log_) {
+        DCHECK_NOTNULL(shared_log_engine_)->OnFuncCallCompleted(func_call);
     }
     DCHECK(dispatcher != nullptr);
     bool ret = dispatcher->OnFuncCallCompleted(
@@ -449,8 +393,8 @@ void Engine::HandleFuncCallFailedMessage(const Message& message) {
         dispatcher = GetOrCreateDispatcherLocked(func_call.func_id);
         is_async_call = GrabFromMap(async_func_calls_, func_call, &async_call);
     }
-    if (slog_engine_ != nullptr) {
-        slog_engine_->OnFuncCallCompleted(func_call);
+    if (enable_shared_log_) {
+        DCHECK_NOTNULL(shared_log_engine_)->OnFuncCallCompleted(func_call);
     }
     DCHECK(dispatcher != nullptr);
     bool ret = dispatcher->OnFuncCallFailed(func_call, message.dispatch_delay);
@@ -513,9 +457,10 @@ void Engine::OnExternalFuncCall(const FuncCall& func_call, std::span<const char>
         ExternalFuncCallFailed(func_call);
         return;
     }
-    if (slog_engine_ != nullptr) {
+    if (enable_shared_log_) {
         // TODO: Implement log space
-        slog_engine_->OnNewExternalFuncCall(func_call, /* log_space= */ 0);
+        DCHECK_NOTNULL(shared_log_engine_)->OnNewExternalFuncCall(
+            func_call, /* log_space= */ 0);
     }
     bool ret = false;
     if (input.size() <= MESSAGE_INLINE_DATA_SIZE) {
@@ -529,8 +474,8 @@ void Engine::OnExternalFuncCall(const FuncCall& func_call, std::span<const char>
     }
     if (!ret) {
         HLOG(ERROR) << "Dispatcher::OnNewFuncCall failed";
-        if (slog_engine_ != nullptr) {
-            slog_engine_->OnFuncCallCompleted(func_call);
+        if (enable_shared_log_) {
+            DCHECK_NOTNULL(shared_log_engine_)->OnFuncCallCompleted(func_call);
         }
         {
             absl::MutexLock lk(&mu_);
@@ -542,11 +487,11 @@ void Engine::OnExternalFuncCall(const FuncCall& func_call, std::span<const char>
 
 void Engine::HandleSharedLogOpMessage(const Message& message) {
     DCHECK(MessageHelper::IsSharedLogOp(message));
-    if (slog_engine_ == nullptr) {
+    if (!enable_shared_log_) {
         HLOG(FATAL) << "Shared log disabled!";
         return;
     }
-    slog_engine_->OnMessageFromFuncWorker(message);
+    DCHECK_NOTNULL(shared_log_engine_)->OnMessageFromFuncWorker(message);
 }
 
 void Engine::OnRecvMessage(MessageConnection* connection, const Message& message) {
@@ -676,12 +621,41 @@ void Engine::CreateGatewayIngressConn(int sockfd) {
     gateway_ingress_conns_[connection->id()] = std::move(connection);
 }
 
-void Engine::OnRemoteMessageConn(const protocol::HandshakeMessage& handshake, int sockfd) {
-    protocol::ConnType conn_type = static_cast<protocol::ConnType>(handshake.conn_type);
-    switch (conn_type) {
+void Engine::CreateSharedLogIngressConn(int sockfd, protocol::ConnType type,
+                                        uint16_t src_node_id) {
+    int conn_type_id = ServerBase::GetIngressConnTypeId(type, src_node_id);
+    auto connection = std::make_unique<IngressConnection>(
+        conn_type_id, sockfd, sizeof(SharedLogMessage));
+    connection->SetMessageFullSizeCallback(
+        &IngressConnection::SharedLogMessageFullSizeCallback);
+    connection->SetNewMessageCallback(
+        IngressConnection::BuildNewSharedLogMessageCallback(
+            absl::bind_front(&log::EngineBase::OnRecvSharedLogMessage,
+                             DCHECK_NOTNULL(shared_log_engine_.get()),
+                             conn_type_id & kConnectionTypeMask, src_node_id)));
+    RegisterConnection(PickIOWorkerForConnType(conn_type_id), connection.get());
+    DCHECK_GE(connection->id(), 0);
+    DCHECK(!ingress_conns_.contains(connection->id()));
+    ingress_conns_[connection->id()] = std::move(connection);
+}
+
+void Engine::OnRemoteMessageConn(const protocol::HandshakeMessage& handshake,
+                                 int sockfd) {
+    protocol::ConnType type = static_cast<protocol::ConnType>(handshake.conn_type);
+    switch (type) {
     case protocol::ConnType::GATEWAY_TO_ENGINE:
         CreateGatewayIngressConn(sockfd);
         break;
+    case protocol::ConnType::SEQUENCER_TO_ENGINE:
+        ABSL_FALLTHROUGH_INTENDED;
+    case protocol::ConnType::STORAGE_TO_ENGINE:
+        ABSL_FALLTHROUGH_INTENDED;
+    case protocol::ConnType::SLOG_ENGINE_TO_ENGINE:
+        if (enable_shared_log_) {
+            CreateSharedLogIngressConn(sockfd, type, handshake.src_node_id);
+            break;
+        }
+        ABSL_FALLTHROUGH_INTENDED;
     default:
         HLOG(ERROR) << "Invalid connection type: " << handshake.conn_type;
         close(sockfd);
@@ -696,14 +670,46 @@ void Engine::OnNewLocalIpcConn(int sockfd) {
     message_connections_[connection->id()] = std::move(connection);
 }
 
-void Engine::OnNewSLogConnection(int sockfd) {
-    DCHECK(slog_engine_ != nullptr);
-    std::shared_ptr<server::ConnectionBase> connection(
-        new IncomingSLogConnection(slog_engine_.get(), sockfd));
-    RegisterConnection(PickIOWorkerForConnType(connection->type()), connection.get());
-    DCHECK_GE(connection->id(), 0);
-    DCHECK(!slog_connections_.contains(connection->id()));
-    slog_connections_[connection->id()] = std::move(connection);
+bool Engine::SendSharedLogMessage(protocol::ConnType conn_type, uint16_t dst_node_id,
+                                  const SharedLogMessage& message,
+                                  std::span<const char> payload) {
+    EgressHub* hub = CurrentIOWorkerChecked()->PickOrCreateConnection<EgressHub>(
+        ServerBase::GetEgressHubTypeId(conn_type, dst_node_id),
+        absl::bind_front(&Engine::CreateEgressHub, this, conn_type, dst_node_id));
+    if (hub == nullptr) {
+        return false;
+    }
+    std::span<const char> data(reinterpret_cast<const char*>(&message),
+                               sizeof(SharedLogMessage));
+    hub->SendMessage(data, payload);
+    return true;
+}
+
+EgressHub* Engine::CreateEgressHub(protocol::ConnType conn_type,
+                                   uint16_t dst_node_id, IOWorker* io_worker) {
+    struct sockaddr_in addr;
+    if (!node_watcher()->GetNodeAddr(NodeWatcher::GetDstNodeType(conn_type),
+                                     dst_node_id, &addr)) {
+        return nullptr;
+    }
+    auto egress_hub = std::make_unique<EgressHub>(
+        ServerBase::GetEgressHubTypeId(conn_type, dst_node_id),
+        &addr, absl::GetFlag(FLAGS_message_conn_per_worker));
+    uint16_t src_node_id = node_id_;
+    egress_hub->SetHandshakeMessageCallback(
+        [conn_type, src_node_id] (std::string* handshake) {
+            *handshake = protocol::EncodeHandshakeMessage(conn_type, src_node_id);
+        }
+    );
+    RegisterConnection(io_worker, egress_hub.get());
+    DCHECK_GE(egress_hub->id(), 0);
+    EgressHub* hub = egress_hub.get();
+    {
+        absl::MutexLock lk(&conn_mu_);
+        DCHECK(!egress_hubs_.contains(egress_hub->id()));
+        egress_hubs_[egress_hub->id()] = std::move(egress_hub);
+    }
+    return hub;
 }
 
 }  // namespace engine

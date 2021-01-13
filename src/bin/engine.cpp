@@ -17,12 +17,7 @@ ABSL_FLAG(int, node_id, -1,
 ABSL_FLAG(std::string, root_path_for_ipc, "/dev/shm/faas_ipc",
           "Root directory for IPCs used by FaaS");
 ABSL_FLAG(std::string, func_config_file, "", "Path to function config file");
-
-// Shared log related
 ABSL_FLAG(bool, enable_shared_log, false, "If to enable shared log.");
-ABSL_FLAG(std::string, sequencer_config_file, "", "Path to config file of sequencers");
-ABSL_FLAG(int, shared_log_tcp_port, 10010,
-          "Port to listen for shared log connections from other nodes.");
 
 namespace faas {
 
@@ -68,8 +63,6 @@ void EngineMain(int argc, char* argv[]) {
 
     if (absl::GetFlag(FLAGS_enable_shared_log)) {
         engine->enable_shared_log();
-        engine->set_sequencer_config_file(absl::GetFlag(FLAGS_sequencer_config_file));
-        engine->set_shared_log_tcp_port(absl::GetFlag(FLAGS_shared_log_tcp_port));
     }
 
     engine->Start();

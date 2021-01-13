@@ -3,7 +3,6 @@
 #include "base/common.h"
 #include "common/protocol.h"
 #include "common/func_config.h"
-#include "common/sequencer_config.h"
 #include "ipc/shm_region.h"
 #include "server/server_base.h"
 #include "server/ingress_connection.h"
@@ -13,10 +12,14 @@
 #include "engine/worker_manager.h"
 #include "engine/monitor.h"
 #include "engine/tracer.h"
-#include "engine/slog_connection.h"
-#include "engine/slog_engine.h"
 
 namespace faas {
+
+// Forward declarations
+namespace log {
+class EngineBase;
+}  // namespace log
+
 namespace engine {
 
 class Engine final : public server::ServerBase {
@@ -27,17 +30,12 @@ public:
     void set_func_config_file(std::string_view path) {
         func_config_file_ = std::string(path);
     }
-    void set_sequencer_config_file(std::string_view path) {
-        sequencer_config_file_ = std::string(path);
-    }
     void enable_shared_log() { enable_shared_log_ = true; }
     void set_engine_tcp_port(int port) { engine_tcp_port_ = port; }
-    void set_shared_log_tcp_port(int port) { shared_log_tcp_port_ = port; }
 
     uint16_t node_id() const { return node_id_; }
     const FuncConfig* func_config() { return &func_config_; }
     int engine_tcp_port() const { return engine_tcp_port_; }
-    int shared_log_tcp_port() const { return shared_log_tcp_port_; }
     bool func_worker_use_engine_socket() const { return func_worker_use_engine_socket_; }
     WorkerManager* worker_manager() { return worker_manager_.get(); }
     Monitor* monitor() { return monitor_.get(); }
@@ -54,37 +52,35 @@ public:
 
 private:
     class ExternalFuncCallContext;
-    friend class SLogEngine;
+    friend class log::EngineBase;
 
     int engine_tcp_port_;
     bool enable_shared_log_;
-    int shared_log_tcp_port_;
     uint16_t node_id_;
     std::string func_config_file_;
     std::string func_config_json_;
     FuncConfig func_config_;
-    std::string sequencer_config_file_;
-    SequencerConfig sequencer_config_;
     bool func_worker_use_engine_socket_;
     bool use_fifo_for_nested_call_;
 
     int ipc_sockfd_;
-    int shared_log_sockfd_;
 
-    absl::flat_hash_map</* id */ int, std::unique_ptr<server::EgressHub>>
-        gateway_egress_hubs_;
     absl::flat_hash_map</* id */ int, std::unique_ptr<server::IngressConnection>>
         gateway_ingress_conns_;
+    absl::flat_hash_map</* id */ int, std::unique_ptr<server::IngressConnection>>
+        ingress_conns_;
 
-    absl::flat_hash_map</* id */ int, std::shared_ptr<server::ConnectionBase>> message_connections_;
-    absl::flat_hash_map</* id */ int, std::shared_ptr<server::ConnectionBase>> sequencer_connections_;
-    absl::flat_hash_map</* id */ int, std::shared_ptr<server::ConnectionBase>> slog_connections_;
-    absl::flat_hash_set<std::unique_ptr<SLogMessageHub>> slog_message_hubs_;
+    absl::Mutex conn_mu_;
+    absl::flat_hash_map</* id */ int, std::unique_ptr<server::EgressHub>>
+        egress_hubs_ ABSL_GUARDED_BY(conn_mu_);
+
+    absl::flat_hash_map</* id */ int,
+                        std::shared_ptr<server::ConnectionBase>> message_connections_;
 
     std::unique_ptr<WorkerManager> worker_manager_;
     std::unique_ptr<Monitor> monitor_;
     std::unique_ptr<Tracer> tracer_;
-    std::unique_ptr<SLogEngine> slog_engine_;
+    std::unique_ptr<log::EngineBase> shared_log_engine_;
 
     std::atomic<int> inflight_external_requests_;
 
@@ -117,21 +113,27 @@ private:
     void StartInternal() override;
     void StopInternal() override;
     void OnConnectionClose(server::ConnectionBase* connection) override;
-    void OnRemoteMessageConn(const protocol::HandshakeMessage& handshake, int sockfd) override;
+    void OnRemoteMessageConn(const protocol::HandshakeMessage& handshake,
+                             int sockfd) override;
 
     void SetupGatewayEgress();
     void SetupLocalIpc();
-    void SetupSharedLog();
 
     void OnNodeOnline(server::NodeWatcher::NodeType node_type, uint16_t node_id);
-    void OnNodeOffline(server::NodeWatcher::NodeType node_type, uint16_t node_id);
 
     void CreateGatewayIngressConn(int sockfd);
+    void CreateSharedLogIngressConn(int sockfd, protocol::ConnType type,
+                                    uint16_t src_node_id);
 
     void OnNewLocalIpcConn(int sockfd);
     void OnLocalIpcConnClosed(MessageConnection* conn);
 
-    void OnNewSLogConnection(int sockfd);
+    bool SendSharedLogMessage(protocol::ConnType conn_type, uint16_t dst_node_id,
+                              const protocol::SharedLogMessage& message,
+                              std::span<const char> payload);
+    server::EgressHub* CreateEgressHub(protocol::ConnType conn_type,
+                                       uint16_t dst_node_id,
+                                       server::IOWorker* io_worker);
 
     // Must be thread-safe
     void HandleInvokeFuncMessage(const protocol::Message& message);
