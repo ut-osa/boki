@@ -37,15 +37,11 @@ void Sequencer::OnViewCreated(const View* view) {
         DCHECK(!contains_myself || current_primary_ != nullptr);
         {
             absl::MutexLock future_request_lk(&future_request_mu_);
-            future_requests_.OnNewView(view, &ready_requests);
+            future_requests_.OnNewView(view, contains_myself ? &ready_requests : nullptr);
         }
         current_view_ = view;
     }
     if (!ready_requests.empty()) {
-        if (!contains_myself) {
-            HLOG(FATAL) << fmt::format("Have requests for view {} not including myself",
-                                       view->id());
-        }
         SomeIOWorker()->ScheduleFunction(
             nullptr, [this, requests = std::move(ready_requests)] {
                 ProcessRequests(requests);
@@ -77,7 +73,7 @@ void Sequencer::OnViewFinalized(const FinalizedView* finalized_view) {
     do {                                                            \
         if (current_view_ == nullptr                                \
                 || (MESSAGE_VAR).view_id > current_view_->id()) {   \
-            HLOG(FATAL) << "Receive request from future view "      \
+            HLOG(FATAL) << "Receive message from future view "      \
                         << (MESSAGE_VAR).view_id;                   \
         }                                                           \
     } while (0)
@@ -86,7 +82,7 @@ void Sequencer::OnViewFinalized(const FinalizedView* finalized_view) {
     do {                                                            \
         if (current_view_ != nullptr                                \
                 && (MESSAGE_VAR).view_id < current_view_->id()) {   \
-            HLOG(WARNING) << "Receive outdate request from view "   \
+            HLOG(WARNING) << "Receive outdate message from view "   \
                           << (MESSAGE_VAR).view_id;                 \
             return;                                                 \
         }                                                           \

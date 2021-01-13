@@ -3,7 +3,6 @@
 #include "base/common.h"
 #include "common/protocol.h"
 #include "proto/shared_log.pb.h"
-#include "log/utils.h"
 
 namespace faas {
 namespace log {

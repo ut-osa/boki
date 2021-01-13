@@ -12,6 +12,7 @@ public:
     FutureRequests();
     ~FutureRequests();
 
+    // If `ready_requests` is nullptr, will panic if there are on-hold requests
     void OnNewView(const log::View* view,
                    std::vector<log::SharedLogRequest>* ready_requests);
     void OnHoldRequest(log::SharedLogRequest request);

@@ -2,6 +2,7 @@
 
 #include "log/storage_base.h"
 #include "log/log_space.h"
+#include "log/utils.h"
 
 namespace faas {
 namespace log {

@@ -30,7 +30,7 @@ void Storage::OnViewCreated(const View* view) {
         }
         {
             absl::MutexLock future_request_lk(&future_request_mu_);
-            future_requests_.OnNewView(view, &ready_requests);
+            future_requests_.OnNewView(view, contains_myself ? &ready_requests : nullptr);
         }
         current_view_ = view;
     }

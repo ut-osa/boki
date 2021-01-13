@@ -21,7 +21,11 @@ void FutureRequests::OnNewView(const View* view,
         LOG(FATAL) << fmt::format("Views are not consecutive: have={}, expect={}",
                                   view->id(), next_view_id_);
     }
+    
     if (onhold_requests_.contains(view->id())) {
+        if (ready_requests == nullptr) {
+            LOG(FATAL) << fmt::format("Not expect on-hold requests for view {}", view->id());
+        }
         *ready_requests = std::move(onhold_requests_[view->id()]);
         onhold_requests_.erase(view->id());
     }
