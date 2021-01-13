@@ -182,10 +182,10 @@ void StorageBase::OnRemoteMessageConn(const protocol::HandshakeMessage& handshak
     protocol::ConnType type = static_cast<protocol::ConnType>(handshake.conn_type);
     uint16_t src_node_id = handshake.src_node_id;
 
-    switch (NodeWatcher::GetSrcNodeType(type)) {
-    case NodeWatcher::kEngineNode:
+    switch (type) {
+    case protocol::ConnType::ENGINE_TO_STORAGE:
         break;
-    case NodeWatcher::kSequencerNode:
+    case protocol::ConnType::SEQUENCER_TO_STORAGE:
         break;
     default:
         HLOG(ERROR) << "Invalid connection type: " << handshake.conn_type;
