@@ -56,11 +56,6 @@ void StorageBase::SetupZKWatchers() {
             this->OnViewCreated(view);
         }
     );
-    view_watcher_.SetViewFrozenCallback(
-        [this] (const View* view) {
-            this->OnViewFrozen(view);
-        }
-    );
     view_watcher_.SetViewFinalizedCallback(
         [this] (const FinalizedView* finalized_view) {
             this->OnViewFinalized(finalized_view);

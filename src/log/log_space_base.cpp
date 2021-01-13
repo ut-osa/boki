@@ -64,6 +64,7 @@ bool LogSpaceBase::Finalize(uint32_t final_metalog_position,
 void LogSpaceBase::SerializeToProto(MetaLogsProto* meta_logs_proto) {
     DCHECK(state_ == kFinalized && mode_ == kFullMode);
     meta_logs_proto->Clear();
+    meta_logs_proto->set_logspace_id(identifier());
     for (const MetaLogProto* metalog : applied_metalogs_) {
         meta_logs_proto->add_metalogs()->CopyFrom(*metalog);
     }

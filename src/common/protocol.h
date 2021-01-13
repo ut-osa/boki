@@ -670,6 +670,14 @@ public:
         return message;
     }
 
+    static SharedLogMessage NewMetaLogProgressMessage(uint32_t logspace_id, uint32_t progress) {
+        NEW_EMPTY_SHAREDLOG_MESSAGE(message);
+        message.op_type = static_cast<uint16_t>(SharedLogOpType::META_PROG);
+        message.logspace_id = logspace_id;
+        message.metalog_position = progress;
+        return message;
+    }
+
     static SharedLogMessage NewShardProgressMessage(uint32_t logspace_id) {
         NEW_EMPTY_SHAREDLOG_MESSAGE(message);
         message.op_type = static_cast<uint16_t>(SharedLogOpType::SHARD_PROG);

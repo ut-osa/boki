@@ -72,19 +72,15 @@ private:
 template<class T>
 class LogSpaceCollection {
 public:
-    LogSpaceCollection() : next_view_id_(0) {}
+    LogSpaceCollection() {}
     ~LogSpaceCollection() {}
 
-    bool is_from_future_view(uint32_t identifier) const {
-        return bits::HighHalf32(identifier) >= next_view_id_;
-    }
-    bool is_from_current_view(uint32_t identifier) const {
-        return bits::HighHalf32(identifier) + 1 == next_view_id_;
-    }
-
+    // Return nullptr if not found
     LockablePtr<T> GetLogSpace(uint32_t identifier) const;
+    // Panic if not found. It ensures the return is never nullptr
+    LockablePtr<T> GetLogSpaceChecked(uint32_t identifier) const;
 
-    void OnNewView(const View* view, std::vector<std::unique_ptr<T>> log_spaces);
+    void InstallLogSpace(std::unique_ptr<T> log_space);
     // Only active LogSpace can be finalized
     bool FinalizeLogSpace(uint32_t identifier);
     // Only finalized LogSpace can be removed
@@ -97,8 +93,6 @@ public:
     LockablePtr<T> GetNextFinalizedLogSpace(uint32_t min_identifier) const;
 
 private:
-    uint16_t next_view_id_;
-
     std::set</* identifier */ uint32_t> active_log_spaces_;
     std::set</* identifier */ uint32_t> finalized_log_spaces_;
 
@@ -119,20 +113,19 @@ LockablePtr<T> LogSpaceCollection<T>::GetLogSpace(uint32_t identifier) const {
 }
 
 template<class T>
-void LogSpaceCollection<T>::OnNewView(const View* view,
-                                      std::vector<std::unique_ptr<T>> log_spaces) {
-    if (view->id() != next_view_id_) {
-        LOG(FATAL) << fmt::format("Views are not consecutive: have={}, expect={}",
-                                  view->id(), next_view_id_);
+LockablePtr<T> LogSpaceCollection<T>::GetLogSpaceChecked(uint32_t identifier) const {
+    if (!log_spaces_.contains(identifier)) {
+        LOG(FATAL) << fmt::format("Cannot find LogSpace with identifier {}", identifier);
     }
-    for (std::unique_ptr<T>& log_space : log_spaces) {
-        DCHECK_EQ(log_space->view_id(), view->id());
-        uint32_t identifier = log_space->identifier();
-        DCHECK(active_log_spaces_.count(identifier) == 0);
-        active_log_spaces_.insert(identifier);
-        log_spaces_[identifier] = LockablePtr<T>(std::move(log_space));
-    }
-    next_view_id_++;
+    return log_spaces_.at(identifier);
+}
+
+template<class T>
+void LogSpaceCollection<T>::InstallLogSpace(std::unique_ptr<T> log_space) {
+    uint32_t identifier = log_space->identifier();
+    DCHECK(active_log_spaces_.count(identifier) == 0);
+    active_log_spaces_.insert(identifier);
+    log_spaces_[identifier] = LockablePtr<T>(std::move(log_space));
 }
 
 template<class T>
@@ -159,9 +152,6 @@ bool LogSpaceCollection<T>::RemoveLogSpace(uint32_t identifier) {
 
 template<class T>
 void LogSpaceCollection<T>::ForEachActiveLogSpace(const View* view, IterCallback cb) const {
-    if (view->id() >= next_view_id_) {
-        return;
-    }
     auto iter = active_log_spaces_.lower_bound(bits::JoinTwo16(view->id(), 0));
     while (iter != active_log_spaces_.end()) {
         if (bits::HighHalf32(*iter) > view->id()) {
@@ -169,6 +159,7 @@ void LogSpaceCollection<T>::ForEachActiveLogSpace(const View* view, IterCallback
         }
         DCHECK(log_spaces_.contains(*iter));
         cb(*iter, log_spaces_.at(*iter));
+        iter++;
     }
 }
 

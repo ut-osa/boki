@@ -19,6 +19,7 @@ protected:
     uint16_t my_node_id() const { return node_id_; }
 
     virtual void OnViewCreated(const View* view) = 0;
+    virtual void OnViewFrozen(const View* view) = 0;
     virtual void OnViewFinalized(const FinalizedView* finalized_view) = 0;
 
     virtual void HandleTrimRequest(const protocol::SharedLogMessage& message) = 0;

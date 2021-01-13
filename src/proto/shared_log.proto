@@ -81,7 +81,8 @@ message MetaLogProto {
 }
 
 message MetaLogsProto {
-    repeated MetaLogProto metalogs = 1;
+    uint32 logspace_id = 1;
+    repeated MetaLogProto metalogs = 2;
 }
 
 message FinalizedViewProto {
