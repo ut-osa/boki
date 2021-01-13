@@ -142,7 +142,7 @@ private:
     void OnRecvGatewayMessage(const protocol::GatewayMessage& message,
                               std::span<const char> payload);
     void SendGatewayMessage(const protocol::GatewayMessage& message,
-                            std::span<const char> payload = std::span<const char>());
+                            std::span<const char> payload = EMPTY_CHAR_SPAN);
     bool SendFuncWorkerMessage(uint16_t client_id, protocol::Message* message);
     void OnExternalFuncCall(const protocol::FuncCall& func_call, std::span<const char> input);
     void ExternalFuncCallCompleted(const protocol::FuncCall& func_call,

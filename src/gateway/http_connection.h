@@ -72,7 +72,7 @@ private:
     void ResetHttpParser();
     void OnNewHttpRequest(std::string_view method, std::string_view path,
                           std::string_view qs = std::string_view{});
-    void SendHttpResponse(HttpStatus status, std::span<const char> body = std::span<const char>());
+    void SendHttpResponse(HttpStatus status, std::span<const char> body = EMPTY_CHAR_SPAN);
     void OnFuncCallFinishedInternal();
 
     static int HttpParserOnMessageBeginCallback(http_parser* http_parser);

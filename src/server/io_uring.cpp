@@ -523,7 +523,7 @@ void IOUring::HandleReadOpComplete(Op* op, int res, Op** next_op) {
         LOG(INFO) << "ReadOp cancelled";
     } else {
         errno = -res;
-        repeat = read_cbs_[op->id](-1, std::span<const char>());
+        repeat = read_cbs_[op->id](-1, EMPTY_CHAR_SPAN);
     }
     if ((op->flags & kOpFlagRepeat) != 0
             && (op->flags & kOpFlagCancelled) == 0

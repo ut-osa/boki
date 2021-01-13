@@ -46,7 +46,7 @@ protected:
                               std::span<const char> payload);
     bool SendEngineResponse(const protocol::SharedLogMessage& request,
                             protocol::SharedLogMessage* response,
-                            std::span<const char> payload = std::span<const char>());
+                            std::span<const char> payload = EMPTY_CHAR_SPAN);
 
 private:
     const uint16_t node_id_;

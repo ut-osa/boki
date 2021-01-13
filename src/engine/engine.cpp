@@ -273,7 +273,7 @@ bool Engine::OnNewHandshake(MessageConnection* connection,
         if (use_fifo_for_nested_call_) {
             response->flags |= protocol::kUseFifoForNestedCallFlag;
         }
-        *response_payload = std::span<const char>();
+        *response_payload = EMPTY_CHAR_SPAN;
     }
     return true;
 }
@@ -344,7 +344,7 @@ void Engine::HandleInvokeFuncMessage(const Message& message) {
             success = dispatcher->OnNewFuncCall(
                 func_call, is_async ? protocol::kInvalidFuncCall : parent_func_call,
                 /* input_size= */ gsl::narrow_cast<size_t>(-message.payload_size),
-                std::span<const char>(), /* shm_input= */ true);
+                EMPTY_CHAR_SPAN, /* shm_input= */ true);
             
         } else {
             success = dispatcher->OnNewFuncCall(
@@ -525,7 +525,7 @@ void Engine::OnExternalFuncCall(const FuncCall& func_call, std::span<const char>
     } else {
         ret = dispatcher->OnNewFuncCall(
             func_call, protocol::kInvalidFuncCall,
-            input.size(), /* inline_input= */ std::span<const char>(), /* shm_input= */ true);
+            input.size(), /* inline_input= */ EMPTY_CHAR_SPAN, /* shm_input= */ true);
     }
     if (!ret) {
         HLOG(ERROR) << "Dispatcher::OnNewFuncCall failed";
@@ -652,7 +652,7 @@ void Engine::ProcessDiscardedFuncCallIfNecessary() {
         for (const FuncCall& func_call : discarded_internal_func_calls) {
             if (use_fifo_for_nested_call_) {
                 worker_lib::FifoFuncCallFinished(
-                    func_call, /* success= */ false, /* output= */ std::span<const char>(),
+                    func_call, /* success= */ false, /* output= */ EMPTY_CHAR_SPAN,
                     /* processing_time= */ 0, pipe_buf, &dummy_message);
             } else {
                 // TODO: handle this case

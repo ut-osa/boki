@@ -353,7 +353,7 @@ public:
                     message.inline_data, gsl::narrow_cast<size_t>(message.payload_size));
             }
         }
-        return std::span<const char>();
+        return EMPTY_CHAR_SPAN;
     }
 
     static SharedLogOpType GetSharedLogOpType(const Message& message) {

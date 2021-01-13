@@ -409,7 +409,7 @@ ZKResult ZKSession::EmptyResult() {
     return ZKResult {
         .path  = "",
         .paths = std::vector<std::string_view>(),
-        .data  = std::span<const char>(),
+        .data  = EMPTY_CHAR_SPAN,
         .stat  = nullptr,
     };
 }

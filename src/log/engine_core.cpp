@@ -160,7 +160,7 @@ bool EngineCore::StoreLogAsBackupNode(uint64_t tag, std::span<const char> data,
 }
 
 void EngineCore::AddWaitForReplication(uint64_t tag, uint64_t localid) {
-    pending_entries_[localid] = AllocLogEntry(tag, localid, std::span<const char>());
+    pending_entries_[localid] = AllocLogEntry(tag, localid, EMPTY_CHAR_SPAN);
 }
 
 bool EngineCore::ReadLogData(uint64_t seqnum, LogRecord* record) const {

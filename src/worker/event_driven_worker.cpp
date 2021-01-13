@@ -327,8 +327,7 @@ void EventDrivenWorker::OnOutputPipeReadable(OutgoingFuncCallState* func_call_st
     } else {
         LOG(ERROR) << "GetFuncCallOutput failed";
         outgoing_func_call_complete_cb_(func_call_to_handle(func_call_state->func_call),
-                                        /* success= */ false,
-                                        /* output= */ std::span<const char>());
+                                        /* success= */ false, /* output= */ EMPTY_CHAR_SPAN);
     }
 }
 
@@ -341,8 +340,7 @@ void EventDrivenWorker::OnOutgoingFuncCallFinished(const Message& message,
     });
     if (MessageHelper::IsFuncCallFailed(message)) {
         outgoing_func_call_complete_cb_(func_call_to_handle(func_call_state->func_call),
-                                        /* success= */ false,
-                                        /* output= */ std::span<const char>());
+                                        /* success= */ false, /* output= */ EMPTY_CHAR_SPAN);
         return;
     } else if (!MessageHelper::IsFuncCallComplete(message)) {
         LOG(FATAL) << "Unknown message type";
@@ -354,16 +352,14 @@ void EventDrivenWorker::OnOutgoingFuncCallFinished(const Message& message,
         if (output_region == nullptr) {
             LOG(ERROR) << "ShmOpen failed";
             outgoing_func_call_complete_cb_(func_call_to_handle(func_call_state->func_call),
-                                            /* success= */ false,
-                                            /* output= */ std::span<const char>());
+                                            /* success= */ false, /* output= */ EMPTY_CHAR_SPAN);
             return;
         }
         output_region->EnableRemoveOnDestruction();
         if (output_region->size() != gsl::narrow_cast<size_t>(-message.payload_size)) {
             LOG(ERROR) << "Output size mismatch";
             outgoing_func_call_complete_cb_(func_call_to_handle(func_call_state->func_call),
-                                            /* success= */ false,
-                                            /* output= */ std::span<const char>());
+                                            /* success= */ false, /* output= */ EMPTY_CHAR_SPAN);
             return;
         }
         outgoing_func_call_complete_cb_(func_call_to_handle(func_call_state->func_call),
