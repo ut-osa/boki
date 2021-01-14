@@ -37,8 +37,7 @@ protected:
 
     void MessageHandler(const protocol::SharedLogMessage& message,
                         std::span<const char> payload);
-    bool GetLogEntryFromDB(uint32_t logspace_id, uint32_t seqnum,
-                           LogEntryProto* log_entry_proto);
+    bool GetLogEntryFromDB(uint64_t seqnum, LogEntryProto* log_entry_proto);
     void PutLogEntryToDB(const LogEntry& log_entry);
 
     bool SendSequencerMessage(uint16_t sequencer_id,

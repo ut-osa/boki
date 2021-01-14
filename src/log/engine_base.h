@@ -4,6 +4,7 @@
 #include "log/common.h"
 #include "log/view.h"
 #include "log/view_watcher.h"
+#include "server/io_worker.h"
 #include "utils/object_pool.h"
 #include "utils/appendable_buffer.h"
 
@@ -39,9 +40,10 @@ protected:
     zk::ZKSession* zk_session();
 
     virtual void OnViewCreated(const View* view) = 0;
+    virtual void OnViewFrozen(const View* view) = 0;
     virtual void OnViewFinalized(const FinalizedView* finalized_view) = 0;
 
-    virtual void HandleRemoteRead(const protocol::SharedLogMessage& message) = 0;
+    virtual void HandleRemoteRead(const protocol::SharedLogMessage& request) = 0;
     virtual void OnRecvNewMetaLogs(const protocol::SharedLogMessage& message,
                                    std::span<const char> payload) = 0;
     virtual void OnRecvNewIndexData(const protocol::SharedLogMessage& message,
@@ -86,6 +88,8 @@ protected:
     bool SendEngineResponse(const protocol::SharedLogMessage& request,
                             protocol::SharedLogMessage* response,
                             std::span<const char> payload = EMPTY_CHAR_SPAN);
+
+    server::IOWorker* SomeIOWorker();
 
 private:
     const uint16_t node_id_;

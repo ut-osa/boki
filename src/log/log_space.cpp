@@ -80,7 +80,7 @@ bool MetaLogPrimary::MarkNextCut(MetaLogProto* meta_log_proto) {
     meta_log_proto->set_metalog_seqnum(metalog_position());
     meta_log_proto->set_type(MetaLogProto::NEW_LOGS);
     auto* new_logs_proto = meta_log_proto->mutable_new_logs_proto();
-    new_logs_proto->set_start_seqnum(seqnum_position());
+    new_logs_proto->set_start_seqnum(bits::LowHalf64(seqnum_position()));
     for (uint16_t engine_id : view_->GetEngineNodes()) {
         new_logs_proto->add_shard_starts(last_cut_.at(engine_id));
         uint32_t delta = 0;
@@ -139,13 +139,57 @@ MetaLogBackup::MetaLogBackup(const View* view, uint16_t sequencer_id)
 MetaLogBackup::~MetaLogBackup() {}
 
 LogProducer::LogProducer(uint16_t engine_id, const View* view, uint16_t sequencer_id)
-    : LogSpaceBase(LogSpaceBase::kLiteMode, view, sequencer_id) {
+    : LogSpaceBase(LogSpaceBase::kLiteMode, view, sequencer_id),
+      next_localid_(bits::JoinTwo32(engine_id, 0)) {
     AddInterestedShard(engine_id);
     log_header_ = fmt::format("LogProducer[{}-{}]: ", view->id(), sequencer_id);
     state_ = kNormal;
 }
 
 LogProducer::~LogProducer() {}
+
+void LogProducer::LocalAppend(void* caller_data, uint64_t* localid) {
+    DCHECK(!pending_appends_.contains(next_localid_));
+    pending_appends_[next_localid_] = caller_data;
+    *localid = next_localid_++;
+}
+
+void LogProducer::PollAppendResults(AppendResultVec* results) {
+    *results = std::move(pending_append_results_);
+    pending_append_results_.clear();
+}
+
+void LogProducer::OnNewLogs(uint32_t metalog_seqnum,
+                            uint64_t start_seqnum, uint64_t start_localid,
+                            uint32_t delta) {
+    for (size_t i = 0; i < delta; i++) {
+        uint64_t seqnum = start_seqnum + i;
+        uint64_t localid = start_localid + i;
+        if (!pending_appends_.contains(localid)) {
+            HLOG(FATAL) << fmt::format("Cannot find pending log entry for localid {}",
+                                       bits::HexStr0x(localid));
+        }
+        pending_append_results_.push_back(AppendResult {
+            .seqnum = seqnum,
+            .localid = localid,
+            .metalog_progress = bits::JoinTwo32(identifier(), metalog_seqnum + 1),
+            .caller_data = pending_appends_[localid]
+        });
+        pending_appends_.erase(localid);
+    }
+}
+
+void LogProducer::OnFinalized(uint32_t metalog_position) {
+    for (const auto& item : pending_appends_) {
+        pending_append_results_.push_back(AppendResult {
+            .seqnum = kInvalidLogSeqNum,
+            .localid = item.first,
+            .metalog_progress = 0,
+            .caller_data = item.second
+        });
+    }
+    pending_appends_.clear();
+}
 
 LogStorage::LogStorage(uint16_t storage_id, const View* view, uint16_t sequencer_id)
     : LogSpaceBase(LogSpaceBase::kLiteMode, view, sequencer_id),
@@ -180,7 +224,8 @@ bool LogStorage::Store(const LogMetaData& log_metadata,
 }
 
 void LogStorage::ReadAt(const protocol::SharedLogMessage& request) {
-    uint32_t seqnum = request.seqnum;
+    DCHECK_EQ(request.logspace_id, identifier());
+    uint64_t seqnum = bits::JoinTwo32(request.logspace_id, request.seqnum_lowhalf);
     if (seqnum >= seqnum_position()) {
         pending_read_requests_.insert(std::make_pair(seqnum, request));
         return;
@@ -201,7 +246,7 @@ void LogStorage::ReadAt(const protocol::SharedLogMessage& request) {
 
 bool LogStorage::GrabLogEntriesForPersistence(
         std::vector<std::shared_ptr<const LogEntry>>* log_entries,
-        uint32_t* new_position) {
+        uint64_t* new_position) {
     size_t idx = absl::c_lower_bound(live_seqnums_,
                                      persisted_seqnum_position_)
                  - live_seqnums_.begin();
@@ -210,7 +255,7 @@ bool LogStorage::GrabLogEntriesForPersistence(
     }
     log_entries->clear();
     for (size_t i = idx; i < live_seqnums_.size(); i++) {
-        uint32_t seqnum = live_seqnums_[i];
+        uint64_t seqnum = live_seqnums_[i];
         DCHECK(live_log_entries_.contains(seqnum));
         log_entries->push_back(live_log_entries_[seqnum]);
     }
@@ -219,7 +264,7 @@ bool LogStorage::GrabLogEntriesForPersistence(
     return true;
 }
 
-void LogStorage::LogEntriesPersisted(uint32_t new_position) {
+void LogStorage::LogEntriesPersisted(uint64_t new_position) {
     persisted_seqnum_position_ = new_position;
     ShrinkLiveEntriesIfNeeded();
 }
@@ -241,23 +286,20 @@ bool LogStorage::GrabShardProgressForSending(std::vector<uint32_t>* progress) {
     return true;
 }
 
-void LogStorage::OnNewLogs(uint32_t start_seqnum, uint64_t start_localid,
+void LogStorage::OnNewLogs(uint32_t metalog_seqnum,
+                           uint64_t start_seqnum, uint64_t start_localid,
                            uint32_t delta) {
     auto iter = pending_read_requests_.begin();
-    while (iter != pending_read_requests_.end()) {
-        const protocol::SharedLogMessage& request = iter->second; 
-        if (request.seqnum >= start_seqnum) {
-            break;
-        }
+    while (iter != pending_read_requests_.end() && iter->first < start_seqnum) {
         pending_read_results_.push_back(ReadResult {
             .status = ReadResult::kFailed,
             .log_entry = nullptr,
-            .original_request = request
+            .original_request = iter->second
         });
         iter = pending_read_requests_.erase(iter);
     }
     for (size_t i = 0; i < delta; i++) {
-        uint32_t seqnum = start_seqnum + i;
+        uint64_t seqnum = start_seqnum + i;
         uint64_t localid = start_localid + i;
         if (!pending_log_entries_.contains(localid)) {
             HLOG(FATAL) << fmt::format("Cannot find pending log entry for localid {}",
@@ -275,7 +317,7 @@ void LogStorage::OnNewLogs(uint32_t start_seqnum, uint64_t start_localid,
         DCHECK_EQ(live_seqnums_.size(), live_log_entries_.size());
         ShrinkLiveEntriesIfNeeded();
         // Check if we have read request on it
-        if (iter != pending_read_requests_.end() && iter->second.seqnum == seqnum) {
+        if (iter != pending_read_requests_.end() && iter->first == seqnum) {
             pending_read_results_.push_back(ReadResult {
                 .status = ReadResult::kOK,
                 .log_entry = log_entry_ptr,
@@ -286,11 +328,15 @@ void LogStorage::OnNewLogs(uint32_t start_seqnum, uint64_t start_localid,
     }
 }
 
-void LogStorage::OnFinalized() {
+void LogStorage::OnFinalized(uint32_t metalog_position) {
     if (!pending_log_entries_.empty()) {
         HLOG(WARNING) << fmt::format("{} pending log entries discarded",
                                      pending_log_entries_.size());
         pending_log_entries_.clear();
+    }
+    if (!pending_read_requests_.empty()) {
+        HLOG(FATAL) << fmt::format("There are {} pending reads",
+                                   pending_read_requests_.size());
     }
 }
 

@@ -1,5 +1,7 @@
 #include "log/utils.h"
 
+#include "utils/bits.h"
+
 namespace faas {
 namespace log_utils {
 
@@ -62,26 +64,25 @@ MetaLogsProto MetaLogsFromPayload(std::span<const char> payload) {
 LogMetaData GetMetaDataFromMessage(const SharedLogMessage& message) {
     return LogMetaData {
         .user_logspace = message.user_logspace,
-        .logspace_id = message.logspace_id,
         .user_tag = message.user_tag,
-        .seqnum = message.seqnum,
+        .seqnum = bits::JoinTwo32(message.logspace_id, message.seqnum_lowhalf),
         .localid = message.localid
     };
 }
 
 void PopulateMetaDataToMessage(const LogMetaData& metadata, SharedLogMessage* message) {
-    message->logspace_id = metadata.logspace_id;
+    message->logspace_id = bits::HighHalf64(metadata.seqnum);
     message->user_logspace = metadata.user_logspace;
     message->user_tag = metadata.user_tag;
-    message->seqnum = metadata.seqnum;
+    message->seqnum_lowhalf = bits::LowHalf64(metadata.seqnum);
     message->localid = metadata.localid;
 }
 
 void PopulateMetaDataToMessage(const LogEntryProto& log_entry, SharedLogMessage* message) {
-    message->logspace_id = log_entry.logspace_id();
+    message->logspace_id = bits::HighHalf64(log_entry.seqnum());
     message->user_logspace = log_entry.user_logspace();
     message->user_tag = log_entry.user_tag();
-    message->seqnum = log_entry.seqnum();
+    message->seqnum_lowhalf = bits::LowHalf64(log_entry.seqnum());
     message->localid = log_entry.localid();
 }
 

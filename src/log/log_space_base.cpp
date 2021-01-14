@@ -11,9 +11,9 @@ LogSpaceBase::LogSpaceBase(Mode mode, const View* view, uint16_t sequencer_id)
       view_(view),
       sequencer_node_(view->GetSequencerNode(sequencer_id)),
       metalog_position_(0),
-      seqnum_position_(0),
       log_header_(fmt::format("LogSpace[{}-{}]: ", view->id(), sequencer_id)),
-      shard_progrsses_(view->num_engine_nodes(), 0) {}
+      shard_progrsses_(view->num_engine_nodes(), 0),
+      seqnum_position_(0) {}
 
 LogSpaceBase::~LogSpaceBase() {}
 
@@ -70,7 +70,7 @@ bool LogSpaceBase::Finalize(uint32_t final_metalog_position,
     }
     if (metalog_position_ == final_metalog_position) {
         state_ = kFinalized;
-        OnFinalized();
+        OnFinalized(metalog_position_);
         return true;
     } else {
         return false;
@@ -151,7 +151,9 @@ void LogSpaceBase::ApplyMetaLog(const MetaLogProto& meta_log) {
                     engine_node_ids[i], new_logs.shard_starts(i));
                 uint32_t delta = new_logs.shard_deltas(i);
                 if (mode_ == kFullMode || interested_shards_.contains(i)) {
-                    OnNewLogs(start_seqnum, start_localid, delta);
+                    OnNewLogs(meta_log.metalog_seqnum(),
+                              bits::JoinTwo32(identifier(), start_seqnum),
+                              start_localid, delta);
                 }
                 shard_progrsses_[i] = new_logs.shard_starts(i) + delta;
                 start_seqnum += delta;
@@ -164,7 +166,9 @@ void LogSpaceBase::ApplyMetaLog(const MetaLogProto& meta_log) {
         DCHECK(mode_ == kFullMode);
         {
             const auto& trim = meta_log.trim_proto();
-            OnTrim(trim.user_logspace(), trim.user_tag(), trim.trim_seqnum());
+            OnTrim(meta_log.metalog_seqnum(),
+                   trim.user_logspace(), trim.user_tag(),
+                   trim.trim_seqnum());
         }
         break;
     default:

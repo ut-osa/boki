@@ -98,10 +98,9 @@ message FinalizedViewProto {
 }
 
 message LogEntryProto {
-    uint32 logspace_id   = 1;
     uint32 user_logspace = 2;
     uint64 user_tag      = 3;
-    uint32 seqnum        = 4;
+    uint64 seqnum        = 4;
     uint64 localid       = 5;
     bytes  data          = 6;
 }

@@ -18,7 +18,9 @@ public:
     uint32_t identifier() const { return bits::JoinTwo16(view_id(), sequencer_id()); }
 
     uint32_t metalog_position() const { return metalog_position_; }
-    uint32_t seqnum_position() const { return seqnum_position_; }
+    uint64_t seqnum_position() const {
+        return bits::JoinTwo32(identifier(), seqnum_position_);
+    }
 
     bool GetMetaLogs(uint32_t start_pos, uint32_t end_pos,
                      std::vector<MetaLogProto>* metalogs) const;
@@ -43,11 +45,13 @@ protected:
     void AddInterestedShard(uint16_t engine_id);
 
     typedef absl::FixedArray<uint32_t> OffsetVec;
-    virtual void OnNewLogs(uint32_t start_seqnum, uint64_t start_localid,
+    virtual void OnNewLogs(uint32_t metalog_seqnum,
+                           uint64_t start_seqnum, uint64_t start_localid,
                            uint32_t delta) {}
-    virtual void OnTrim(uint32_t user_logspace, uint64_t user_tag,
+    virtual void OnTrim(uint32_t metalog_seqnum,
+                        uint32_t user_logspace, uint64_t user_tag,
                         uint64_t trim_seqnum) {}
-    virtual void OnFinalized() {}
+    virtual void OnFinalized(uint32_t metalog_position) {}
 
     virtual bool CanApplyMetaLog(const MetaLogProto& meta_log);
     void AdvanceMetaLogProgress();
@@ -57,12 +61,12 @@ protected:
     const View* view_;
     const View::Sequencer* sequencer_node_;
     uint32_t metalog_position_;
-    uint32_t seqnum_position_;
     std::string log_header_;
 
 private:
     absl::flat_hash_set<size_t> interested_shards_;
     absl::FixedArray<uint32_t> shard_progrsses_;
+    uint32_t seqnum_position_;
 
     utils::ProtobufMessagePool<MetaLogProto> metalog_pool_;
     std::vector<MetaLogProto*> applied_metalogs_;

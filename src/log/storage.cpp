@@ -186,8 +186,8 @@ void Storage::ProcessReadResults(const LogStorage::ReadResultVec& results) {
             response = SharedLogMessageHelper::NewReadOkResponse();
             log_utils::PopulateMetaDataToMessage(result.log_entry->metadata, &response);
             DCHECK_EQ(response.logspace_id, request.logspace_id);
-            DCHECK_EQ(response.seqnum, request.seqnum);
-            response.metalog_position = request.metalog_position;
+            DCHECK_EQ(response.seqnum_lowhalf, request.seqnum_lowhalf);
+            response.user_metalog_progress = request.user_metalog_progress;
             SendEngineResponse(request, &response,
                                STRING_TO_SPAN(result.log_entry->data));
             break;
@@ -195,9 +195,9 @@ void Storage::ProcessReadResults(const LogStorage::ReadResultVec& results) {
             ProcessReadFromDB(request);
             break;
         case LogStorage::ReadResult::kFailed:
-            HLOG(ERROR) << fmt::format("Failed to read log data (logspace={}, seqnum={})",
-                                       bits::HexStr0x(request.logspace_id),
-                                       bits::HexStr0x(request.seqnum));
+            HLOG(ERROR) << fmt::format(
+                "Failed to read log data (seqnum={})",
+                bits::HexStr0x(bits::JoinTwo32(request.logspace_id, request.seqnum_lowhalf)));
             response = SharedLogMessageHelper::NewDataLostResponse();
             SendEngineResponse(request, &response);
             break;
@@ -208,12 +208,12 @@ void Storage::ProcessReadResults(const LogStorage::ReadResultVec& results) {
 }
 
 void Storage::ProcessReadFromDB(const SharedLogMessage& request) {
+    uint64_t seqnum = bits::JoinTwo32(request.logspace_id, request.seqnum_lowhalf);
     LogEntryProto log_entry;
-    bool found = GetLogEntryFromDB(request.logspace_id, request.seqnum, &log_entry);
+    bool found = GetLogEntryFromDB(seqnum, &log_entry);
     if (!found) {
-        HLOG(ERROR) << fmt::format("Failed to read log data (logspace={}, seqnum={})",
-                                   bits::HexStr0x(request.logspace_id),
-                                   bits::HexStr0x(request.seqnum));
+        HLOG(ERROR) << fmt::format("Failed to read log data (seqnum={})",
+                                   bits::HexStr0x(seqnum));
         SharedLogMessage response = SharedLogMessageHelper::NewDataLostResponse();
         SendEngineResponse(request, &response);
         return;
@@ -221,8 +221,8 @@ void Storage::ProcessReadFromDB(const SharedLogMessage& request) {
     SharedLogMessage response = SharedLogMessageHelper::NewReadOkResponse();
     log_utils::PopulateMetaDataToMessage(log_entry, &response);
     DCHECK_EQ(response.logspace_id, request.logspace_id);
-    DCHECK_EQ(response.seqnum, request.seqnum);
-    response.metalog_position = request.metalog_position;
+    DCHECK_EQ(response.seqnum_lowhalf, request.seqnum_lowhalf);
+    response.user_metalog_progress = request.user_metalog_progress;
     SendEngineResponse(request, &response, STRING_TO_SPAN(log_entry.data()));
 }
 

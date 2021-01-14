@@ -227,13 +227,16 @@ struct SharedLogMessage {
         } __attribute__ ((packed));
         uint32_t logspace_id;        // [12:16]
     };
-    uint32_t metalog_position;       // [16:20]
 
-    uint32_t user_logspace;   // [20:24]
+    union {
+        uint32_t metalog_position; // [16:20] (only used by META_PROG)
+        uint32_t user_logspace;    // [16:20]
+    };
+
+    uint32_t seqnum_lowhalf;  // [20:24] (the high half is logspace_id)
     uint64_t user_tag;        // [24:32]
-    uint32_t seqnum;          // [32:36]
 
-    uint32_t _0_padding_0_;
+    uint64_t user_metalog_progress;  // [32:40]
 
     union {
         uint64_t localid;       // [40:48]
@@ -473,15 +476,15 @@ public:
     //     return message;
     // }
 
-    // static Message NewSharedLogOpSucceeded(SharedLogResultType result,
-    //                                        uint64_t log_seqnum = kInvalidLogSeqNum) {
-    //     NEW_EMPTY_MESSAGE(message);
-    //     message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
-    //     message.log_op = static_cast<uint16_t>(SharedLogOpType::RESPONSE);
-    //     message.log_result = static_cast<uint16_t>(result);
-    //     message.log_seqnum = log_seqnum;
-    //     return message;
-    // }
+    static Message NewSharedLogOpSucceeded(SharedLogResultType result,
+                                           uint64_t log_seqnum = kInvalidLogSeqNum) {
+        NEW_EMPTY_MESSAGE(message);
+        message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
+        message.log_op = static_cast<uint16_t>(SharedLogOpType::RESPONSE);
+        message.log_result = static_cast<uint16_t>(result);
+        message.log_seqnum = log_seqnum;
+        return message;
+    }
 
     static Message NewSharedLogOpFailed(SharedLogResultType result) {
         NEW_EMPTY_MESSAGE(message);

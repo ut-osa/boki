@@ -56,22 +56,27 @@ public:
     LogProducer(uint16_t engine_id, const View* view, uint16_t sequencer_id);
     ~LogProducer();
 
-    // Will store localid in Log_metadata
-    void AppendLocally(LogMetaData* log_metadata,
-                       std::span<const char> log_data);
+    void LocalAppend(void* caller_data, uint64_t* localid);
 
-    typedef std::function<void(uint64_t /* localid */, uint64_t /* user_seqnum */)>
-            LogPersistedCallback;
-    void SetLogPersistedCallback(LogPersistedCallback cb);
-
-    typedef std::function<void(uint64_t /* localid */)>
-            LogDiscardedCallback;
-    void SetLogDiscardedCallback(LogDiscardedCallback cb);
+    struct AppendResult {
+        uint64_t seqnum;   // seqnum == kInvalidLogSeqNum indicates failure
+        uint64_t localid;
+        uint64_t metalog_progress;
+        void*    caller_data;
+    };
+    typedef absl::InlinedVector<AppendResult, 4> AppendResultVec;
+    void PollAppendResults(AppendResultVec* results);
 
 private:
-    void OnNewLogs(uint32_t start_seqnum, uint64_t start_localid,
+    uint64_t next_localid_;
+    absl::flat_hash_map</* localid */ uint64_t,
+                        /* caller_data */ void*> pending_appends_;
+    AppendResultVec pending_append_results_;
+
+    void OnNewLogs(uint32_t metalog_seqnum,
+                   uint64_t start_seqnum, uint64_t start_localid,
                    uint32_t delta) override;
-    void OnFinalized() override;
+    void OnFinalized(uint32_t metalog_position) override;
 
     DISALLOW_COPY_AND_ASSIGN(LogProducer);
 };
@@ -87,8 +92,8 @@ public:
 
     bool GrabLogEntriesForPersistence(
             std::vector<std::shared_ptr<const LogEntry>>* log_entries,
-            uint32_t* new_position);
-    void LogEntriesPersisted(uint32_t new_position);
+            uint64_t* new_position);
+    void LogEntriesPersisted(uint64_t new_position);
 
     struct ReadResult {
         enum Status { kOK, kLookupDB, kFailed };
@@ -108,9 +113,9 @@ private:
     absl::flat_hash_map</* engine_id */ uint16_t,
                         /* localid */ uint32_t> shard_progrsses_;
 
-    uint32_t persisted_seqnum_position_;
-    std::deque<uint32_t> live_seqnums_;
-    absl::flat_hash_map</* seqnum */ uint32_t,
+    uint64_t persisted_seqnum_position_;
+    std::deque<uint64_t> live_seqnums_;
+    absl::flat_hash_map</* seqnum */ uint64_t,
                         std::shared_ptr<const LogEntry>>
         live_log_entries_;
 
@@ -118,13 +123,14 @@ private:
                         std::unique_ptr<LogEntry>>
         pending_log_entries_;
 
-    std::multimap</* seqnum */ uint32_t,
+    std::multimap</* seqnum */ uint64_t,
                   protocol::SharedLogMessage> pending_read_requests_;
     ReadResultVec pending_read_results_;
 
-    void OnNewLogs(uint32_t start_seqnum, uint64_t start_localid,
+    void OnNewLogs(uint32_t metalog_seqnum,
+                   uint64_t start_seqnum, uint64_t start_localid,
                    uint32_t delta) override;
-    void OnFinalized() override;
+    void OnFinalized(uint32_t metalog_position) override;
 
     void AdvanceShardProgress(uint16_t engine_id);
     void ShrinkLiveEntriesIfNeeded();

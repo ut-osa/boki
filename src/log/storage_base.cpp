@@ -89,14 +89,13 @@ void StorageBase::MessageHandler(const SharedLogMessage& message,
 }
 
 namespace {
-static inline std::string GetDBKey(uint32_t logspace_id, uint32_t seqnum) {
-    return fmt::format("{0:08x}{1:08x}", logspace_id, seqnum);
+static inline std::string GetDBKey(uint64_t seqnum) {
+    return bits::HexStr(seqnum);
 }
 }  // namespace
 
-bool StorageBase::GetLogEntryFromDB(uint32_t logspace_id, uint32_t seqnum,
-                                    LogEntryProto* log_entry_proto) {
-    std::string db_key = GetDBKey(logspace_id, seqnum);
+bool StorageBase::GetLogEntryFromDB(uint64_t seqnum, LogEntryProto* log_entry_proto) {
+    std::string db_key = GetDBKey(seqnum);
     std::string data;
     auto status = db_->Get(rocksdb::ReadOptions(), db_key, &data);
     if (status.IsNotFound()) {
@@ -112,10 +111,8 @@ bool StorageBase::GetLogEntryFromDB(uint32_t logspace_id, uint32_t seqnum,
 }
 
 void StorageBase::PutLogEntryToDB(const LogEntry& log_entry) {
-    std::string db_key = GetDBKey(log_entry.metadata.logspace_id,
-                                  log_entry.metadata.seqnum);
+    std::string db_key = GetDBKey(log_entry.metadata.seqnum);
     LogEntryProto log_entry_proto;
-    log_entry_proto.set_logspace_id(log_entry.metadata.logspace_id);
     log_entry_proto.set_user_logspace(log_entry.metadata.user_logspace);
     log_entry_proto.set_user_tag(log_entry.metadata.user_tag);
     log_entry_proto.set_seqnum(log_entry.metadata.seqnum);

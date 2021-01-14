@@ -45,6 +45,11 @@ void EngineBase::SetupZKWatchers() {
             this->OnViewCreated(view);
         }
     );
+    view_watcher_.SetViewFrozenCallback(
+        [this] (const View* view) {
+            this->OnViewFrozen(view);
+        }
+    );
     view_watcher_.SetViewFinalizedCallback(
         [this] (const FinalizedView* finalized_view) {
             this->OnViewFinalized(finalized_view);
@@ -148,7 +153,7 @@ void EngineBase::OnMessageFromFuncWorker(const Message& message) {
     }
 
     LocalOp* op = log_op_pool_.Get();
-    op->id = next_local_op_id_.fetch_add(1, std::memory_order_relaxed);
+    op->id = next_local_op_id_.fetch_add(1, std::memory_order_acq_rel);
     op->start_timestamp = GetMonotonicMicroTimestamp();
     op->client_id = message.log_client_id;
     op->client_data = message.log_client_data;
@@ -256,6 +261,10 @@ bool EngineBase::SendEngineResponse(const protocol::SharedLogMessage& request,
     return engine_->SendSharedLogMessage(
         protocol::ConnType::SLOG_ENGINE_TO_ENGINE,
         request.origin_node_id, *response, payload);
+}
+
+server::IOWorker* EngineBase::SomeIOWorker() {
+    return engine_->SomeIOWorker();
 }
 
 }  // namespace log
