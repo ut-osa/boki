@@ -59,28 +59,30 @@ MetaLogsProto MetaLogsFromPayload(std::span<const char> payload) {
     return metalogs_proto;
 }
 
-void PopulateMetaDataFromRequest(const SharedLogMessage& request, LogMetaData* metadata) {
-    metadata->logspace_id = request.logspace_id;
-    metadata->user_logspace = request.user_logspace;
-    metadata->user_tag = request.user_tag;
-    metadata->seqnum = request.seqnum;
-    metadata->localid = request.localid;
+LogMetaData GetMetaDataFromMessage(const SharedLogMessage& message) {
+    return LogMetaData {
+        .user_logspace = message.user_logspace,
+        .logspace_id = message.logspace_id,
+        .user_tag = message.user_tag,
+        .seqnum = message.seqnum,
+        .localid = message.localid
+    };
 }
 
-void PopulateMetaDataToResponse(const LogMetaData& metadata, SharedLogMessage* response) {
-    response->logspace_id = metadata.logspace_id;
-    response->user_logspace = metadata.user_logspace;
-    response->user_tag = metadata.user_tag;
-    response->seqnum = metadata.seqnum;
-    response->localid = metadata.localid;
+void PopulateMetaDataToMessage(const LogMetaData& metadata, SharedLogMessage* message) {
+    message->logspace_id = metadata.logspace_id;
+    message->user_logspace = metadata.user_logspace;
+    message->user_tag = metadata.user_tag;
+    message->seqnum = metadata.seqnum;
+    message->localid = metadata.localid;
 }
 
-void PopulateMetaDataToResponse(const LogEntryProto& log_entry, SharedLogMessage* response) {
-    response->logspace_id = log_entry.logspace_id();
-    response->user_logspace = log_entry.user_logspace();
-    response->user_tag = log_entry.user_tag();
-    response->seqnum = log_entry.seqnum();
-    response->localid = log_entry.localid();
+void PopulateMetaDataToMessage(const LogEntryProto& log_entry, SharedLogMessage* message) {
+    message->logspace_id = log_entry.logspace_id();
+    message->user_logspace = log_entry.user_logspace();
+    message->user_tag = log_entry.user_tag();
+    message->seqnum = log_entry.seqnum();
+    message->localid = log_entry.localid();
 }
 
 }  // namespace log_utils

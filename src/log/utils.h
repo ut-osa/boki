@@ -27,12 +27,11 @@ private:
 
 log::MetaLogsProto MetaLogsFromPayload(std::span<const char> payload);
 
-void PopulateMetaDataFromRequest(const protocol::SharedLogMessage& request,
-                                 log::LogMetaData* metadata);
-void PopulateMetaDataToResponse(const log::LogMetaData& metadata,
-                                protocol::SharedLogMessage* response);
-void PopulateMetaDataToResponse(const log::LogEntryProto& log_entry,
-                                protocol::SharedLogMessage* response);
+log::LogMetaData GetMetaDataFromMessage(const protocol::SharedLogMessage& message);
+void PopulateMetaDataToMessage(const log::LogMetaData& metadata,
+                               protocol::SharedLogMessage* message);
+void PopulateMetaDataToMessage(const log::LogEntryProto& log_entry,
+                               protocol::SharedLogMessage* message);
 
 }  // namespace log_utils
 }  // namespace faas

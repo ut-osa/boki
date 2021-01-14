@@ -119,8 +119,7 @@ void Storage::HandleReplicateRequest(const SharedLogMessage& message,
         IGNORE_IF_FROM_PAST_VIEW(message);
         storage_ptr = storage_collection_.GetLogSpaceChecked(message.logspace_id);
     }
-    LogMetaData metadata;
-    log_utils::PopulateMetaDataFromRequest(message, &metadata);
+    LogMetaData metadata = log_utils::GetMetaDataFromMessage(message);
     {
         auto locked_storage = storage_ptr.Lock();
         if (!locked_storage->Store(metadata, payload)) {
@@ -162,7 +161,7 @@ void Storage::ProcessReadResults(const LogStorage::ReadResultVec& results) {
         switch (result.status) {
         case LogStorage::ReadResult::kOK:
             response = SharedLogMessageHelper::NewReadOkResponse();
-            log_utils::PopulateMetaDataToResponse(result.log_entry->metadata, &response);
+            log_utils::PopulateMetaDataToMessage(result.log_entry->metadata, &response);
             DCHECK_EQ(response.logspace_id, request.logspace_id);
             DCHECK_EQ(response.seqnum, request.seqnum);
             response.metalog_position = request.metalog_position;
@@ -197,7 +196,7 @@ void Storage::ProcessReadFromDB(const SharedLogMessage& request) {
         return;
     }
     SharedLogMessage response = SharedLogMessageHelper::NewReadOkResponse();
-    log_utils::PopulateMetaDataToResponse(log_entry, &response);
+    log_utils::PopulateMetaDataToMessage(log_entry, &response);
     DCHECK_EQ(response.logspace_id, request.logspace_id);
     DCHECK_EQ(response.seqnum, request.seqnum);
     response.metalog_position = request.metalog_position;
