@@ -3,6 +3,7 @@
 #include "base/common.h"
 #include "proto/shared_log.pb.h"
 #include "utils/hash.h"
+#include "utils/bits.h"
 
 namespace faas {
 namespace log {
@@ -36,6 +37,13 @@ public:
     }
     bool contains_storage_node(uint16_t node_id) const {
         return storage_nodes_.contains(node_id);
+    }
+
+    uint32_t LogSpaceIdentifier(uint32_t user_logspace) const {
+        uint64_t h = hash::xxHash64(user_logspace, /* seed= */ log_space_hash_seed_);
+        uint16_t node_id = log_space_hash_tokens_[h % log_space_hash_tokens_.size()];
+        DCHECK(sequencer_nodes_.contains(node_id));
+        return bits::JoinTwo16(id_, node_id);
     }
 
     class Engine {
@@ -114,13 +122,6 @@ public:
     };
 
     const Sequencer* GetSequencerNode(uint16_t node_id) const {
-        DCHECK(sequencer_nodes_.contains(node_id));
-        return sequencer_nodes_.at(node_id);
-    }
-
-    const Sequencer* LogSpaceToSequencer(uint32_t log_space) const {
-        uint64_t h = hash::xxHash64(log_space, /* seed= */ log_space_hash_seed_);
-        uint16_t node_id = log_space_hash_tokens_[h % log_space_hash_tokens_.size()];
         DCHECK(sequencer_nodes_.contains(node_id));
         return sequencer_nodes_.at(node_id);
     }

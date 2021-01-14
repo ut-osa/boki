@@ -36,10 +36,6 @@ void Storage::OnViewCreated(const View* view) {
         log_header_ = fmt::format("Storage[{}-{}]: ", my_node_id(), view->id());
     }
     if (!ready_requests.empty()) {
-        if (!contains_myself) {
-            HLOG(FATAL) << fmt::format("Have requests for view {} not including myself",
-                                       view->id());
-        }
         SomeIOWorker()->ScheduleFunction(
             nullptr, [this, requests = std::move(ready_requests)] {
                 ProcessRequests(requests);
@@ -50,21 +46,35 @@ void Storage::OnViewCreated(const View* view) {
 
 void Storage::OnViewFinalized(const FinalizedView* finalized_view) {
     DCHECK(zk_session()->WithinMyEventLoopThread());
-    absl::ReaderMutexLock core_lk(&core_mu_);
-    DCHECK_EQ(finalized_view->view()->id(), current_view_->id());
-    storage_collection_.ForEachActiveLogSpace(
-        finalized_view->view(),
-        [finalized_view, this] (uint32_t logspace_id, LockablePtr<LogStorage> storage_ptr) {
-            auto locked_storage = storage_ptr.Lock();
-            bool success = locked_storage->Finalize(
-                finalized_view->final_metalog_position(logspace_id),
-                finalized_view->tail_metalogs(logspace_id));
-            if (!success) {
-                HLOG(FATAL) << fmt::format("Failed to finalize log space {}",
-                                            bits::HexStr0x(logspace_id));
+    LogStorage::ReadResultVec results;
+    {
+        absl::ReaderMutexLock core_lk(&core_mu_);
+        DCHECK_EQ(finalized_view->view()->id(), current_view_->id());
+        storage_collection_.ForEachActiveLogSpace(
+            finalized_view->view(),
+            [finalized_view, &results, this] (uint32_t logspace_id,
+                                              LockablePtr<LogStorage> storage_ptr) {
+                auto locked_storage = storage_ptr.Lock();
+                bool success = locked_storage->Finalize(
+                    finalized_view->final_metalog_position(logspace_id),
+                    finalized_view->tail_metalogs(logspace_id));
+                if (!success) {
+                    HLOG(FATAL) << fmt::format("Failed to finalize log space {}",
+                                                bits::HexStr0x(logspace_id));
+                }
+                LogStorage::ReadResultVec tmp;
+                locked_storage->PollReadResults(&tmp);
+                results.insert(results.end(), tmp.begin(), tmp.end());
             }
-        }
-    );
+        );
+    }
+    if (!results.empty()) {
+        SomeIOWorker()->ScheduleFunction(
+            nullptr, [this, results = std::move(results)] {
+                ProcessReadResults(results);
+            }
+        );
+    }
 }
 
 #define ONHOLD_IF_FROM_FUTURE_VIEW(MESSAGE_VAR, PAYLOAD_VAR)        \
@@ -84,6 +94,17 @@ void Storage::OnViewFinalized(const FinalizedView* finalized_view) {
                 && (MESSAGE_VAR).view_id < current_view_->id()) {   \
             HLOG(WARNING) << "Receive outdate request from view "   \
                           << (MESSAGE_VAR).view_id;                 \
+            return;                                                 \
+        }                                                           \
+    } while (0)
+
+#define RETURN_IF_LOGSPACE_FINALIZED(LOGSPACE_PTR)                  \
+    do {                                                            \
+        if ((LOGSPACE_PTR)->finalized()) {                          \
+            uint32_t logspace_id = (LOGSPACE_PTR)->identifier();    \
+            HLOG(WARNING) << fmt::format(                           \
+                "LogSpace {} is finalized",                         \
+                bits::HexStr0x(logspace_id));                       \
             return;                                                 \
         }                                                           \
     } while (0)
@@ -122,6 +143,7 @@ void Storage::HandleReplicateRequest(const SharedLogMessage& message,
     LogMetaData metadata = log_utils::GetMetaDataFromMessage(message);
     {
         auto locked_storage = storage_ptr.Lock();
+        RETURN_IF_LOGSPACE_FINALIZED(locked_storage);
         if (!locked_storage->Store(metadata, payload)) {
             HLOG(ERROR) << "Failed to store log entry";
         }
@@ -143,6 +165,7 @@ void Storage::OnRecvNewMetaLogs(const SharedLogMessage& message,
     LogStorage::ReadResultVec results;
     {
         auto locked_storage = storage_ptr.Lock();
+        RETURN_IF_LOGSPACE_FINALIZED(locked_storage);
         for (const MetaLogProto& metalog_proto : metalogs_proto.metalogs()) {
             locked_storage->ProvideMetaLog(metalog_proto);
         }
@@ -228,8 +251,10 @@ void Storage::SendShardProgressIfNeeded() {
         }
         storage_collection_.ForEachActiveLogSpace(
             current_view_,
-            [&progress_to_send] (uint32_t logspace_id, LockablePtr<LogStorage> storage_ptr) {
+            [&progress_to_send, this] (uint32_t logspace_id,
+                                       LockablePtr<LogStorage> storage_ptr) {
                 auto locked_storage = storage_ptr.Lock();
+                RETURN_IF_LOGSPACE_FINALIZED(locked_storage);
                 std::vector<uint32_t> progress;
                 if (locked_storage->GrabShardProgressForSending(&progress)) {
                     progress_to_send.emplace_back(logspace_id, std::move(progress));
@@ -244,6 +269,8 @@ void Storage::SendShardProgressIfNeeded() {
                              VECTOR_TO_CHAR_SPAN(entry.second));
     }
 }
+
+#undef RETURN_IF_LOGSPACE_FINALIZED
 
 }  // namespace log
 }  // namespace faas

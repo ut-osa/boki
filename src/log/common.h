@@ -23,11 +23,13 @@ inline uint64_t BuildSeqNum(uint16_t view_id, uint64_t lower) {
 struct SharedLogRequest {
     protocol::SharedLogMessage message;
     std::string                payload;
+    void*                      local_op;
 
     explicit SharedLogRequest(const protocol::SharedLogMessage& message,
                               std::span<const char> payload = EMPTY_CHAR_SPAN)
         : message(message),
-          payload() {
+          payload(),
+          local_op(nullptr) {
         if (payload.size() > 0) {
             this->payload.assign(payload.data(), payload.size());
         }

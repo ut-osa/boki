@@ -112,12 +112,19 @@ void Sequencer::OnViewFinalized(const FinalizedView* finalized_view) {
         }                                                           \
     } while (0)
 
-#define RETURN_IF_LOGSPACE_FROZEN(LOGSPACE_PTR)                     \
+#define RETURN_IF_LOGSPACE_INACTIVE(LOGSPACE_PTR)                   \
     do {                                                            \
         if ((LOGSPACE_PTR)->frozen()) {                             \
             uint32_t logspace_id = (LOGSPACE_PTR)->identifier();    \
             HLOG(WARNING) << fmt::format(                           \
                 "LogSpace {} is frozen",                            \
+                bits::HexStr0x(logspace_id));                       \
+            return;                                                 \
+        }                                                           \
+        if ((LOGSPACE_PTR)->finalized()) {                          \
+            uint32_t logspace_id = (LOGSPACE_PTR)->identifier();    \
+            HLOG(WARNING) << fmt::format(                           \
+                "LogSpace {} is finalized",                         \
                 bits::HexStr0x(logspace_id));                       \
             return;                                                 \
         }                                                           \
@@ -142,7 +149,7 @@ void Sequencer::OnRecvMetaLogProgress(const SharedLogMessage& message) {
     std::vector<MetaLogProto> new_replicated_metalogs;
     {
         auto locked_logspace = logspace_ptr.Lock();
-        RETURN_IF_LOGSPACE_FROZEN(locked_logspace);
+        RETURN_IF_LOGSPACE_INACTIVE(locked_logspace);
         uint32_t old_position = locked_logspace->replicated_metalog_position();
         locked_logspace->UpdateReplicaProgress(
             message.origin_node_id, message.metalog_position);
@@ -172,7 +179,7 @@ void Sequencer::OnRecvShardProgress(const SharedLogMessage& message,
     }
     {
         auto locked_logspace = logspace_ptr.Lock();
-        RETURN_IF_LOGSPACE_FROZEN(locked_logspace);
+        RETURN_IF_LOGSPACE_INACTIVE(locked_logspace);
         std::vector<uint32_t> progress(payload.size() / sizeof(uint32_t), 0);
         memcpy(progress.data(), payload.data(), payload.size());
         locked_logspace->UpdateStorageProgress(message.origin_node_id, progress);
@@ -196,7 +203,7 @@ void Sequencer::OnRecvNewMetaLogs(const SharedLogMessage& message,
     uint32_t new_metalog_position;
     {
         auto locked_logspace = logspace_ptr.Lock();
-        RETURN_IF_LOGSPACE_FROZEN(locked_logspace);
+        RETURN_IF_LOGSPACE_INACTIVE(locked_logspace);
         old_metalog_position = locked_logspace->metalog_position();
         for (const MetaLogProto& metalog_proto : metalogs_proto.metalogs()) {
             locked_logspace->ProvideMetaLog(metalog_proto);
@@ -235,7 +242,7 @@ void Sequencer::MarkNextCutIfDoable() {
     bool has_new_cut = false;
     {
         auto locked_logspace = logspace_ptr.Lock();
-        RETURN_IF_LOGSPACE_FROZEN(locked_logspace);
+        RETURN_IF_LOGSPACE_INACTIVE(locked_logspace);
         if (!locked_logspace->all_metalog_replicated()) {
             HLOG(INFO) << "Not all meta log replicated, will not mark new cut";
             return;
@@ -247,7 +254,7 @@ void Sequencer::MarkNextCutIfDoable() {
     }
 }
 
-#undef RETURN_IF_LOGSPACE_FROZEN
+#undef RETURN_IF_LOGSPACE_INACTIVE
 
 }  // namespace log
 }  // namespace faas
