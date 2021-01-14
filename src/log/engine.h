@@ -30,9 +30,9 @@ private:
     void OnViewCreated(const View* view) override;
     void OnViewFinalized(const FinalizedView* finalized_view) override;
 
-    void HandleLocalAppend(const protocol::Message& message) override;
-    void HandleLocalTrim(const protocol::Message& message) override;
-    void HandleLocalRead(const protocol::Message& message) override;
+    void HandleLocalAppend(LocalOp* op) override;
+    void HandleLocalTrim(LocalOp* op) override;
+    void HandleLocalRead(LocalOp* op) override;
 
     void HandleRemoteRead(const protocol::SharedLogMessage& message) override;
     void OnRecvNewMetaLogs(const protocol::SharedLogMessage& message,

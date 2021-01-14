@@ -27,15 +27,15 @@ void Engine::OnViewFinalized(const FinalizedView* finalized_view) {
 
 }
 
-void Engine::HandleLocalAppend(const Message& message) {
+void Engine::HandleLocalAppend(LocalOp* op) {
 
 }
 
-void Engine::HandleLocalTrim(const Message& message) {
+void Engine::HandleLocalTrim(LocalOp* op) {
 
 }
 
-void Engine::HandleLocalRead(const Message& message) {
+void Engine::HandleLocalRead(LocalOp* op) {
 
 }
 

@@ -10,6 +10,7 @@ namespace log {
 constexpr uint64_t kEmptyLogTag      = 0;
 constexpr uint64_t kMaxLogSeqNum     = 0xffff000000000000ULL;
 constexpr uint64_t kInvalidLogSeqNum = protocol::kInvalidLogSeqNum;
+constexpr uint64_t kInvalidLogTag    = protocol::kInvalidLogTag;
 
 inline uint16_t SeqNumToViewId(uint64_t seqnum) {
     return gsl::narrow_cast<uint16_t>(seqnum >> 48);

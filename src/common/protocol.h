@@ -80,9 +80,7 @@ enum class MessageType : uint16_t {
     DISPATCH_FUNC_CALL    = 7,
     FUNC_CALL_COMPLETE    = 8,
     FUNC_CALL_FAILED      = 9,
-    SHARED_LOG_OP         = 10,
-    FSM_RECORDS           = 11,
-    LOCAL_CUT             = 12
+    SHARED_LOG_OP         = 10
 };
 
 enum class SharedLogOpType : uint16_t {
@@ -129,10 +127,7 @@ struct Message {
         uint16_t func_id      : 8;
         uint16_t method_id    : 6;
         uint16_t client_id    : 14;
-        union {
-            uint32_t call_id;
-            uint32_t log_space;       // Will only be used for inter-engine message
-        };
+        uint32_t call_id;
     } __attribute__ ((packed));
     union {
         uint64_t parent_call_id;      // [8:16]  Used in INVOKE_FUNC, saved as full_call_id
@@ -143,14 +138,7 @@ struct Message {
         uint64_t log_seqnum;          // [8:16]  Used in SHARED_LOG_OP
         uint64_t log_localid;         // [8:16]  Used in SHARED_LOG_OP
     };
-    union {
-        int64_t send_timestamp;       // [16:24]
-        struct {
-            uint16_t hop_times;   // Used in SHARED_LOG_OP
-            uint16_t padding1;
-            uint32_t padding2;
-        } __attribute__ ((packed));
-    };
+    int64_t send_timestamp;       // [16:24]
     int32_t payload_size;         // [24:28] Used in HANDSHAKE_RESPONSE, INVOKE_FUNC,
                                   //                 FUNC_CALL_COMPLETE, SHARED_LOG_OP
     uint32_t flags;               // [28:32]
@@ -160,16 +148,16 @@ struct Message {
         union {                   // [34:36]
             uint16_t log_result;
             uint16_t log_client_id;
-            uint16_t src_node_id;
         };
     } __attribute__ ((packed));
 
-    uint32_t log_fsm_progress;    // [36:40]
+    uint32_t _0_padding_0_;
 
     uint64_t log_tag;             // [40:48]
     uint64_t log_client_data;     // [48:56] will be preserved for response to clients
 
-    char final_padding[__FAAS_CACHE_LINE_SIZE - 56];
+    uint64_t _8_padding_8_;
+
     char inline_data[__FAAS_MESSAGE_SIZE - __FAAS_CACHE_LINE_SIZE]
         __attribute__ ((aligned (__FAAS_CACHE_LINE_SIZE)));
 };
@@ -216,11 +204,6 @@ struct GatewayMessage {
         uint32_t call_id;
     } __attribute__ ((packed));
     union {
-        // Used in ENGINE_HANDSHAKE
-        struct {
-            uint16_t node_id;
-            uint16_t conn_id;
-        } __attribute__ ((packed));
         int32_t processing_time; // Used in FUNC_CALL_COMPLETE
         int32_t status_code;     // Used in FUNC_CALL_FAILED
     };
@@ -228,15 +211,6 @@ struct GatewayMessage {
 } __attribute__ ((packed));
 
 static_assert(sizeof(GatewayMessage) == 16, "Unexpected GatewayMessage size");
-
-struct SequencerMessage {
-    uint16_t message_type;
-    uint16_t node_id;
-    uint32_t payload_size;
-    char     shared_log_addr[32];  // Used in ENGINE_HANDSHAKE
-} __attribute__ ((packed));
-
-static_assert(sizeof(SequencerMessage) == 40, "Unexpected SequencerMessage size");
 
 struct SharedLogMessage {
     uint16_t op_type;         // [0:2]
@@ -267,7 +241,7 @@ struct SharedLogMessage {
     };
     uint64_t client_data;       // [48:56]
 
-    uint64_t _8_padding_8_; 
+    uint64_t _8_padding_8_;
 } __attribute__ (( packed, aligned(__FAAS_CACHE_LINE_SIZE) ));
 
 static_assert(sizeof(SharedLogMessage) == 64, "Unexpected SharedLogMessage size");
@@ -438,83 +412,82 @@ public:
         return message;
     }
 
-    static Message NewSharedLogAppend(uint64_t log_tag, uint64_t log_client_data) {
-        NEW_EMPTY_MESSAGE(message);
-        message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
-        message.log_op = static_cast<uint16_t>(SharedLogOpType::APPEND);
-        message.log_tag = log_tag;
-        message.log_fsm_progress = 0;
-        message.log_client_data = log_client_data;
-        return message;
-    }
+    // static Message NewSharedLogAppend(uint64_t log_tag, uint64_t log_client_data) {
+    //     NEW_EMPTY_MESSAGE(message);
+    //     message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
+    //     message.log_op = static_cast<uint16_t>(SharedLogOpType::APPEND);
+    //     message.log_tag = log_tag;
+    //     message.log_fsm_progress = 0;
+    //     message.log_client_data = log_client_data;
+    //     return message;
+    // }
 
-    static Message NewSharedLogReadAt(uint64_t log_seqnum, uint32_t log_fsm_progress,
-                                      uint64_t log_client_data) {
-        NEW_EMPTY_MESSAGE(message);
-        message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
-        message.log_op = static_cast<uint16_t>(SharedLogOpType::READ_AT);
-        message.log_seqnum = log_seqnum;
-        message.log_fsm_progress = log_fsm_progress;
-        message.log_client_data = log_client_data;
-        return message;
-    }
+    // static Message NewSharedLogReadAt(uint64_t log_seqnum, uint32_t log_fsm_progress,
+    //                                   uint64_t log_client_data) {
+    //     NEW_EMPTY_MESSAGE(message);
+    //     message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
+    //     message.log_op = static_cast<uint16_t>(SharedLogOpType::READ_AT);
+    //     message.log_seqnum = log_seqnum;
+    //     message.log_fsm_progress = log_fsm_progress;
+    //     message.log_client_data = log_client_data;
+    //     return message;
+    // }
 
-    static Message NewSharedLogRead(uint64_t log_tag, uint64_t log_seqnum, int direction,
-                                    uint32_t log_fsm_progress, uint64_t log_client_data) {
-        NEW_EMPTY_MESSAGE(message);
-        message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
-        if (direction > 0) {
-            message.log_op = static_cast<uint16_t>(SharedLogOpType::READ_NEXT);
-        } else {
-            DCHECK(direction < 0);
-            message.log_op = static_cast<uint16_t>(SharedLogOpType::READ_PREV);
-        }
-        message.log_tag = log_tag;
-        message.log_seqnum = log_seqnum;
-        message.log_fsm_progress = log_fsm_progress;
-        message.log_client_data = log_client_data;
-        return message;
-    }
+    // static Message NewSharedLogRead(uint64_t log_tag, uint64_t log_seqnum, int direction,
+    //                                 uint32_t log_fsm_progress, uint64_t log_client_data) {
+    //     NEW_EMPTY_MESSAGE(message);
+    //     message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
+    //     if (direction > 0) {
+    //         message.log_op = static_cast<uint16_t>(SharedLogOpType::READ_NEXT);
+    //     } else {
+    //         DCHECK(direction < 0);
+    //         message.log_op = static_cast<uint16_t>(SharedLogOpType::READ_PREV);
+    //     }
+    //     message.log_tag = log_tag;
+    //     message.log_seqnum = log_seqnum;
+    //     message.log_fsm_progress = log_fsm_progress;
+    //     message.log_client_data = log_client_data;
+    //     return message;
+    // }
 
-    static Message NewSharedLogReplicate(uint64_t log_tag, uint64_t log_localid) {
-        NEW_EMPTY_MESSAGE(message);
-        message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
-        message.log_op = static_cast<uint16_t>(SharedLogOpType::REPLICATE);
-        message.log_tag = log_tag;
-        message.log_localid = log_localid;
-        message.log_fsm_progress = 0;
-        return message;
-    }
+    // static Message NewSharedLogReplicate(uint64_t log_tag, uint64_t log_localid) {
+    //     NEW_EMPTY_MESSAGE(message);
+    //     message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
+    //     message.log_op = static_cast<uint16_t>(SharedLogOpType::REPLICATE);
+    //     message.log_tag = log_tag;
+    //     message.log_localid = log_localid;
+    //     message.log_fsm_progress = 0;
+    //     return message;
+    // }
 
-    static Message NewSharedLogIndexData(uint64_t start_seqnum,
-                                         std::span<const uint64_t> tags) {
-        if (tags.size() * sizeof(uint64_t) > MESSAGE_INLINE_DATA_SIZE) {
-            LOG(FATAL) << "Well, the unexpected thing happens";
-        }
-        NEW_EMPTY_MESSAGE(message);
-        message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
-        message.log_op = static_cast<uint16_t>(SharedLogOpType::INDEX_DATA);
-        message.log_seqnum = start_seqnum;
-        SetInlineData(&message, tags);
-        return message;
-    }
+    // static Message NewSharedLogIndexData(uint64_t start_seqnum,
+    //                                      std::span<const uint64_t> tags) {
+    //     if (tags.size() * sizeof(uint64_t) > MESSAGE_INLINE_DATA_SIZE) {
+    //         LOG(FATAL) << "Well, the unexpected thing happens";
+    //     }
+    //     NEW_EMPTY_MESSAGE(message);
+    //     message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
+    //     message.log_op = static_cast<uint16_t>(SharedLogOpType::INDEX_DATA);
+    //     message.log_seqnum = start_seqnum;
+    //     SetInlineData(&message, tags);
+    //     return message;
+    // }
 
-    static Message NewSharedLogOpSucceeded(SharedLogResultType result,
-                                           uint64_t log_seqnum = kInvalidLogSeqNum) {
-        NEW_EMPTY_MESSAGE(message);
-        message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
-        message.log_op = static_cast<uint16_t>(SharedLogOpType::RESPONSE);
-        message.log_result = static_cast<uint16_t>(result);
-        message.log_seqnum = log_seqnum;
-        return message;
-    }
+    // static Message NewSharedLogOpSucceeded(SharedLogResultType result,
+    //                                        uint64_t log_seqnum = kInvalidLogSeqNum) {
+    //     NEW_EMPTY_MESSAGE(message);
+    //     message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
+    //     message.log_op = static_cast<uint16_t>(SharedLogOpType::RESPONSE);
+    //     message.log_result = static_cast<uint16_t>(result);
+    //     message.log_seqnum = log_seqnum;
+    //     return message;
+    // }
 
     static Message NewSharedLogOpFailed(SharedLogResultType result) {
         NEW_EMPTY_MESSAGE(message);
         message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
         message.log_op = static_cast<uint16_t>(SharedLogOpType::RESPONSE);
         message.log_result = static_cast<uint16_t>(result);
-        message.log_fsm_progress = 0;
         return message;
     }
 
@@ -526,10 +499,6 @@ private:
 
 class GatewayMessageHelper {
 public:
-    static bool IsEngineHandshake(const GatewayMessage& message) {
-        return static_cast<MessageType>(message.message_type) == MessageType::ENGINE_HANDSHAKE;
-    }
-
     static bool IsDispatchFuncCall(const GatewayMessage& message) {
         return static_cast<MessageType>(message.message_type) == MessageType::DISPATCH_FUNC_CALL;
     }
@@ -564,14 +533,6 @@ public:
 #define NEW_EMPTY_GATEWAY_MESSAGE(MSG_VAR) \
     GatewayMessage MSG_VAR; memset(&MSG_VAR, 0, sizeof(GatewayMessage))
 
-    static GatewayMessage NewEngineHandshake(uint16_t node_id, uint16_t conn_id) {
-        NEW_EMPTY_GATEWAY_MESSAGE(message);
-        message.message_type = static_cast<uint16_t>(MessageType::ENGINE_HANDSHAKE);
-        message.node_id = node_id;
-        message.conn_id = conn_id;
-        return message;
-    }
-
     static GatewayMessage NewDispatchFuncCall(const FuncCall& func_call) {
         NEW_EMPTY_GATEWAY_MESSAGE(message);
         message.message_type = static_cast<uint16_t>(MessageType::DISPATCH_FUNC_CALL);
@@ -601,55 +562,6 @@ private:
     DISALLOW_IMPLICIT_CONSTRUCTORS(GatewayMessageHelper);
 };
 
-class SequencerMessageHelper {
-public:
-    static bool IsEngineHandshake(const SequencerMessage& message) {
-        return static_cast<MessageType>(message.message_type) == MessageType::ENGINE_HANDSHAKE;
-    }
-
-    static bool IsFsmRecords(const SequencerMessage& message) {
-        return static_cast<MessageType>(message.message_type) == MessageType::FSM_RECORDS;
-    }
-
-    static bool IsLocalCut(const SequencerMessage& message) {
-        return static_cast<MessageType>(message.message_type) == MessageType::LOCAL_CUT;
-    }
-
-#define NEW_EMPTY_SEQUENCER_MESSAGE(MSG_VAR) \
-    SequencerMessage MSG_VAR; memset(&MSG_VAR, 0, sizeof(SequencerMessage))
-
-    static SequencerMessage NewEngineHandshake(uint16_t node_id,
-                                               std::string_view shared_log_addr) {
-        NEW_EMPTY_SEQUENCER_MESSAGE(message);
-        message.message_type = static_cast<uint16_t>(MessageType::ENGINE_HANDSHAKE);
-        message.node_id = node_id;
-        if (shared_log_addr.length() + 1 > sizeof(message.shared_log_addr)) {
-            LOG(FATAL) << "shared_log_addr is too long";
-        }
-        memcpy(message.shared_log_addr, shared_log_addr.data(), shared_log_addr.length());
-        return message;
-    }
-
-    static SequencerMessage NewFsmRecords(std::span<const char> payload) {
-        NEW_EMPTY_SEQUENCER_MESSAGE(message);
-        message.message_type = static_cast<uint16_t>(MessageType::FSM_RECORDS);
-        message.payload_size = gsl::narrow_cast<uint32_t>(payload.size());
-        return message;
-    }
-
-    static SequencerMessage NewLocalCut(std::span<const char> payload) {
-        NEW_EMPTY_SEQUENCER_MESSAGE(message);
-        message.message_type = static_cast<uint16_t>(MessageType::LOCAL_CUT);
-        message.payload_size = gsl::narrow_cast<uint32_t>(payload.size());
-        return message;
-    }
-
-#undef NEW_EMPTY_SEQUENCER_MESSAGE
-
-private:
-    DISALLOW_IMPLICIT_CONSTRUCTORS(SequencerMessageHelper);
-};
-
 class SharedLogMessageHelper {
 public:
     static SharedLogOpType GetOpType(const SharedLogMessage& message) {
@@ -662,6 +574,12 @@ public:
 
 #define NEW_EMPTY_SHAREDLOG_MESSAGE(MSG_VAR) \
     SharedLogMessage MSG_VAR; memset(&MSG_VAR, 0, sizeof(SharedLogMessage))
+
+    static SharedLogMessage NewReplicateMessage() {
+        NEW_EMPTY_SHAREDLOG_MESSAGE(message);
+        message.op_type = static_cast<uint16_t>(SharedLogOpType::REPLICATE);
+        return message;
+    }
 
     static SharedLogMessage NewMetaLogsMessage(uint32_t logspace_id) {
         NEW_EMPTY_SHAREDLOG_MESSAGE(message);
