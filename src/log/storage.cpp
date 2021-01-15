@@ -21,7 +21,7 @@ void Storage::OnViewCreated(const View* view) {
     bool contains_myself = view->contains_storage_node(my_node_id());
     std::vector<SharedLogRequest> ready_requests;
     {
-        absl::MutexLock core_lk(&core_mu_);
+        absl::MutexLock view_lk(&view_mu_);
         if (contains_myself) {
             for (uint16_t sequencer_id : view->GetSequencerNodes()) {
                 storage_collection_.InstallLogSpace(std::make_unique<LogStorage>(
@@ -37,7 +37,7 @@ void Storage::OnViewCreated(const View* view) {
     }
     if (!ready_requests.empty()) {
         SomeIOWorker()->ScheduleFunction(
-            nullptr, [this, requests = std::move(ready_requests)] {
+            nullptr, [this, requests = std::move(ready_requests)] () {
                 ProcessRequests(requests);
             }
         );
@@ -48,7 +48,7 @@ void Storage::OnViewFinalized(const FinalizedView* finalized_view) {
     DCHECK(zk_session()->WithinMyEventLoopThread());
     LogStorage::ReadResultVec results;
     {
-        absl::ReaderMutexLock core_lk(&core_mu_);
+        absl::MutexLock view_lk(&view_mu_);
         DCHECK_EQ(finalized_view->view()->id(), current_view_->id());
         storage_collection_.ForEachActiveLogSpace(
             finalized_view->view(),
@@ -113,7 +113,7 @@ void Storage::HandleReadAtRequest(const SharedLogMessage& request) {
     DCHECK(SharedLogMessageHelper::GetOpType(request) == SharedLogOpType::READ_AT);
     LockablePtr<LogStorage> storage_ptr;
     {
-        absl::ReaderMutexLock core_lk(&core_mu_);
+        absl::ReaderMutexLock view_lk(&view_mu_);
         ONHOLD_IF_FROM_FUTURE_VIEW(request, EMPTY_CHAR_SPAN);
         storage_ptr = storage_collection_.GetLogSpace(request.logspace_id);
     }
@@ -133,19 +133,18 @@ void Storage::HandleReadAtRequest(const SharedLogMessage& request) {
 void Storage::HandleReplicateRequest(const SharedLogMessage& message,
                                      std::span<const char> payload) {
     DCHECK(SharedLogMessageHelper::GetOpType(message) == SharedLogOpType::REPLICATE);
-    LockablePtr<LogStorage> storage_ptr;
-    {
-        absl::ReaderMutexLock core_lk(&core_mu_);
-        ONHOLD_IF_FROM_FUTURE_VIEW(message, payload);
-        IGNORE_IF_FROM_PAST_VIEW(message);
-        storage_ptr = storage_collection_.GetLogSpaceChecked(message.logspace_id);
-    }
     LogMetaData metadata = log_utils::GetMetaDataFromMessage(message);
     {
-        auto locked_storage = storage_ptr.Lock();
-        RETURN_IF_LOGSPACE_FINALIZED(locked_storage);
-        if (!locked_storage->Store(metadata, payload)) {
-            HLOG(ERROR) << "Failed to store log entry";
+        absl::ReaderMutexLock view_lk(&view_mu_);
+        ONHOLD_IF_FROM_FUTURE_VIEW(message, payload);
+        IGNORE_IF_FROM_PAST_VIEW(message);
+        auto storage_ptr = storage_collection_.GetLogSpaceChecked(message.logspace_id);
+        {
+            auto locked_storage = storage_ptr.Lock();
+            RETURN_IF_LOGSPACE_FINALIZED(locked_storage);
+            if (!locked_storage->Store(metadata, payload)) {
+                HLOG(ERROR) << "Failed to store log entry";
+            }
         }
     }
 }
@@ -155,21 +154,20 @@ void Storage::OnRecvNewMetaLogs(const SharedLogMessage& message,
     DCHECK(SharedLogMessageHelper::GetOpType(message) == SharedLogOpType::METALOGS);
     MetaLogsProto metalogs_proto = log_utils::MetaLogsFromPayload(payload);
     DCHECK_EQ(metalogs_proto.logspace_id(), message.logspace_id);
-    LockablePtr<LogStorage> storage_ptr;
-    {
-        absl::ReaderMutexLock core_lk(&core_mu_);
-        ONHOLD_IF_FROM_FUTURE_VIEW(message, payload);
-        IGNORE_IF_FROM_PAST_VIEW(message);
-        storage_ptr = storage_collection_.GetLogSpaceChecked(message.logspace_id);
-    }
     LogStorage::ReadResultVec results;
     {
-        auto locked_storage = storage_ptr.Lock();
-        RETURN_IF_LOGSPACE_FINALIZED(locked_storage);
-        for (const MetaLogProto& metalog_proto : metalogs_proto.metalogs()) {
-            locked_storage->ProvideMetaLog(metalog_proto);
+        absl::ReaderMutexLock view_lk(&view_mu_);
+        ONHOLD_IF_FROM_FUTURE_VIEW(message, payload);
+        IGNORE_IF_FROM_PAST_VIEW(message);
+        auto storage_ptr = storage_collection_.GetLogSpaceChecked(message.logspace_id);
+        {
+            auto locked_storage = storage_ptr.Lock();
+            RETURN_IF_LOGSPACE_FINALIZED(locked_storage);
+            for (const MetaLogProto& metalog_proto : metalogs_proto.metalogs()) {
+                locked_storage->ProvideMetaLog(metalog_proto);
+            }
+            locked_storage->PollReadResults(&results);
         }
-        locked_storage->PollReadResults(&results);
     }
     ProcessReadResults(results);
 }
@@ -245,7 +243,7 @@ void Storage::BackgroundThreadMain() {
 void Storage::SendShardProgressIfNeeded() {
     std::vector<std::pair<uint32_t, std::vector<uint32_t>>> progress_to_send;
     {
-        absl::ReaderMutexLock core_lk(&core_mu_);
+        absl::ReaderMutexLock view_lk(&view_mu_);
         if (current_view_ == nullptr) {
             return;
         }

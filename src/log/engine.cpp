@@ -28,6 +28,7 @@ void Engine::OnViewCreated(const View* view) {
         HLOG(WARNING) << fmt::format("View {} does not include myself", view->id());
     }
     std::vector<SharedLogRequest> ready_requests;
+    std::vector<std::pair<LogMetaData, LocalOp*>> new_appends;
     {
         absl::MutexLock view_lk(&view_mu_);
         if (contains_myself) {
@@ -43,14 +44,34 @@ void Engine::OnViewCreated(const View* view) {
         current_view_ = view;
         if (contains_myself) {
             current_view_active_ = true;
+            absl::MutexLock pending_appends_lk(&pending_appends_mu_);
+            if (!pending_appends_.empty()) {
+                for (const auto& [op_id, op] : pending_appends_) {
+                    LogMetaData log_metadata = MetaDataFromAppendOp(op);
+                    auto producer_ptr = producer_collection_.GetLogSpaceChecked(
+                        view->LogSpaceIdentifier(op->user_logspace));
+                    producer_ptr.Lock()->LocalAppend(op, &log_metadata.localid);
+                    new_appends.push_back(std::make_pair(log_metadata, op));
+                }
+                pending_appends_.clear();
+            }
         }
         views_.push_back(view);
         log_header_ = fmt::format("LogEngine[{}-{}]: ", my_node_id(), view->id());
     }
     if (!ready_requests.empty()) {
         SomeIOWorker()->ScheduleFunction(
-            nullptr, [this, requests = std::move(ready_requests)] {
+            nullptr, [this, requests = std::move(ready_requests)] () {
                 ProcessRequests(requests);
+            }
+        );
+    }
+    if (!new_appends.empty()) {
+        SomeIOWorker()->ScheduleFunction(
+            nullptr, [this, view, new_appends = std::move(new_appends)] () {
+                for (const auto& [log_metadata, op] : new_appends) {
+                    ReplicateLogEntry(view, log_metadata, op->data.to_span());
+                }
             }
         );
     }
@@ -68,21 +89,43 @@ void Engine::OnViewFrozen(const View* view) {
 
 void Engine::OnViewFinalized(const FinalizedView* finalized_view) {
     DCHECK(zk_session()->WithinMyEventLoopThread());
-    absl::ReaderMutexLock view_lk(&view_mu_);
-    DCHECK_EQ(finalized_view->view()->id(), current_view_->id());
-    producer_collection_.ForEachActiveLogSpace(
-        finalized_view->view(),
-        [finalized_view, this] (uint32_t logspace_id, LockablePtr<LogProducer> producer_ptr) {
-            auto locked_producer = producer_ptr.Lock();
-            bool success = locked_producer->Finalize(
-                finalized_view->final_metalog_position(logspace_id),
-                finalized_view->tail_metalogs(logspace_id));
-            if (!success) {
-                HLOG(FATAL) << fmt::format("Failed to finalize log space {}",
-                                            bits::HexStr0x(logspace_id));
+    LogProducer::AppendResultVec results;
+    {
+        absl::MutexLock view_lk(&view_mu_);
+        DCHECK_EQ(finalized_view->view()->id(), current_view_->id());
+        producer_collection_.ForEachActiveLogSpace(
+            finalized_view->view(),
+            [finalized_view, &results, this] (uint32_t logspace_id,
+                                              LockablePtr<LogProducer> producer_ptr) {
+                auto locked_producer = producer_ptr.Lock();
+                bool success = locked_producer->Finalize(
+                    finalized_view->final_metalog_position(logspace_id),
+                    finalized_view->tail_metalogs(logspace_id));
+                if (!success) {
+                    HLOG(FATAL) << fmt::format("Failed to finalize log space {}",
+                                                bits::HexStr0x(logspace_id));
+                }
+                LogProducer::AppendResultVec tmp;
+                locked_producer->PollAppendResults(&tmp);
+                results.insert(results.end(), tmp.begin(), tmp.end());
             }
+        );
+        if (!results.empty()) {
+            absl::MutexLock pending_appends_lk(&pending_appends_mu_);
+            LogProducer::AppendResultVec tmp;
+            for (const LogProducer::AppendResult& result : results) {
+                if (result.seqnum == kInvalidLogSeqNum) {
+                    LocalOp* op = reinterpret_cast<LocalOp*>(result.caller_data);
+                    DCHECK(pending_appends_.count(op->id) == 0);
+                    pending_appends_[op->id] = op;
+                } else {
+                    tmp.push_back(result);
+                }
+            }
+            results = std::move(tmp);
         }
-    );
+    }
+    ProcessAppendResults(results);
 }
 
 // Start handlers for local requests (from functions)
@@ -119,7 +162,7 @@ void Engine::HandleLocalAppend(LocalOp* op) {
             locked_producer->LocalAppend(op, &log_metadata.localid);
         }
     }
-    ReplicateLogEntry(view, log_metadata, STRING_TO_SPAN(op->data));
+    ReplicateLogEntry(view, log_metadata, op->data.to_span());
 }
 
 void Engine::HandleLocalTrim(LocalOp* op) {

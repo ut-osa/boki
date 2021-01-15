@@ -15,15 +15,18 @@ public:
 private:
     std::string log_header_;
 
-    absl::Mutex core_mu_;
-    const View* current_view_ ABSL_GUARDED_BY(core_mu_);
+    absl::Mutex view_mu_;
+    const View* current_view_          ABSL_GUARDED_BY(view_mu_);
+    LockablePtr<MetaLogPrimary>
+        current_primary_               ABSL_GUARDED_BY(view_mu_);
+    LogSpaceCollection<MetaLogPrimary>
+        primary_collection_            ABSL_GUARDED_BY(view_mu_);
+    LogSpaceCollection<MetaLogBackup>
+        backup_collection_             ABSL_GUARDED_BY(view_mu_);
 
-    LockablePtr<MetaLogPrimary>        current_primary_    ABSL_GUARDED_BY(core_mu_);
-    LogSpaceCollection<MetaLogPrimary> primary_collection_ ABSL_GUARDED_BY(core_mu_);
-    LogSpaceCollection<MetaLogBackup>  backup_collection_  ABSL_GUARDED_BY(core_mu_);
-
-    absl::Mutex future_request_mu_ ABSL_ACQUIRED_AFTER(core_mu_);
-    log_utils::FutureRequests future_requests_ ABSL_GUARDED_BY(future_request_mu_);
+    absl::Mutex future_request_mu_     ABSL_ACQUIRED_AFTER(view_mu_);
+    log_utils::FutureRequests
+        future_requests_               ABSL_GUARDED_BY(future_request_mu_);
 
     void OnViewCreated(const View* view) override;
     void OnViewFrozen(const View* view) override;
