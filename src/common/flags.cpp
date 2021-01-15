@@ -17,11 +17,6 @@ ABSL_FLAG(bool, tcp_enable_keepalive, true, "Enable TCP keep-alive");
 ABSL_FLAG(std::string, zookeeper_host, "localhost:2181", "ZooKeeper host");
 ABSL_FLAG(std::string, zookeeper_root_path, "/faas", "Root path for all znodes");
 
-ABSL_FLAG(std::string, slog_storage_backend, "inmem", "inmem or rocksdb");
-ABSL_FLAG(std::string, slog_storage_datadir, "", "");
-ABSL_FLAG(bool, slog_enable_statecheck, false, "");
-ABSL_FLAG(int, slog_statecheck_interval_sec, 10, "");
-
 namespace faas {
 namespace flags {
 

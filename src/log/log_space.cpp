@@ -105,17 +105,16 @@ void MetaLogPrimary::UpdateMetaLogReplicatedPosition() {
     if (metalog_progresses_.empty()) {
         return;
     }
-    std::vector<uint32_t> progress;
-    progress.reserve(metalog_progresses_.size());
-    for (const auto& item : metalog_progresses_) {
-        progress.push_back(item.second);
+    std::vector<uint32_t> tmp;
+    tmp.reserve(metalog_progresses_.size());
+    for (const auto& [sequencer_id, progress] : metalog_progresses_) {
+        tmp.push_back(progress);
     }
-    absl::c_sort(progress);
-    size_t mid = progress.size() / 2;
-    DCHECK_LT(mid, progress.size());
-    DCHECK_GE(progress[mid], replicated_metalog_position_);
-    DCHECK_LE(progress[mid], metalog_position_);
-    replicated_metalog_position_ = progress[mid];
+    absl::c_sort(tmp);
+    uint32_t progress = tmp.at(tmp.size() / 2);
+    DCHECK_GE(progress, replicated_metalog_position_);
+    DCHECK_LE(progress, metalog_position_);
+    replicated_metalog_position_ = progress;
 }
 
 uint32_t MetaLogPrimary::GetShardReplicatedPosition(uint16_t engine_id) const {
@@ -180,12 +179,12 @@ void LogProducer::OnNewLogs(uint32_t metalog_seqnum,
 }
 
 void LogProducer::OnFinalized(uint32_t metalog_position) {
-    for (const auto& item : pending_appends_) {
+    for (const auto& [localid, caller_data] : pending_appends_) {
         pending_append_results_.push_back(AppendResult {
             .seqnum = kInvalidLogSeqNum,
-            .localid = item.first,
+            .localid = localid,
             .metalog_progress = 0,
-            .caller_data = item.second
+            .caller_data = caller_data
         });
     }
     pending_appends_.clear();

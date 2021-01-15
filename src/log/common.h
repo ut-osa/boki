@@ -12,14 +12,6 @@ constexpr uint64_t kMaxLogSeqNum     = 0xffff000000000000ULL;
 constexpr uint64_t kInvalidLogSeqNum = protocol::kInvalidLogSeqNum;
 constexpr uint64_t kInvalidLogTag    = protocol::kInvalidLogTag;
 
-inline uint16_t SeqNumToViewId(uint64_t seqnum) {
-    return gsl::narrow_cast<uint16_t>(seqnum >> 48);
-}
-
-inline uint64_t BuildSeqNum(uint16_t view_id, uint64_t lower) {
-    return (uint64_t{view_id} << 48) + lower;
-}
-
 struct SharedLogRequest {
     protocol::SharedLogMessage message;
     std::string                payload;

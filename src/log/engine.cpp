@@ -155,7 +155,7 @@ void Engine::HandleLocalAppend(LocalOp* op) {
             return;
         }
         view = current_view_;
-        uint32_t logspace_id = current_view_->LogSpaceIdentifier(op->user_logspace);
+        uint32_t logspace_id = view->LogSpaceIdentifier(op->user_logspace);
         auto producer_ptr = producer_collection_.GetLogSpaceChecked(logspace_id);
         {
             auto locked_producer = producer_ptr.Lock();
