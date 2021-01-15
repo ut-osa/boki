@@ -22,19 +22,19 @@ IOUring::IOUring()
     : uring_id_(next_uring_id_.fetch_add(1, std::memory_order_relaxed)),
       log_header_(fmt::format("io_uring[{}]: ", uring_id_)),
       next_op_id_(1),
-      ev_loop_counter_(stat::Counter::StandardReportCallback(
+      ev_loop_counter_(stat::Counter::VerboseLogReportCallback<2>(
           fmt::format("io_uring[{}] ev_loop", uring_id_))),
-      wait_timeout_counter_(stat::Counter::StandardReportCallback(
+      wait_timeout_counter_(stat::Counter::VerboseLogReportCallback<2>(
           fmt::format("io_uring[{}] wait_timeout", uring_id_))),
-      completed_ops_counter_(stat::Counter::StandardReportCallback(
+      completed_ops_counter_(stat::Counter::VerboseLogReportCallback<2>(
           fmt::format("io_uring[{}] completed_ops", uring_id_))),
-      io_uring_enter_time_stat_(stat::StatisticsCollector<int>::StandardReportCallback(
+      io_uring_enter_time_stat_(stat::StatisticsCollector<int>::VerboseLogReportCallback<2>(
           fmt::format("io_uring[{}] io_uring_enter_time", uring_id_))),
-      completed_ops_stat_(stat::StatisticsCollector<int>::StandardReportCallback(
+      completed_ops_stat_(stat::StatisticsCollector<int>::VerboseLogReportCallback<2>(
           fmt::format("io_uring[{}] completed_ops", uring_id_))),
-      ev_loop_time_stat_(stat::StatisticsCollector<int>::StandardReportCallback(
+      ev_loop_time_stat_(stat::StatisticsCollector<int>::VerboseLogReportCallback<2>(
           fmt::format("io_uring[{}] ev_loop_time", uring_id_))),
-      average_op_time_stat_(stat::StatisticsCollector<int>::StandardReportCallback(
+      average_op_time_stat_(stat::StatisticsCollector<int>::VerboseLogReportCallback<2>(
           fmt::format("io_uring[{}] average_op_time", uring_id_))) {
     struct io_uring_params params;
     memset(&params, 0, sizeof(params));
@@ -314,15 +314,14 @@ void IOUring::EventLoopRunOnce(int* inflight_ops) {
         completed_ops_counter_.Tick(count);
         completed_ops_stat_.AddSample(gsl::narrow_cast<int>(count));
     }
-#if DCHECK_IS_ON()
-    VLOG(2) << "Inflight ops:";
-    for (const auto& item : ops_) {
-        Op* op = item.second;
-        DCHECK_EQ(op->id, item.first);
-        VLOG(2) << fmt::format("id={}, type={}, fd={}",
-                               (op->id >> 8), kOpTypeStr[op_type(op)], op_fd(op));
+    if (VLOG_IS_ON(2)) {
+        VLOG(2) << "Inflight ops:";
+        for (const auto& [op_id, op] : ops_) {
+            DCHECK_EQ(op->id, op_id);
+            VLOG(2) << fmt::format("id={}, type={}, fd={}",
+                                   (op->id >> 8), kOpTypeStr[op_type(op)], op_fd(op));
+        }
     }
-#endif
     *inflight_ops = ops_.size();
 }
 

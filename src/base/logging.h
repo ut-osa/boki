@@ -144,6 +144,7 @@ T CheckNotNull(const char* file, int line, const char* exprtext, T&& t) {
 #define LOG_IF(severity, condition) \
     !(condition) ? (void)0 : faas::logging::LogMessageVoidify() & LOG(severity)
 #define VLOG(level) LOG_IF(INFO, __FAAS_PREDICT_FALSE((level) <= faas::logging::get_vlog_level()))
+#define VLOG_IS_ON(level) __FAAS_PREDICT_FALSE((level) <= faas::logging::get_vlog_level())
 #define CHECK(condition) \
     LOG_IF(FATAL, __FAAS_PREDICT_FALSE(!(condition))) << "Check failed: " #condition " "
 

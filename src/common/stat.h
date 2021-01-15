@@ -165,15 +165,25 @@ public:
     typedef std::function<void(int /* duration_ms */, size_t /* n_samples */,
                                const Report& /* report */)> ReportCallback;
     static ReportCallback StandardReportCallback(std::string_view stat_name) {
-        std::string stat_name_copy = std::string(stat_name);
-        return [stat_name_copy] (int duration_ms, size_t n_samples, const Report& report) {
-            LOG(INFO) << stat_name_copy << " statistics (" << n_samples << " samples): "
-                      << "p30=" << report.p30 << ", "
-                      << "p50=" << report.p50 << ", "
-                      << "p70=" << report.p70 << ", "
-                      << "p90=" << report.p90 << ", "
-                      << "p99=" << report.p99 << ", "
-                      << "p99.9=" << report.p99_9;
+        return [name = std::string(stat_name)] (int duration_ms, size_t n_samples,
+                                                const Report& report) {
+            LOG(INFO) << fmt::format("{} statistics ({} samples): "
+                                     "p30={}, p50={}, p70={}, p90={}, p99={}, p99.9={}",
+                                     name, n_samples,
+                                     report.p30, report.p50, report.p70, report.p90,
+                                     report.p99, report.p99_9);
+        };
+    }
+
+    template<int L>
+    static ReportCallback VerboseLogReportCallback(std::string_view stat_name) {
+        return [name = std::string(stat_name)] (int duration_ms, size_t n_samples,
+                                                const Report& report) {
+            VLOG(L) << fmt::format("{} statistics ({} samples): "
+                                   "p30={}, p50={}, p70={}, p90={}, p99={}, p99.9={}",
+                                   name, n_samples,
+                                   report.p30, report.p50, report.p70, report.p90,
+                                   report.p99, report.p99_9);
         };
     }
 
@@ -250,11 +260,21 @@ public:
     typedef std::function<void(int /* duration_ms */, int64_t /* new_value */,
                                int64_t /* old_value */)> ReportCallback;
     static ReportCallback StandardReportCallback(std::string_view counter_name) {
-        std::string counter_name_copy = std::string(counter_name);
-        return [counter_name_copy] (int duration_ms, int64_t new_value, int64_t old_value) {
+        return [name = std::string(counter_name)] (int duration_ms,
+                                                   int64_t new_value, int64_t old_value) {
             double rate = gsl::narrow_cast<double>(new_value - old_value) / duration_ms * 1000;
-            LOG(INFO) << counter_name_copy << " counter: value=" << new_value << ", "
-                      << "rate=" << rate << " per sec";
+            LOG(INFO) << fmt::format("{} counter: value={}, rate={} per second",
+                                     name, new_value, rate);
+        };
+    }
+
+    template<int L>
+    static ReportCallback VerboseLogReportCallback(std::string_view counter_name) {
+        return [name = std::string(counter_name)] (int duration_ms,
+                                                   int64_t new_value, int64_t old_value) {
+            double rate = gsl::narrow_cast<double>(new_value - old_value) / duration_ms * 1000;
+            VLOG(L) << fmt::format("{} counter: value={}, rate={} per second",
+                                   name, new_value, rate);
         };
     }
 
