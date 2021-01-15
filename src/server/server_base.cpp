@@ -173,7 +173,7 @@ void ServerBase::SetupMessageServer() {
         message_sockfd_, absl::bind_front(&ServerBase::OnNewMessageConnection, this));
     // Save my host address to ZooKeeper for others to connect
     std::string my_addr(fmt::format("{}:{}", absl::GetFlag(FLAGS_hostname), message_port));
-    std::string znode_path = fmt::format("node_addr/{}", node_name_);
+    std::string znode_path = fmt::format("node/{}", node_name_);
     auto status = zk_utils::CreateSync(
         zk_session(), /* path= */ znode_path, /* value= */ STRING_TO_SPAN(my_addr),
         zk::ZKCreateMode::kEphemeral, nullptr);
