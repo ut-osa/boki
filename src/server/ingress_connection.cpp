@@ -1,6 +1,8 @@
 #include "server/ingress_connection.h"
 
+#include "common/flags.h"
 #include "server/constants.h"
+#include "utils/socket.h"
 
 namespace faas {
 namespace server {
@@ -24,6 +26,12 @@ void IngressConnection::Start(IOWorker* io_worker) {
     DCHECK(io_worker->WithinMyEventLoopThread());
     io_worker_ = io_worker;
     current_io_uring()->PrepareBuffers(buf_group_, buf_size_);
+    if (absl::GetFlag(FLAGS_tcp_enable_nodelay)) {
+        CHECK(utils::SetTcpSocketNoDelay(sockfd_));
+    }
+    if (absl::GetFlag(FLAGS_tcp_enable_keepalive)) {
+        CHECK(utils::SetTcpSocketKeepAlive(sockfd_));
+    }
     URING_DCHECK_OK(current_io_uring()->RegisterFd(sockfd_));
     URING_DCHECK_OK(current_io_uring()->StartRecv(
         sockfd_, buf_group_,
