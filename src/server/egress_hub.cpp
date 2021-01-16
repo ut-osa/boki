@@ -219,6 +219,7 @@ void EgressHub::SendPendingMessages() {
     } else {
         NOT_IMPLEMENTED();
     }
+    write_buffer_.Reset();
 }
 
 std::string EgressHub::GetLogHeader(int type) {
