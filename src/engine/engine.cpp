@@ -167,6 +167,7 @@ void Engine::OnConnectionClose(server::ConnectionBase* connection) {
             DCHECK(!egress_hubs_.contains(connection->id()));
             egress_hubs_.erase(connection->id());
         }
+        break;
     default:
         HLOG(FATAL) << "Unknown connection type: " << connection->type();
     }
