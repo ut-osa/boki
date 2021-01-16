@@ -11,6 +11,7 @@ ABSL_FLAG(int, num_io_workers, 1, "Number of IO workers.");
 ABSL_FLAG(int, message_conn_per_worker, 8,
           "Number of connections for message passing per IO worker.");
 ABSL_FLAG(int, socket_listen_backlog, 64, "Backlog for listen");
+ABSL_FLAG(bool, tcp_enable_reuseport, false, "Enable SO_REUSEPORT");
 ABSL_FLAG(bool, tcp_enable_nodelay, true, "Enable TCP_NODELAY");
 ABSL_FLAG(bool, tcp_enable_keepalive, true, "Enable TCP keep-alive");
 

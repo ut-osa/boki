@@ -5,6 +5,7 @@
 #include <absl/strings/numbers.h>
 #endif
 
+#include "common/flags.h"
 #include "utils/random.h"
 
 #include <arpa/inet.h>
@@ -17,6 +18,22 @@ namespace faas {
 namespace utils {
 
 namespace {
+static bool SetSocketOption(int sockfd, int option, int value) {
+    if (setsockopt(sockfd, SOL_SOCKET, option, (const void*) &value, sizeof(int)) != 0) {
+        PLOG(ERROR) << "setsockopt failed";
+        return false;
+    }
+    return true;
+}
+
+static bool SetTcpSocketOption(int sockfd, int option, int value) {
+    if (setsockopt(sockfd, IPPROTO_TCP, option, (const void*) &value, sizeof(int)) != 0) {
+        PLOG(ERROR) << "setsockopt failed";
+        return false;
+    }
+    return true;
+}
+
 static bool FillUnixSocketAddr(struct sockaddr_un* addr, std::string_view path) {
     if (path.length() >= sizeof(addr->sun_path)) {
         return false;
@@ -146,6 +163,9 @@ int TcpSocketBindAndListen(std::string_view ip, uint16_t port, int backlog) {
         PLOG(ERROR) << "Failed to create AF_INET socket";
         return -1;
     }
+    if (absl::GetFlag(FLAGS_tcp_enable_reuseport)) {
+        CHECK(SetSocketOption(fd, SO_REUSEPORT, 1));
+    }
     if (bind(fd, (struct sockaddr*)&sockaddr, sizeof(sockaddr)) != 0) {
         PLOG(ERROR) << fmt::format("Failed to bind to {}:{}", ip, port);
         close(fd);
@@ -211,6 +231,9 @@ int Tcp6SocketConnect(std::string_view ip, uint16_t port) {
         PLOG(ERROR) << "Failed to create AF_INET6 socket";
         return -1;
     }
+    if (absl::GetFlag(FLAGS_tcp_enable_reuseport)) {
+        CHECK(SetSocketOption(fd, SO_REUSEPORT, 1));
+    }
     if (connect(fd, (struct sockaddr*)&sockaddr, sizeof(sockaddr)) != 0) {
         PLOG(ERROR) << fmt::format("Failed to connect to {}:{}", ip, port);
         close(fd);
@@ -255,23 +278,11 @@ int TcpSocketBindArbitraryPort(std::string_view ip, uint16_t* port) {
 }
 
 bool SetTcpSocketNoDelay(int sockfd) {
-    int flag = 1;
-    if (setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY,
-                   reinterpret_cast<const void*>(&flag), sizeof(int)) != 0) {
-        PLOG(ERROR) << "Failed to set TCP_NODELAY";
-        return false;
-    }
-    return true;
+    return SetTcpSocketOption(sockfd, TCP_NODELAY, 1);
 }
 
 bool SetTcpSocketKeepAlive(int sockfd) {
-    int flag = 1;
-    if (setsockopt(sockfd, IPPROTO_TCP, SO_KEEPALIVE,
-                   reinterpret_cast<const void*>(&flag), sizeof(int)) != 0) {
-        PLOG(ERROR) << "Failed to set TCP_KEEPALIVE";
-        return false;
-    }
-    return true;
+    return SetSocketOption(sockfd, SO_KEEPALIVE, 1);
 }
 
 bool ResolveHost(std::string_view host_or_ip, std::string* ip) {
