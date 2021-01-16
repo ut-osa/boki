@@ -131,7 +131,7 @@ void Engine::StopInternal() {
     }
 }
 
-void Engine::OnConnectionClose(server::ConnectionBase* connection) {
+void Engine::OnConnectionClose(ConnectionBase* connection) {
     DCHECK(WithinMyEventLoopThread());
     switch (connection->type() & kConnectionTypeMask) {
     case kMessageConnectionTypeId:
@@ -511,7 +511,7 @@ void Engine::OnRecvMessage(MessageConnection* connection, const Message& message
 }
 
 void Engine::SendGatewayMessage(const GatewayMessage& message, std::span<const char> payload) {
-    server::EgressHub* hub = CurrentIOWorkerChecked()->PickConnectionAs<server::EgressHub>(
+    EgressHub* hub = CurrentIOWorkerChecked()->PickConnectionAs<EgressHub>(
         kGatewayEgressHubTypeId);
     if (hub == nullptr) {
         HLOG(ERROR) << "There is not GatewayEgressHub associated with current IOWorker";
@@ -609,12 +609,12 @@ void Engine::ProcessDiscardedFuncCallIfNecessary() {
 }
 
 void Engine::CreateGatewayIngressConn(int sockfd) {
-    auto connection = std::make_unique<server::IngressConnection>(
+    auto connection = std::make_unique<IngressConnection>(
         kGatewayIngressTypeId, sockfd, sizeof(GatewayMessage));
     connection->SetMessageFullSizeCallback(
-        &server::IngressConnection::GatewayMessageFullSizeCallback);
+        &IngressConnection::GatewayMessageFullSizeCallback);
     connection->SetNewMessageCallback(
-        server::IngressConnection::BuildNewGatewayMessageCallback(
+        IngressConnection::BuildNewGatewayMessageCallback(
             absl::bind_front(&Engine::OnRecvGatewayMessage, this)));
     RegisterConnection(PickIOWorkerForConnType(connection->type()), connection.get());
     DCHECK_GE(connection->id(), 0);
@@ -664,7 +664,7 @@ void Engine::OnRemoteMessageConn(const protocol::HandshakeMessage& handshake,
 }
 
 void Engine::OnNewLocalIpcConn(int sockfd) {
-    std::shared_ptr<server::ConnectionBase> connection(new MessageConnection(this, sockfd));
+    std::shared_ptr<ConnectionBase> connection(new MessageConnection(this, sockfd));
     RegisterConnection(PickIOWorkerForConnType(connection->type()), connection.get());
     DCHECK_GE(connection->id(), 0);
     DCHECK(!message_connections_.contains(connection->id()));

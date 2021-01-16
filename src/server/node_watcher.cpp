@@ -71,6 +71,7 @@ void NodeWatcher::OnZNodeCreated(std::string_view path, std::span<const char> co
     uint16_t node_id;
     CHECK(ParseNodePath(path, &node_type, &node_id));
     std::string_view addr_str(contents.data(), contents.size());
+    LOG(INFO) << fmt::format("Seen new node {} with address {}", path, addr_str);
     struct sockaddr_in addr;
     if (!utils::ResolveTcpAddr(&addr, addr_str)) {
         LOG(FATAL) << fmt::format("Cannot resolve address for node {}: {}",
