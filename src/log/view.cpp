@@ -86,11 +86,11 @@ View::View(const ViewProto& view_proto)
         engine_nodes_[engine_node_ids_[i]] = &engines_[i];
     }
 
-    for (size_t i = 0; i < sequencer_node_ids_.size(); i++) {
+    for (size_t i = 0; i < num_sequencer_nodes; i++) {
         std::vector<uint16_t> replica_sequencer_nodes;
         for (size_t j = 1; j < metalog_replicas_; j++) {
             replica_sequencer_nodes.push_back(
-                sequencer_node_ids_[(i + j) % sequencer_node_ids_.size()]);
+                sequencer_node_ids_[(i + j) % num_sequencer_nodes]);
         }
         uint16_t node_id = sequencer_node_ids_[i];
         sequencers_.push_back(Sequencer(
@@ -100,7 +100,7 @@ View::View(const ViewProto& view_proto)
             NodeIdVec(index_engine_nodes[node_id].begin(),
                       index_engine_nodes[node_id].end())));
     }
-    for (size_t i = 0; i < num_engine_nodes; i++) {
+    for (size_t i = 0; i < num_sequencer_nodes; i++) {
         sequencer_nodes_[sequencer_node_ids_[i]] = &sequencers_[i];
     }
 
@@ -111,7 +111,7 @@ View::View(const ViewProto& view_proto)
             NodeIdVec(source_engine_nodes[node_id].begin(),
                       source_engine_nodes[node_id].end())));
     }
-    for (size_t i = 0; i < num_engine_nodes; i++) {
+    for (size_t i = 0; i < num_storage_nodes; i++) {
         storage_nodes_[storage_node_ids_[i]] = &storages_[i];
     }
 

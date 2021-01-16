@@ -52,7 +52,7 @@ void Controller::InstallNewView(const ViewProto& view_proto) {
         HLOG(FATAL) << "Failed to serialized ViewProto";
     }
     zk_session_.Create(
-        "view/create", STRING_TO_SPAN(serialized),
+        "view/new", STRING_TO_SPAN(serialized),
         zk::ZKCreateMode::kPersistentSequential,
         [view] (zk::ZKStatus status, const zk::ZKResult& result, bool*) {
             if (!status.ok()) {
@@ -111,14 +111,17 @@ void Controller::StartCommandHandler() {
         HLOG(WARNING) << "Already started";
         return;
     }
+    CHECK_GT(metalog_replicas_, 0U);
     if (sequencer_nodes_.size() < metalog_replicas_) {
         HLOG(ERROR) << "Sequencer nodes not enough";
         return;
     }
+    CHECK_GT(index_replicas_, 0U);
     if (engine_nodes_.size() < index_replicas_) {
         HLOG(ERROR) << "Engine nodes not enough";
         return;
     }
+    CHECK_GT(userlog_replicas_, 0U);
     if (storage_nodes_.size() < userlog_replicas_) {
         HLOG(ERROR) << "Storage nodes not enough";
         return;
@@ -141,7 +144,7 @@ void Controller::StartCommandHandler() {
     // Now all maps to the first sequencer
     // TODO: implement hashing properly
     view_proto.set_log_space_hash_seed(0);
-    view_proto.add_log_space_hash_tokens(0);
+    view_proto.add_log_space_hash_tokens(view_proto.sequencer_nodes(0));
 
     for (size_t i = 0; i < engine_nodes_.size() * userlog_replicas_; i++) {
         view_proto.add_storage_plan(
