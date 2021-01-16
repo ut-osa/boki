@@ -1,13 +1,13 @@
 #include "base/init.h"
 #include "base/common.h"
-#include "common/flags.h"
 #include "ipc/base.h"
 #include "utils/docker.h"
 #include "utils/fs.h"
+#include "utils/procfs.h"
 #include "utils/env_variables.h"
 #include "engine/engine.h"
 
-#include <signal.h>
+#include <absl/flags/flag.h>
 
 ABSL_FLAG(int, engine_tcp_port, -1,
           "If set, Launcher and FuncWorker will communicate with engine via localhost TCP socket");
@@ -30,7 +30,7 @@ static void SignalHandlerToStopServer(int signal) {
 }
 
 static uint16_t GenerateNodeId() {
-    std::string hostname = absl::GetFlag(FLAGS_hostname);
+    std::string hostname = procfs_utils::ReadHostname();
     uint16_t result = 0;
     for (const char ch : hostname) {
         // Let overflow happens freely here
@@ -42,7 +42,6 @@ static uint16_t GenerateNodeId() {
 void EngineMain(int argc, char* argv[]) {
     signal(SIGINT, SignalHandlerToStopServer);
     base::InitMain(argc, argv);
-    flags::PopulateHostnameIfEmpty();
     ipc::SetRootPathForIpc(absl::GetFlag(FLAGS_root_path_for_ipc), /* create= */ true);
 
     std::string cgroup_fs_root(utils::GetEnvVariable("FAAS_CGROUP_FS_ROOT", ""));

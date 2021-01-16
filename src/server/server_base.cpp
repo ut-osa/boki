@@ -158,21 +158,22 @@ void ServerBase::SetupIOWorkers() {
 
 void ServerBase::SetupMessageServer() {
     DCHECK(state_.load() == kBootstrapping);
-    // Listen on address:message_port for message connections
-    std::string address = absl::GetFlag(FLAGS_listen_addr);
-    CHECK(!address.empty());
+    std::string listen_iface = absl::GetFlag(FLAGS_listen_iface);
+    std::string iface_ip;
+    CHECK(utils::ResolveInterfaceIp(listen_iface, &iface_ip))
+        << fmt::format("Failed to resolve IP for {}", listen_iface);
     uint16_t message_port;
-    message_sockfd_ = utils::TcpSocketBindArbitraryPort(address, &message_port);
+    message_sockfd_ = utils::TcpSocketBindArbitraryPort(iface_ip, &message_port);
     CHECK(message_sockfd_ != -1)
-        << fmt::format("Failed to bind on {}", address);
+        << fmt::format("Failed to bind on {}", iface_ip);
     CHECK(utils::SocketListen(message_sockfd_, absl::GetFlag(FLAGS_socket_listen_backlog)))
-        << fmt::format("Failed to listen on {}:{}", address, message_port);
+        << fmt::format("Failed to listen on {}:{}", iface_ip, message_port);
     HLOG(INFO) << fmt::format("Listen on {}:{} for message connections",
-                              address, message_port);
+                              iface_ip, message_port);
     ListenForNewConnections(
         message_sockfd_, absl::bind_front(&ServerBase::OnNewMessageConnection, this));
     // Save my host address to ZooKeeper for others to connect
-    std::string my_addr(fmt::format("{}:{}", absl::GetFlag(FLAGS_hostname), message_port));
+    std::string my_addr(fmt::format("{}:{}", iface_ip, message_port));
     std::string znode_path = fmt::format("node/{}", node_name_);
     auto status = zk_utils::CreateSync(
         zk_session(), /* path= */ znode_path, /* value= */ STRING_TO_SPAN(my_addr),

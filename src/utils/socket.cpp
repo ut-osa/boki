@@ -9,10 +9,14 @@
 #include "utils/random.h"
 
 #include <arpa/inet.h>
+#include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/ioctl.h>
 #include <sys/un.h>
+#include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <netdb.h>
+#include <net/if.h>
 
 namespace faas {
 namespace utils {
@@ -312,6 +316,29 @@ bool ResolveTcpAddr(struct sockaddr_in* addr, std::string_view addr_str) {
     addr->sin_family = AF_INET; 
     addr->sin_port = htons(gsl::narrow_cast<uint16_t>(parsed_port));
     return ResolveHostInternal(host, &addr->sin_addr);
+}
+
+bool ResolveInterfaceIp(std::string_view interface, std::string* ip) {
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd == -1) {
+        PLOG(ERROR) << "Failed to create AF_INET socket";
+        return false;
+    }
+    auto cleanup = gsl::finally([fd] { close(fd); });
+    struct ifreq ifr;
+    ifr.ifr_addr.sa_family = AF_INET;
+    size_t length = interface.length();
+    CHECK_LT(length, size_t{IFNAMSIZ});
+    memcpy(ifr.ifr_name, interface.data(), length);
+    ifr.ifr_name[length] = '\0';
+    if (ioctl(fd, SIOCGIFADDR, &ifr) != 0) {
+        PLOG(ERROR) << "ioctl failed";
+        close(fd);
+        return false;
+    }
+    struct sockaddr_in* addr = (struct sockaddr_in*) &ifr.ifr_addr;
+    *ip = inet_ntoa(addr->sin_addr);
+    return true;
 }
 
 bool NetworkOpWithRetry(int max_retry, int sleep_sec, std::function<bool()> fn) {

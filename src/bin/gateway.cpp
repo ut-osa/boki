@@ -1,9 +1,8 @@
 #include "base/init.h"
 #include "base/common.h"
-#include "common/flags.h"
 #include "gateway/server.h"
 
-#include <signal.h>
+#include <absl/flags/flag.h>
 
 ABSL_FLAG(int, http_port, 8080, "Port for HTTP connections");
 ABSL_FLAG(int, grpc_port, 50051, "Port for gRPC connections");
@@ -22,7 +21,6 @@ static void SignalHandlerToStopServer(int signal) {
 void GatewayMain(int argc, char* argv[]) {
     signal(SIGINT, SignalHandlerToStopServer);
     base::InitMain(argc, argv);
-    flags::PopulateHostnameIfEmpty();
 
     auto server = std::make_unique<gateway::Server>();
     server->set_http_port(absl::GetFlag(FLAGS_http_port));

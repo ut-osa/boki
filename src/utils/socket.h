@@ -29,6 +29,9 @@ bool ResolveHost(std::string_view host_or_ip, std::string* ip);
 // `addr_str` assumed to be "[host]:[port]"
 bool ResolveTcpAddr(struct sockaddr_in* addr, std::string_view addr_str);
 
+// Resolve the IP address of a network interface
+bool ResolveInterfaceIp(std::string_view interface, std::string* ip);
+
 bool NetworkOpWithRetry(int max_retry, int sleep_sec, std::function<bool()> fn);
 
 }  // namespace utils

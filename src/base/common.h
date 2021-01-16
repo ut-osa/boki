@@ -34,6 +34,7 @@
 #include <stdint.h>
 #include <time.h>
 #include <unistd.h>
+#include <signal.h>
 
 // C++ includes
 #include <limits>

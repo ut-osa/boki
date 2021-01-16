@@ -1,10 +1,9 @@
 #include "base/init.h"
 #include "base/common.h"
-#include "common/flags.h"
 #include "utils/env_variables.h"
 #include "log/storage.h"
 
-#include <signal.h>
+#include <absl/flags/flag.h>
 
 ABSL_FLAG(int, node_id, -1,
           "My node ID. Also settable through environment variable FAAS_NODE_ID.");
@@ -23,7 +22,6 @@ static void SignalHandlerToStopServer(int signal) {
 void StorageMain(int argc, char* argv[]) {
     signal(SIGINT, SignalHandlerToStopServer);
     base::InitMain(argc, argv);
-    flags::PopulateHostnameIfEmpty();
 
     int node_id = absl::GetFlag(FLAGS_node_id);
     if (node_id == -1) {
