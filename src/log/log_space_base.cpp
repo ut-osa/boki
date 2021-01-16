@@ -28,7 +28,7 @@ void LogSpaceBase::AddInterestedShard(uint16_t engine_id) {
 bool LogSpaceBase::GetMetaLogs(uint32_t start_pos, uint32_t end_pos,
                                std::vector<MetaLogProto>* metalogs) const {
     DCHECK(mode_ == kFullMode);
-    if (start_pos >= end_pos || end_pos >= applied_metalogs_.size()) {
+    if (start_pos >= end_pos || end_pos > metalog_position_) {
         return false;
     }
     metalogs->resize(end_pos - start_pos);
@@ -146,6 +146,9 @@ void LogSpaceBase::ApplyMetaLog(const MetaLogProto& meta_log) {
             const auto& new_logs = meta_log.new_logs_proto();
             const View::NodeIdVec& engine_node_ids = view_->GetEngineNodes();
             uint32_t start_seqnum = new_logs.start_seqnum();
+            HVLOG(1) << fmt::format("Apply NEW_LOGS meta log: "
+                                    "metalog_seqnum={}, start_seqnum={}",
+                                    meta_log.metalog_seqnum(), start_seqnum);
             for (size_t i = 0; i < engine_node_ids.size(); i++) {
                 uint64_t start_localid = bits::JoinTwo32(
                     engine_node_ids[i], new_logs.shard_starts(i));

@@ -49,6 +49,9 @@ void MetaLogPrimary::UpdateStorageProgress(uint16_t storage_id,
             uint32_t current_position = GetShardReplicatedPosition(engine_id);
             DCHECK_GE(current_position, last_cut_.at(engine_id));
             if (current_position > last_cut_.at(engine_id)) {
+                HVLOG(1) << fmt::format("Store progress from storage {} for engine {}: {}",
+                                        storage_id, engine_id,
+                                        bits::HexStr0x(current_position));
                 dirty_shards_.insert(engine_id);
             }
         }
@@ -81,6 +84,7 @@ bool MetaLogPrimary::MarkNextCut(MetaLogProto* meta_log_proto) {
     meta_log_proto->set_type(MetaLogProto::NEW_LOGS);
     auto* new_logs_proto = meta_log_proto->mutable_new_logs_proto();
     new_logs_proto->set_start_seqnum(bits::LowHalf64(seqnum_position()));
+    uint32_t total_delta = 0;
     for (uint16_t engine_id : view_->GetEngineNodes()) {
         new_logs_proto->add_shard_starts(last_cut_.at(engine_id));
         uint32_t delta = 0;
@@ -91,10 +95,17 @@ bool MetaLogPrimary::MarkNextCut(MetaLogProto* meta_log_proto) {
             last_cut_[engine_id] = current_position;
         }
         new_logs_proto->add_shard_deltas(delta);
+        total_delta += delta;
     }
+    dirty_shards_.clear();
+    HVLOG(1) << fmt::format("Generate new NEW_LOGS meta log: "
+                            "start_seqnum={}, total_delta={}",
+                            new_logs_proto->start_seqnum(), total_delta);
     if (!ProvideMetaLog(*meta_log_proto)) {
         HLOG(FATAL) << "Failed to advance metalog position";
     }
+    DCHECK_EQ(new_logs_proto->start_seqnum() + total_delta,
+              bits::LowHalf64(seqnum_position()));
     return true;
 }
 
@@ -149,6 +160,7 @@ LogProducer::~LogProducer() {}
 
 void LogProducer::LocalAppend(void* caller_data, uint64_t* localid) {
     DCHECK(!pending_appends_.contains(next_localid_));
+    HVLOG(1) << fmt::format("LocalAppend with localid {}", bits::HexStr0x(next_localid_));
     pending_appends_[next_localid_] = caller_data;
     *localid = next_localid_++;
 }
@@ -209,6 +221,8 @@ bool LogStorage::Store(const LogMetaData& log_metadata,
                        std::span<const char> log_data) {
     uint64_t localid = log_metadata.localid;
     uint16_t engine_id = gsl::narrow_cast<uint16_t>(bits::HighHalf64(localid));
+    HVLOG(1) << fmt::format("Store log from engine {} with localid {}",
+                            engine_id, bits::HexStr0x(localid));
     if (!storage_node_->IsSourceEngineNode(engine_id)) {
         HLOG(ERROR) << fmt::format("Not storage node (node_id {}) for engine (node_id {})",
                                    storage_node_->node_id(), engine_id);

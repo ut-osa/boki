@@ -23,6 +23,7 @@ Engine::~Engine() {}
 
 void Engine::OnViewCreated(const View* view) {
     DCHECK(zk_session()->WithinMyEventLoopThread());
+    HLOG(INFO) << fmt::format("New view {} created", view->id());
     bool contains_myself = view->contains_engine_node(my_node_id());
     if (!contains_myself) {
         HLOG(WARNING) << fmt::format("View {} does not include myself", view->id());
@@ -48,8 +49,9 @@ void Engine::OnViewCreated(const View* view) {
             if (!pending_appends_.empty()) {
                 for (const auto& [op_id, op] : pending_appends_) {
                     LogMetaData log_metadata = MetaDataFromAppendOp(op);
-                    auto producer_ptr = producer_collection_.GetLogSpaceChecked(
-                        view->LogSpaceIdentifier(op->user_logspace));
+                    uint32_t logspace_id = view->LogSpaceIdentifier(op->user_logspace);
+                    log_metadata.seqnum = bits::JoinTwo32(logspace_id, 0);
+                    auto producer_ptr = producer_collection_.GetLogSpaceChecked(logspace_id);
                     producer_ptr.Lock()->LocalAppend(op, &log_metadata.localid);
                     new_appends.push_back(std::make_pair(log_metadata, op));
                 }
@@ -60,6 +62,7 @@ void Engine::OnViewCreated(const View* view) {
         log_header_ = fmt::format("LogEngine[{}-{}]: ", my_node_id(), view->id());
     }
     if (!ready_requests.empty()) {
+        HLOG(INFO) << fmt::format("{} requests for the new view", ready_requests.size());
         SomeIOWorker()->ScheduleFunction(
             nullptr, [this, requests = std::move(ready_requests)] () {
                 ProcessRequests(requests);
@@ -67,6 +70,7 @@ void Engine::OnViewCreated(const View* view) {
         );
     }
     if (!new_appends.empty()) {
+        HLOG(INFO) << fmt::format("{} appends for the new view", new_appends.size());
         SomeIOWorker()->ScheduleFunction(
             nullptr, [this, view, new_appends = std::move(new_appends)] () {
                 for (const auto& [log_metadata, op] : new_appends) {
@@ -79,6 +83,7 @@ void Engine::OnViewCreated(const View* view) {
 
 void Engine::OnViewFrozen(const View* view) {
     DCHECK(zk_session()->WithinMyEventLoopThread());
+    HLOG(INFO) << fmt::format("View {} frozen", view->id());
     absl::MutexLock view_lk(&view_mu_);
     DCHECK_EQ(view->id(), current_view_->id());
     if (view->contains_engine_node(my_node_id())) {
@@ -89,6 +94,7 @@ void Engine::OnViewFrozen(const View* view) {
 
 void Engine::OnViewFinalized(const FinalizedView* finalized_view) {
     DCHECK(zk_session()->WithinMyEventLoopThread());
+    HLOG(INFO) << fmt::format("View {} finalized", finalized_view->view()->id());
     LogProducer::AppendResultVec results;
     {
         absl::MutexLock view_lk(&view_mu_);
@@ -144,11 +150,14 @@ void Engine::OnViewFinalized(const FinalizedView* finalized_view) {
 
 void Engine::HandleLocalAppend(LocalOp* op) {
     DCHECK(op->type == SharedLogOpType::APPEND);
+    HVLOG(1) << fmt::format("Handle local append: op_id={}, logspace={}, tag={}, size={}",
+                            op->id, op->user_logspace, op->user_tag, op->data.length());
     const View* view = nullptr;
     LogMetaData log_metadata = MetaDataFromAppendOp(op);
     {
         absl::ReaderMutexLock view_lk(&view_mu_);
         if (!current_view_active_) {
+            HLOG(WARNING) << "Current view not active";
             absl::MutexLock pending_appends_lk(&pending_appends_mu_);
             DCHECK(pending_appends_.count(op->id) == 0);
             pending_appends_[op->id] = op;
@@ -156,6 +165,7 @@ void Engine::HandleLocalAppend(LocalOp* op) {
         }
         view = current_view_;
         uint32_t logspace_id = view->LogSpaceIdentifier(op->user_logspace);
+        log_metadata.seqnum = bits::JoinTwo32(logspace_id, 0);
         auto producer_ptr = producer_collection_.GetLogSpaceChecked(logspace_id);
         {
             auto locked_producer = producer_ptr.Lock();

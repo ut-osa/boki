@@ -18,7 +18,11 @@ Storage::~Storage() {}
 
 void Storage::OnViewCreated(const View* view) {
     DCHECK(zk_session()->WithinMyEventLoopThread());
+    HLOG(INFO) << fmt::format("New view {} created", view->id());
     bool contains_myself = view->contains_storage_node(my_node_id());
+    if (!contains_myself) {
+        HLOG(WARNING) << fmt::format("View {} does not include myself", view->id());
+    }
     std::vector<SharedLogRequest> ready_requests;
     {
         absl::MutexLock view_lk(&view_mu_);
@@ -36,6 +40,7 @@ void Storage::OnViewCreated(const View* view) {
         log_header_ = fmt::format("Storage[{}-{}]: ", my_node_id(), view->id());
     }
     if (!ready_requests.empty()) {
+        HLOG(INFO) << fmt::format("{} requests for the new view", ready_requests.size());
         SomeIOWorker()->ScheduleFunction(
             nullptr, [this, requests = std::move(ready_requests)] () {
                 ProcessRequests(requests);
@@ -46,6 +51,7 @@ void Storage::OnViewCreated(const View* view) {
 
 void Storage::OnViewFinalized(const FinalizedView* finalized_view) {
     DCHECK(zk_session()->WithinMyEventLoopThread());
+    HLOG(INFO) << fmt::format("View {} finalized", finalized_view->view()->id());
     LogStorage::ReadResultVec results;
     {
         absl::MutexLock view_lk(&view_mu_);

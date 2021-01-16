@@ -18,7 +18,11 @@ Sequencer::~Sequencer() {}
 
 void Sequencer::OnViewCreated(const View* view) {
     DCHECK(zk_session()->WithinMyEventLoopThread());
+    HLOG(INFO) << fmt::format("New view {} created", view->id());
     bool contains_myself = view->contains_sequencer_node(my_node_id());
+    if (!contains_myself) {
+        HLOG(WARNING) << fmt::format("View {} does not include myself", view->id());
+    }
     std::vector<SharedLogRequest> ready_requests;
     {
         absl::MutexLock view_lk(&view_mu_);
@@ -43,6 +47,7 @@ void Sequencer::OnViewCreated(const View* view) {
         log_header_ = fmt::format("Sequencer[{}-{}]: ", my_node_id(), view->id());
     }
     if (!ready_requests.empty()) {
+        HLOG(INFO) << fmt::format("{} requests for the new view", ready_requests.size());
         SomeIOWorker()->ScheduleFunction(
             nullptr, [this, requests = std::move(ready_requests)] {
                 ProcessRequests(requests);
@@ -53,6 +58,7 @@ void Sequencer::OnViewCreated(const View* view) {
 
 void Sequencer::OnViewFrozen(const View* view) {
     DCHECK(zk_session()->WithinMyEventLoopThread());
+    HLOG(INFO) << fmt::format("View {} frozen", view->id());
     absl::MutexLock view_lk(&view_mu_);
     // TODO: publish tail metalogs
     DCHECK_EQ(view->id(), current_view_->id());
@@ -69,6 +75,7 @@ void Sequencer::OnViewFrozen(const View* view) {
 
 void Sequencer::OnViewFinalized(const FinalizedView* finalized_view) {
     DCHECK(zk_session()->WithinMyEventLoopThread());
+    HLOG(INFO) << fmt::format("View {} finalized", finalized_view->view()->id());
     absl::MutexLock view_lk(&view_mu_);
     DCHECK_EQ(finalized_view->view()->id(), current_view_->id());
     if (current_primary_ != nullptr) {
@@ -156,7 +163,7 @@ void Sequencer::OnRecvMetaLogProgress(const SharedLogMessage& message) {
                 if (!locked_logspace->GetMetaLogs(old_position, new_position,
                                                   &replicated_metalogs)) {
                     HLOG(FATAL) << fmt::format("Cannot get meta log between {} and {}",
-                                            old_position, new_position);
+                                                old_position, new_position);
                 }
             }
         }
