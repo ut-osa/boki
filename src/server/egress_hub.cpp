@@ -202,12 +202,13 @@ void EgressHub::SendPendingMessages() {
     }
     DCHECK(sockfd >= 0);
 
-    std::span<char> buf;
-    io_worker_->NewWriteBuffer(&buf);
-    size_t send_size = write_buffer_.length();
-    if (send_size <= buf.size()) {
+    while (!write_buffer_.empty()) {
+        std::span<char> buf;
+        io_worker_->NewWriteBuffer(&buf);
+        size_t copy_size = std::min(buf.size(), write_buffer_.length());
+        std::span<const char> data(write_buffer_.data(), copy_size);
         URING_DCHECK_OK(current_io_uring()->SendAll(
-            sockfd, CopyToBuffer(buf, write_buffer_.to_span()),
+            sockfd, CopyToBuffer(buf, data),
             [this, buf, sockfd] (int status) {
                 io_worker_->ReturnWriteBuffer(buf);
                 if (status != 0) {
@@ -216,10 +217,8 @@ void EgressHub::SendPendingMessages() {
                 }
             }
         ));
-    } else {
-        NOT_IMPLEMENTED();
+        write_buffer_.ConsumeFront(copy_size);
     }
-    write_buffer_.Reset();
 }
 
 std::string EgressHub::GetLogHeader(int type) {
