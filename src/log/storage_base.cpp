@@ -3,6 +3,9 @@
 #include "log/flags.h"
 #include "server/constants.h"
 
+ABSL_FLAG(int, rocksdb_max_background_jobs, 2, "");
+ABSL_FLAG(bool, rocksdb_enable_compression, false, "");
+
 #define log_header_ "StorageBase: "
 
 namespace faas {
@@ -39,7 +42,12 @@ void StorageBase::StopInternal() {
 void StorageBase::SetupRocksDB() {
     rocksdb::Options options;
     options.create_if_missing = true;
-    options.compression = rocksdb::kZSTD;
+    options.max_background_jobs = absl::GetFlag(FLAGS_rocksdb_max_background_jobs);
+    if (absl::GetFlag(FLAGS_rocksdb_enable_compression)) {
+        options.compression = rocksdb::kZSTD;
+    } else {
+        options.compression = rocksdb::kNoCompression;
+    }
     rocksdb::DB* db;
     HLOG(INFO) << fmt::format("Open RocksDB at path {}", db_path_);
     auto status = rocksdb::DB::Open(options, db_path_, &db);
