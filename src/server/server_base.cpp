@@ -21,7 +21,7 @@ ServerBase::ServerBase(std::string_view node_name)
       node_name_(node_name),
       stop_eventfd_(eventfd(0, 0)),
       message_sockfd_(-1),
-      event_loop_thread_("Server/EL",
+      event_loop_thread_("Srv/EL",
                          absl::bind_front(&ServerBase::EventLoopThreadMain, this)),
       zk_session_(absl::GetFlag(FLAGS_zookeeper_host),
                   absl::GetFlag(FLAGS_zookeeper_root_path)),

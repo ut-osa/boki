@@ -21,7 +21,7 @@ using server::NodeWatcher;
 StorageBase::StorageBase(uint16_t node_id)
     : ServerBase(fmt::format("storage_{}", node_id)),
       node_id_(node_id),
-      background_thread_("Background", [this] { this->BackgroundThreadMain(); }) {}
+      background_thread_("BG", [this] { this->BackgroundThreadMain(); }) {}
 
 StorageBase::~StorageBase() {}
 
