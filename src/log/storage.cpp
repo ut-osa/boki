@@ -1,6 +1,9 @@
 #include "log/storage.h"
 
+#include "log/flags.h"
 #include "utils/bits.h"
+#include "utils/io.h"
+#include "utils/timerfd.h"
 
 namespace faas {
 namespace log {
@@ -237,11 +240,23 @@ void Storage::ProcessRequests(const std::vector<SharedLogRequest>& requests) {
 }
 
 void Storage::BackgroundThreadMain() {
+    int timerfd = io_utils::CreateTimerFd();
+    CHECK(timerfd != -1) << "Failed to create timerfd";
+    io_utils::FdUnsetNonblocking(timerfd);
+    absl::Duration interval = absl::Milliseconds(
+        absl::GetFlag(FLAGS_slog_storage_bgthread_interval_ms));
+    CHECK(io_utils::SetupTimerFdPeriodic(timerfd, absl::Milliseconds(100), interval))
+        << "Failed to setup timerfd with interval " << interval;
     bool running = true;
     while (running) {
-        // TODO: flush log entries to DB
-        //       cleanup outdated LogSpace
-        absl::SleepFor(absl::Milliseconds(100));
+        uint64_t exp;
+        ssize_t nread = read(timerfd, &exp, sizeof(uint64_t));
+        if (nread < 0) {
+            PLOG(FATAL) << "Failed to read on timerfd";
+        }
+        CHECK_EQ(gsl::narrow_cast<size_t>(nread), sizeof(uint64_t));
+        FlushLogEntries();
+        // TODO: cleanup outdated LogSpace
         running = state_.load(std::memory_order_acquire) != kStopping;
     }
 }
@@ -275,6 +290,60 @@ void Storage::SendShardProgressIfNeeded() {
 }
 
 #undef RETURN_IF_LOGSPACE_FINALIZED
+
+void Storage::FlushLogEntries() {
+    std::vector<std::shared_ptr<const LogEntry>> log_entires;
+    std::vector<std::pair<LockablePtr<LogStorage>, uint64_t>> storages;
+    {
+        absl::ReaderMutexLock view_lk(&view_mu_);
+        storage_collection_.ForEachActiveLogSpace(
+            [&log_entires, &storages] (uint32_t logspace_id,
+                                       LockablePtr<LogStorage> storage_ptr) {
+                auto locked_storage = storage_ptr.ReaderLock();
+                std::vector<std::shared_ptr<const LogEntry>> tmp;
+                uint64_t new_position;
+                if (locked_storage->GrabLogEntriesForPersistence(&tmp, &new_position)) {
+                    storages.emplace_back(storage_ptr, new_position);
+                    log_entires.insert(log_entires.end(), tmp.begin(), tmp.end());
+                }
+            }
+        );
+    }
+
+    if (log_entires.empty()) {
+        return;
+    }
+    HVLOG(1) << fmt::format("Will flush {} log entries", log_entires.size());
+    std::vector<const LogEntry*> log_entry_ptrs;
+    log_entry_ptrs.resize(log_entires.size());
+    for (size_t i = 0; i < log_entires.size(); i++) {
+        log_entry_ptrs[i] = log_entires[i].get();
+    }
+    PutLogEntriesToDB(log_entry_ptrs);
+
+    std::vector<uint32_t> finalized_logspaces;
+    for (auto& [storage_ptr, new_position] : storages) {
+        auto locked_storage = storage_ptr.Lock();
+        locked_storage->LogEntriesPersisted(new_position);
+        if (locked_storage->finalized()
+                && new_position >= locked_storage->seqnum_position()) {
+            finalized_logspaces.push_back(locked_storage->identifier());
+        }
+    }
+
+    if (!finalized_logspaces.empty()) {
+        absl::MutexLock view_lk(&view_mu_);
+        for (uint32_t logspace_id : finalized_logspaces) {
+            if (storage_collection_.FinalizeLogSpace(logspace_id)) {
+                HLOG(INFO) << fmt::format("Finalize storage log space {}",
+                                          bits::HexStr0x(logspace_id));
+            } else {
+                HLOG(ERROR) << fmt::format("Storage log space {} not active, "
+                                           "cannot finalize", bits::HexStr0x(logspace_id));
+            }
+        }
+    }
+}
 
 }  // namespace log
 }  // namespace faas

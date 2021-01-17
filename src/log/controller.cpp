@@ -48,9 +48,7 @@ void Controller::InstallNewView(const ViewProto& view_proto) {
     View* view = new View(view_proto);
     views_.emplace_back(view);
     std::string serialized;
-    if (!view_proto.SerializeToString(&serialized)) {
-        HLOG(FATAL) << "Failed to serialized ViewProto";
-    }
+    CHECK(view_proto.SerializeToString(&serialized));
     zk_session_.Create(
         "view/new", STRING_TO_SPAN(serialized),
         zk::ZKCreateMode::kPersistentSequential,

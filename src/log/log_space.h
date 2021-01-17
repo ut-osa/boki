@@ -92,7 +92,7 @@ public:
 
     bool GrabLogEntriesForPersistence(
             std::vector<std::shared_ptr<const LogEntry>>* log_entries,
-            uint64_t* new_position);
+            uint64_t* new_position) const;
     void LogEntriesPersisted(uint64_t new_position);
 
     struct ReadResult {

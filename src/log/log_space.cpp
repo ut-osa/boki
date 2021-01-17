@@ -259,18 +259,18 @@ void LogStorage::ReadAt(const protocol::SharedLogMessage& request) {
 
 bool LogStorage::GrabLogEntriesForPersistence(
         std::vector<std::shared_ptr<const LogEntry>>* log_entries,
-        uint64_t* new_position) {
-    size_t idx = absl::c_lower_bound(live_seqnums_,
-                                     persisted_seqnum_position_)
-                 - live_seqnums_.begin();
-    if (idx >= live_seqnums_.size()) {
+        uint64_t* new_position) const {
+    if (live_seqnums_.empty() || live_seqnums_.back() < persisted_seqnum_position_) {
         return false;
     }
+    auto iter = absl::c_lower_bound(live_seqnums_, persisted_seqnum_position_);
+    DCHECK(iter != live_seqnums_.end());
+    DCHECK_GE(*iter, persisted_seqnum_position_);
     log_entries->clear();
-    for (size_t i = idx; i < live_seqnums_.size(); i++) {
-        uint64_t seqnum = live_seqnums_[i];
+    while (iter != live_seqnums_.end()) {
+        uint64_t seqnum = *(iter++);
         DCHECK(live_log_entries_.contains(seqnum));
-        log_entries->push_back(live_log_entries_[seqnum]);
+        log_entries->push_back(live_log_entries_.at(seqnum));
     }
     DCHECK(!log_entries->empty());
     *new_position = live_seqnums_.back() + 1;

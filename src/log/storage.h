@@ -39,6 +39,7 @@ private:
 
     void BackgroundThreadMain() override;
     void SendShardProgressIfNeeded() override;
+    void FlushLogEntries();
 
     DISALLOW_COPY_AND_ASSIGN(Storage);
 };

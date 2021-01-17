@@ -85,7 +85,7 @@ static std::string SerializedMetaLogs(const MetaLogProto& metalog) {
     metalogs_proto.set_logspace_id(metalog.logspace_id());
     metalogs_proto.add_metalogs()->CopyFrom(metalog);
     std::string serialized;
-    metalogs_proto.SerializeToString(&serialized);
+    CHECK(metalogs_proto.SerializeToString(&serialized));
     return serialized;
 }
 }  // namespace

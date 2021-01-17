@@ -96,9 +96,8 @@ public:
 
     typedef std::function<void(/* identifier */ uint32_t, LockablePtr<T>)> IterCallback;
     void ForEachActiveLogSpace(const View* view, IterCallback cb) const;
-
-    LockablePtr<T> GetNextActiveLogSpace(uint32_t min_identifier) const;
-    LockablePtr<T> GetNextFinalizedLogSpace(uint32_t min_identifier) const;
+    void ForEachActiveLogSpace(IterCallback cb) const;
+    void ForEachFinalizedLogSpace(IterCallback cb) const;
 
 private:
     std::set</* identifier */ uint32_t> active_log_spaces_;
@@ -172,24 +171,22 @@ void LogSpaceCollection<T>::ForEachActiveLogSpace(const View* view, IterCallback
 }
 
 template<class T>
-LockablePtr<T> LogSpaceCollection<T>::GetNextActiveLogSpace(uint32_t min_identifier) const {
-    auto iter = active_log_spaces_.lower_bound(min_identifier);
-    if (iter != active_log_spaces_.end()) {
+void LogSpaceCollection<T>::ForEachActiveLogSpace(IterCallback cb) const {
+    auto iter = active_log_spaces_.begin();
+    while (iter != active_log_spaces_.end()) {
         DCHECK(log_spaces_.contains(*iter));
-        return log_spaces_.at(*iter);
-    } else {
-        return LockablePtr<T>{};
+        cb(*iter, log_spaces_.at(*iter));
+        iter++;
     }
 }
 
 template<class T>
-LockablePtr<T> LogSpaceCollection<T>::GetNextFinalizedLogSpace(uint32_t min_identifier) const {
-    auto iter = finalized_log_spaces_.lower_bound(min_identifier);
-    if (iter != finalized_log_spaces_.end()) {
+void LogSpaceCollection<T>::ForEachFinalizedLogSpace(IterCallback cb) const {
+    auto iter = finalized_log_spaces_.begin();
+    while (iter != finalized_log_spaces_.end()) {
         DCHECK(log_spaces_.contains(*iter));
-        return log_spaces_.at(*iter);
-    } else {
-        return LockablePtr<T>{};
+        cb(*iter, log_spaces_.at(*iter));
+        iter++;
     }
 }
 
