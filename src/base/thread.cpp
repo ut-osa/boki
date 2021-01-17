@@ -53,7 +53,7 @@ void Thread::Run() {
     tid_ = syscall(SYS_gettid);
     state_.store(kRunning);
     started_.Notify();
-    LOG(INFO) << "Start thread: " << name_;
+    LOG(INFO) << fmt::format("Start thread: {} (tid={})", name_, tid_);
     fn_();
     state_.store(kFinished);
 }
