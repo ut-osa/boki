@@ -104,6 +104,8 @@ public:
     typedef absl::InlinedVector<ReadResult, 4> ReadResultVec;
     void PollReadResults(ReadResultVec* results);
 
+    void PollIndexData(IndexDataProto* index_data);
+
     bool GrabShardProgressForSending(std::vector<uint32_t>* progress);
 
 private:
@@ -126,6 +128,8 @@ private:
     std::multimap</* seqnum */ uint64_t,
                   protocol::SharedLogMessage> pending_read_requests_;
     ReadResultVec pending_read_results_;
+
+    IndexDataProto index_data_;
 
     void OnNewLogs(uint32_t metalog_seqnum,
                    uint64_t start_seqnum, uint64_t start_localid,

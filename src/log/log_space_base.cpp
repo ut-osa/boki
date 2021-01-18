@@ -110,6 +110,7 @@ void LogSpaceBase::AdvanceMetaLogProgress() {
             UNREACHABLE();
         }
         metalog_position_ = meta_log->metalog_seqnum() + 1;
+        OnMetaLogApplied(*meta_log);
         iter = pending_metalogs_.erase(iter);
     }
 }

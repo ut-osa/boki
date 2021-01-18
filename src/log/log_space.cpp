@@ -211,6 +211,7 @@ LogStorage::LogStorage(uint16_t storage_id, const View* view, uint16_t sequencer
         AddInterestedShard(engine_id);
         shard_progrsses_[engine_id] = 0;
     }
+    index_data_.set_logspace_id(identifier());
     log_header_ = fmt::format("LogStorage[{}-{}]: ", view->id(), sequencer_id);
     state_ = kNormal;
 }
@@ -287,6 +288,12 @@ void LogStorage::PollReadResults(ReadResultVec* results) {
     pending_read_results_.clear();
 }
 
+void LogStorage::PollIndexData(IndexDataProto* data) {
+    data->Swap(&index_data_);
+    index_data_.Clear();
+    index_data_.set_logspace_id(identifier());
+}
+
 bool LogStorage::GrabShardProgressForSending(std::vector<uint32_t>* progress) {
     if (!shard_progrss_dirty_) {
         return false;
@@ -323,6 +330,11 @@ void LogStorage::OnNewLogs(uint32_t metalog_seqnum,
         pending_log_entries_.erase(localid);
         log_entry->metadata.seqnum = seqnum;
         std::shared_ptr<const LogEntry> log_entry_ptr(log_entry);
+        // Add the new entry to index data
+        index_data_.add_seqnum_halves(bits::LowHalf64(seqnum));
+        index_data_.add_engine_ids(bits::HighHalf64(localid));
+        index_data_.add_user_logspaces(log_entry->metadata.user_logspace);
+        index_data_.add_user_tags(log_entry->metadata.user_tag);
         // Update live_seqnums_ and live_log_entries_
         DCHECK(live_seqnums_.empty() || seqnum > live_seqnums_.back());
         live_seqnums_.push_back(seqnum);

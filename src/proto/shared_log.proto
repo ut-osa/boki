@@ -104,3 +104,12 @@ message LogEntryProto {
     uint64 localid       = 5;
     bytes  data          = 6;
 }
+
+message IndexDataProto {
+    uint32 logspace_id  = 1;
+
+    repeated uint32 seqnum_halves  = 2;
+    repeated uint32 engine_ids     = 3;
+    repeated uint32 user_logspaces = 4;
+    repeated uint64 user_tags      = 5;
+}

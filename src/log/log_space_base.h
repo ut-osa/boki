@@ -51,10 +51,8 @@ protected:
     virtual void OnTrim(uint32_t metalog_seqnum,
                         uint32_t user_logspace, uint64_t user_tag,
                         uint64_t trim_seqnum) {}
-    virtual void OnFinalized(uint32_t metalog_position) {}
-
-    virtual bool CanApplyMetaLog(const MetaLogProto& meta_log);
-    void AdvanceMetaLogProgress();
+    virtual void OnMetaLogApplied(const MetaLogProto& meta_log_proto) {}
+    virtual void OnFinalized(uint32_t metalog_position) {} 
 
     Mode mode_;
     State state_;
@@ -72,6 +70,8 @@ private:
     std::vector<MetaLogProto*> applied_metalogs_;
     std::map</* metalog_seqnum */ uint32_t, MetaLogProto*> pending_metalogs_;
 
+    void AdvanceMetaLogProgress();
+    bool CanApplyMetaLog(const MetaLogProto& meta_log);
     void ApplyMetaLog(const MetaLogProto& meta_log);
 
     DISALLOW_COPY_AND_ASSIGN(LogSpaceBase);
