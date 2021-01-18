@@ -2,6 +2,11 @@
 
 #include "log/flags.h"
 #include "server/constants.h"
+#include "utils/fs.h"
+
+#include <rocksdb/db.h>
+#include <tkrzw_dbm.h>
+#include <tkrzw_dbm_hash.h>
 
 ABSL_FLAG(int, rocksdb_max_background_jobs, 2, "");
 ABSL_FLAG(bool, rocksdb_enable_compression, false, "");
@@ -24,12 +29,35 @@ using server::NodeWatcher;
 StorageBase::StorageBase(uint16_t node_id)
     : ServerBase(fmt::format("storage_{}", node_id)),
       node_id_(node_id),
-      background_thread_("BG", [this] { this->BackgroundThreadMain(); }) {}
+      db_(nullptr),
+      background_thread_("BG", [this] { this->BackgroundThreadMain(); }) {
+    std::string db_backend = absl::GetFlag(FLAGS_slog_storage_backend);
+    if (db_backend == "rocksdb") {
+        db_backend_ = DBBackend::kRocksDB;
+    } else if (db_backend == "tkrzw_hashdbm") {
+        db_backend_ = DBBackend::kTkrzwHashDBM;
+    } else {
+        LOG(FATAL) << "Unknown storage backend: " << db_backend;
+    }
+}
 
-StorageBase::~StorageBase() {}
+StorageBase::~StorageBase() {
+    if (db_ != nullptr) {
+        switch (db_backend_) {
+        case DBBackend::kRocksDB:
+            CloseRocksDB();
+            break;
+        case DBBackend::kTkrzwHashDBM:
+            CloseTkrzwDBM();
+            break;
+        default:
+            UNREACHABLE();
+        }
+    }
+}
 
 void StorageBase::StartInternal() {
-    SetupRocksDB();
+    SetupDB();
     SetupZKWatchers();
     SetupTimers();
     background_thread_.Start();
@@ -39,22 +67,17 @@ void StorageBase::StopInternal() {
     background_thread_.Join();
 }
 
-void StorageBase::SetupRocksDB() {
-    rocksdb::Options options;
-    options.create_if_missing = true;
-    options.max_background_jobs = absl::GetFlag(FLAGS_rocksdb_max_background_jobs);
-    if (absl::GetFlag(FLAGS_rocksdb_enable_compression)) {
-        options.compression = rocksdb::kZSTD;
-    } else {
-        options.compression = rocksdb::kNoCompression;
+void StorageBase::SetupDB() {
+    switch (db_backend_) {
+    case DBBackend::kRocksDB:
+        OpenRocksDB();
+        break;
+    case DBBackend::kTkrzwHashDBM:
+        OpenTkrzwDBM();
+        break;
+    default:
+        UNREACHABLE();
     }
-    rocksdb::DB* db;
-    HLOG(INFO) << fmt::format("Open RocksDB at path {}", db_path_);
-    auto status = rocksdb::DB::Open(options, db_path_, &db);
-    if (!status.ok()) {
-        HLOG(FATAL) << "RocksDB open failed: " << status.ToString();
-    }
-    db_.reset(db);
 }
 
 void StorageBase::SetupZKWatchers() {
@@ -79,6 +102,55 @@ void StorageBase::SetupTimers() {
     );
 }
 
+void StorageBase::OpenRocksDB() {
+    DCHECK(db_backend_ == DBBackend::kRocksDB);
+    rocksdb::Options options;
+    options.create_if_missing = true;
+    options.max_background_jobs = absl::GetFlag(FLAGS_rocksdb_max_background_jobs);
+    if (absl::GetFlag(FLAGS_rocksdb_enable_compression)) {
+        options.compression = rocksdb::kZSTD;
+    } else {
+        options.compression = rocksdb::kNoCompression;
+    }
+    rocksdb::DB* db;
+    HLOG(INFO) << fmt::format("Open RocksDB at path {}", db_path_);
+    auto status = rocksdb::DB::Open(options, db_path_, &db);
+    if (!status.ok()) {
+        HLOG(FATAL) << "RocksDB open failed: " << status.ToString();
+    }
+    db_ = db;
+}
+
+void StorageBase::CloseRocksDB() {
+    DCHECK(db_backend_ == DBBackend::kRocksDB);
+    rocksdb::DB* db = reinterpret_cast<rocksdb::DB*>(DCHECK_NOTNULL(db_));
+    db_ = nullptr;
+    delete db;
+}
+
+void StorageBase::OpenTkrzwDBM() {
+    DCHECK(db_backend_ == DBBackend::kTkrzwHashDBM);
+    tkrzw::DBM* db = new tkrzw::HashDBM();
+    std::string file_path = fs_utils::JoinPath(db_path_, "DB");
+    HLOG(INFO) << fmt::format("Open TkrzwHashDBM at path {}", file_path);
+    auto status = db->Open(file_path, /* writable= */ true);
+    if (!status.IsOK()) {
+        HLOG(FATAL) << "Tkrzw open failed: " << tkrzw::ToString(status);
+    }
+    db_ = db;
+}
+
+void StorageBase::CloseTkrzwDBM() {
+    DCHECK(db_backend_ == DBBackend::kTkrzwHashDBM);
+    tkrzw::DBM* db = reinterpret_cast<tkrzw::DBM*>(DCHECK_NOTNULL(db_));
+    db_ = nullptr;
+    auto status = db->Close();
+    if (!status.IsOK()) {
+        HLOG(FATAL) << "Tkrzw close failed: " << tkrzw::ToString(status);
+    }
+    delete db;
+}
+
 void StorageBase::MessageHandler(const SharedLogMessage& message,
                                  std::span<const char> payload) {
     switch (SharedLogMessageHelper::GetOpType(message)) {
@@ -100,17 +172,78 @@ namespace {
 static inline std::string GetDBKey(uint64_t seqnum) {
     return bits::HexStr(seqnum);
 }
-}  // namespace
 
-bool StorageBase::GetLogEntryFromDB(uint64_t seqnum, LogEntryProto* log_entry_proto) {
-    std::string db_key = GetDBKey(seqnum);
+static inline std::string SerializedLogEntry(const LogEntry* log_entry) {
+    LogEntryProto log_entry_proto;
+    log_entry_proto.set_user_logspace(log_entry->metadata.user_logspace);
+    log_entry_proto.set_user_tag(log_entry->metadata.user_tag);
+    log_entry_proto.set_seqnum(log_entry->metadata.seqnum);
+    log_entry_proto.set_localid(log_entry->metadata.localid);
+    log_entry_proto.set_data(log_entry->data);
     std::string data;
-    auto status = db_->Get(rocksdb::ReadOptions(), db_key, &data);
+    CHECK(log_entry_proto.SerializeToString(&data));
+    return data;
+}
+
+static inline bool GetRocksDB(rocksdb::DB* db, std::string_view key, std::string* value) {
+    auto status = db->Get(rocksdb::ReadOptions(), key, value);
     if (status.IsNotFound()) {
         return false;
     }
     if (!status.ok()) {
         HLOG(FATAL) << "RocksDB Get() failed: " << status.ToString();
+    }
+    return true;
+}
+
+static inline bool GetTkrzwDBM(tkrzw::DBM* db, std::string_view key, std::string* value) {
+    auto status = db->Get(key, value);
+    return status.IsOK();
+}
+
+static inline void PutRocksDB(rocksdb::DB* db,
+                              const std::vector<const LogEntry*>& log_entires) {
+    rocksdb::WriteBatch batch;
+    for (const LogEntry* log_entry : log_entires) {
+        std::string db_key = GetDBKey(log_entry->metadata.seqnum);
+        std::string db_value = SerializedLogEntry(log_entry);
+        batch.Put(db_key, db_value);
+    }
+    auto status = db->Write(rocksdb::WriteOptions(), &batch);
+    if (!status.ok()) {
+        LOG(FATAL) << "RocksDB write failed: " << status.ToString();
+    }
+}
+
+static inline void PutTkrzwDBM(tkrzw::DBM* db,
+                               const std::vector<const LogEntry*>& log_entires) {
+    for (const LogEntry* log_entry : log_entires) {
+        std::string db_key = GetDBKey(log_entry->metadata.seqnum);
+        std::string db_value = SerializedLogEntry(log_entry);
+        auto status = db->Set(db_key, db_value);
+        if (!status.IsOK()) {
+            LOG(FATAL) << "Tkrzw set failed: " << tkrzw::ToString(status);
+        }
+    }
+}
+}  // namespace
+
+bool StorageBase::GetLogEntryFromDB(uint64_t seqnum, LogEntryProto* log_entry_proto) {
+    std::string db_key = GetDBKey(seqnum);
+    std::string data;
+    bool found = false;
+    switch (db_backend_) {
+    case DBBackend::kRocksDB:
+        found = GetRocksDB(reinterpret_cast<rocksdb::DB*>(db_), db_key, &data);
+        break;
+    case DBBackend::kTkrzwHashDBM:
+        found = GetTkrzwDBM(reinterpret_cast<tkrzw::DBM*>(db_), db_key, &data);
+        break;
+    default:
+        UNREACHABLE();
+    }
+    if (!found) {
+        return false;
     }
     if (!log_entry_proto->ParseFromString(data)) {
         HLOG(FATAL) << "Failed to parse LogEntryProto";
@@ -119,22 +252,15 @@ bool StorageBase::GetLogEntryFromDB(uint64_t seqnum, LogEntryProto* log_entry_pr
 }
 
 void StorageBase::PutLogEntriesToDB(const std::vector<const LogEntry*>& log_entires) {
-    rocksdb::WriteBatch batch;
-    for (const LogEntry* log_entry : log_entires) {
-        std::string db_key = GetDBKey(log_entry->metadata.seqnum);
-        LogEntryProto log_entry_proto;
-        log_entry_proto.set_user_logspace(log_entry->metadata.user_logspace);
-        log_entry_proto.set_user_tag(log_entry->metadata.user_tag);
-        log_entry_proto.set_seqnum(log_entry->metadata.seqnum);
-        log_entry_proto.set_localid(log_entry->metadata.localid);
-        log_entry_proto.set_data(log_entry->data);
-        std::string data;
-        CHECK(log_entry_proto.SerializeToString(&data));
-        batch.Put(db_key, data);
-    }
-    auto status = db_->Write(rocksdb::WriteOptions(), &batch);
-    if (!status.ok()) {
-        LOG(FATAL) << "RocksDB write failed: " << status.ToString();
+    switch (db_backend_) {
+    case DBBackend::kRocksDB:
+        PutRocksDB(reinterpret_cast<rocksdb::DB*>(db_), log_entires);
+        break;
+    case DBBackend::kTkrzwHashDBM:
+        PutTkrzwDBM(reinterpret_cast<tkrzw::DBM*>(db_), log_entires);
+        break;
+    default:
+        UNREACHABLE();
     }
 }
 

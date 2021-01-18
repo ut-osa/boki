@@ -8,8 +8,6 @@
 #include "server/ingress_connection.h"
 #include "server/egress_hub.h"
 
-#include <rocksdb/db.h>
-
 namespace faas {
 namespace log {
 
@@ -53,8 +51,10 @@ private:
 
     ViewWatcher view_watcher_;
 
+    enum class DBBackend { kRocksDB, kTkrzwHashDBM };
+    DBBackend   db_backend_;
     std::string db_path_;
-    std::unique_ptr<rocksdb::DB> db_;
+    void*       db_;
 
     base::Thread background_thread_;
 
@@ -65,9 +65,14 @@ private:
     absl::flat_hash_map</* id */ int, std::unique_ptr<server::EgressHub>>
         egress_hubs_ ABSL_GUARDED_BY(conn_mu_);
 
-    void SetupRocksDB();
+    void SetupDB();
     void SetupZKWatchers();
     void SetupTimers();
+
+    void OpenRocksDB();
+    void CloseRocksDB();
+    void OpenTkrzwDBM();
+    void CloseTkrzwDBM();
 
     void StartInternal() override;
     void StopInternal() override;
