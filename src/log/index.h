@@ -53,7 +53,7 @@ private:
     QueryResultVec pending_query_results_;
 
     std::deque<std::pair</* metalog_seqnum */ uint32_t,
-                        /* end_seqnum */ uint32_t>> cuts_;
+                         /* end_seqnum */ uint32_t>> cuts_;
     uint32_t indexed_metalog_position_;
 
     struct IndexData {

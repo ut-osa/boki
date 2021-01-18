@@ -289,7 +289,8 @@ IndexQueryResult Index::BuildNotFoundResult(const IndexQuery& query) {
     // TODO: revisit this part
     return IndexQueryResult {
         .state = IndexQueryResult::kEmpty,
-        .original_query = query
+        .original_query = query,
+        .found_result = {}
     };
 }
 
