@@ -63,6 +63,7 @@ private:
     };
     std::map</* seqnum */ uint32_t, IndexData> received_data_;
     uint32_t data_received_seqnum_position_;
+    uint32_t indexed_seqnum_position_;
 
     void OnMetaLogApplied(const MetaLogProto& meta_log_proto) override;
     void AdvanceIndexProgress();

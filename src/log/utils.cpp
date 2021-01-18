@@ -13,7 +13,8 @@ using log::MetaLogProto;
 using log::MetaLogsProto;
 using protocol::SharedLogMessage;
 
-FutureRequests::FutureRequests() {}
+FutureRequests::FutureRequests()
+    : next_view_id_(0) {}
 
 FutureRequests::~FutureRequests() {}
 

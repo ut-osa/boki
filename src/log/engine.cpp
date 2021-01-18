@@ -313,6 +313,7 @@ void Engine::OnRecvNewIndexData(const SharedLogMessage& message,
 void Engine::OnRecvResponse(const SharedLogMessage& message,
                             std::span<const char> payload) {
     DCHECK(SharedLogMessageHelper::GetOpType(message) == SharedLogOpType::RESPONSE);
+    NOT_IMPLEMENTED();
 }
 
 void Engine::ProcessAppendResults(const LogProducer::AppendResultVec& results) {
@@ -326,7 +327,10 @@ void Engine::ProcessAppendResults(const LogProducer::AppendResultVec& results) {
 }
 
 void Engine::ProcessIndexQueryResults(const Index::QueryResultVec& results) {
-
+    if (results.empty()) {
+        return;
+    }
+    NOT_IMPLEMENTED();
 }
 
 void Engine::ProcessRequests(const std::vector<SharedLogRequest>& requests) {

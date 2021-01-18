@@ -6,7 +6,11 @@ namespace log {
 Index::Index(const View* view, uint16_t sequencer_id)
     : LogSpaceBase(LogSpaceBase::kFullMode, view, sequencer_id),
       indexed_metalog_position_(0),
-      data_received_seqnum_position_(0) {}
+      data_received_seqnum_position_(0),
+      indexed_seqnum_position_(0) {
+    log_header_ = fmt::format("LogIndex[{}-{}]: ", view->id(), sequencer_id);
+    state_ = kNormal;
+}
 
 Index::~Index() {}
 
@@ -135,6 +139,9 @@ void Index::ProvideIndexData(const IndexDataProto& index_data) {
     DCHECK_EQ(n, index_data.user_tags_size());
     for (int i = 0; i < n; i++) {
         uint32_t seqnum = index_data.seqnum_halves(i);
+        if (seqnum < indexed_seqnum_position_) {
+            continue;
+        }
         if (received_data_.count(seqnum) == 0) {
             received_data_[seqnum] = IndexData {
                 .engine_id     = gsl::narrow_cast<uint16_t>(index_data.engine_ids(i)),
@@ -160,7 +167,7 @@ void Index::ProvideIndexData(const IndexDataProto& index_data) {
 void Index::MakeQuery(const IndexQuery& query) {
     uint16_t view_id = bits::HighHalf32(bits::HighHalf64(query.metalog_progress));
     if (view_id > view_->id()) {
-        // TODO: think more carefully
+        // TODO: think more carefully for this case
         ProcessQuery(query);
     } else if (view_id < view_->id()) {
         ProcessQuery(query);
@@ -198,6 +205,8 @@ void Index::AdvanceIndexProgress() {
         if (data_received_seqnum_position_ < end_seqnum) {
             break;
         }
+        HVLOG(1) << fmt::format("Apply IndexData until seqnum {}",
+                                bits::HexStr0x(end_seqnum));
         auto iter = received_data_.begin();
         while (iter != received_data_.end()) {
             uint32_t seqnum = iter->first;
@@ -209,6 +218,8 @@ void Index::AdvanceIndexProgress() {
                 seqnum, index_data.engine_id, index_data.user_tag);
             iter = received_data_.erase(iter);
         }
+        DCHECK_GT(end_seqnum, indexed_seqnum_position_);
+        indexed_seqnum_position_ = end_seqnum;
         uint32_t metalog_seqnum = cuts_.front().first;
         indexed_metalog_position_ = metalog_seqnum + 1;
         cuts_.pop_front();
@@ -228,6 +239,7 @@ Index::PerSpaceIndex* Index::GetOrCreateIndex(uint32_t user_logspace) {
     if (index_.contains(user_logspace)) {
         return index_.at(user_logspace).get();
     }
+    HVLOG(1) << fmt::format("Create index of user logspace {}", user_logspace);
     PerSpaceIndex* index = new PerSpaceIndex(identifier(), user_logspace);
     index_[user_logspace].reset(index);
     return index;

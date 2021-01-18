@@ -117,16 +117,17 @@ void SequencerBase::PropagateMetaLog(const View* view, const MetaLogProto& metal
     switch (metalog.type()) {
     case MetaLogProto::NEW_LOGS:
         for (size_t i = 0; i < view->num_engine_nodes(); i++) {
+            uint16_t engine_id = view->GetEngineNodes().at(i);
+            const View::Engine* engine_node = view->GetEngineNode(engine_id);
             if (metalog.new_logs_proto().shard_deltas(i) > 0) {
-                uint16_t engine_id = view->GetEngineNodes().at(i);
                 engine_nodes.insert(engine_id);
-                const View::Engine* engine_node = view->GetEngineNode(engine_id);
                 for (uint16_t storage_id : engine_node->GetStorageNodes()) {
                     storage_nodes.insert(storage_id);
                 }
+            } else if (engine_node->HasIndexFor(my_node_id())) {
+                engine_nodes.insert(engine_id);
             }
         }
-        // TODO: add index engine nodes
         break;
     case MetaLogProto::TRIM:
         NOT_IMPLEMENTED();
