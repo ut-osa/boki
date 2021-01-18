@@ -91,6 +91,12 @@ cd $BASE_DIR/deps/zookeeper-client-c && autoreconf -if && \
               --without-syncapi --without-cppunit --without-openssl && \
   make -j$(nproc) install && make clean
 
+# Build tkrzw
+cd $BASE_DIR/deps/tkrzw && \
+  ./configure --prefix=${DEPS_INSTALL_PATH} --disable-shared \
+              --enable-debug=${ENABLE_DEBUG} && \
+  make -j$(nproc) install && make clean
+
 # Build rocksdb
 cd $BASE_DIR/deps/rocksdb && rm -rf build && mkdir -p build && cd build && \
   cmake -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DCMAKE_CXX_STANDARD=17 \

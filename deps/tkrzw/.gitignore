@@ -1,0 +1,15 @@
+/*.d
+/*.o
+/*.a
+
+/tkrzw.pc
+/Makefile
+/config.log
+/config.status
+/config.tmp
+
+/tkrzw_build_util
+/tkrzw_dbm_util
+/tkrzw_dbm_perf
+/tkrzw_file_perf
+/tkrzw_str_perf
