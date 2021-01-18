@@ -138,6 +138,24 @@ void StorageBase::PutLogEntriesToDB(const std::vector<const LogEntry*>& log_enti
     }
 }
 
+void StorageBase::SendIndexData(const View* view,
+                                const IndexDataProto& index_data_proto) {
+    uint32_t logspace_id = index_data_proto.logspace_id();
+    DCHECK_EQ(view->id(), bits::HighHalf32(logspace_id));
+    const View::Sequencer* sequencer_node = view->GetSequencerNode(
+        bits::LowHalf32(logspace_id));
+    std::string serialized_data;
+    CHECK(index_data_proto.SerializeToString(&serialized_data));
+    SharedLogMessage message = SharedLogMessageHelper::NewIndexDataMessage(
+        logspace_id);
+    message.origin_node_id = node_id_;
+    message.payload_size = serialized_data.size();
+    for (uint16_t engine_id : sequencer_node->GetIndexEngineNodes()) {
+        SendSharedLogMessage(protocol::ConnType::STORAGE_TO_ENGINE,
+                             engine_id, message, STRING_TO_SPAN(serialized_data));
+    }
+}
+
 bool StorageBase::SendSequencerMessage(uint16_t sequencer_id,
                                        SharedLogMessage* message,
                                        std::span<const char> payload) {

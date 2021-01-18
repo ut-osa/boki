@@ -104,7 +104,7 @@ public:
     typedef absl::InlinedVector<ReadResult, 4> ReadResultVec;
     void PollReadResults(ReadResultVec* results);
 
-    void PollIndexData(IndexDataProto* index_data);
+    bool PollIndexData(IndexDataProto* index_data);
 
     bool GrabShardProgressForSending(std::vector<uint32_t>* progress);
 

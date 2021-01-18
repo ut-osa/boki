@@ -2,6 +2,7 @@
 
 #include "log/engine_base.h"
 #include "log/log_space.h"
+#include "log/index.h"
 #include "log/utils.h"
 
 namespace faas {
@@ -27,6 +28,8 @@ private:
     std::vector<const View*> views_  ABSL_GUARDED_BY(view_mu_);
     LogSpaceCollection<LogProducer>
         producer_collection_         ABSL_GUARDED_BY(view_mu_);
+    LogSpaceCollection<Index>
+        index_collection_            ABSL_GUARDED_BY(view_mu_);
 
     absl::Mutex future_request_mu_   ABSL_ACQUIRED_AFTER(view_mu_);
     log_utils::FutureRequests
@@ -53,6 +56,7 @@ private:
                         std::span<const char> payload) override;
 
     void ProcessAppendResults(const LogProducer::AppendResultVec& results);
+    void ProcessIndexQueryResults(const Index::QueryResultVec& results);
     void ProcessRequests(const std::vector<SharedLogRequest>& requests);
 
     inline uint16_t GetLastViewId(LocalOp* op) {

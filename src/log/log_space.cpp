@@ -288,10 +288,14 @@ void LogStorage::PollReadResults(ReadResultVec* results) {
     pending_read_results_.clear();
 }
 
-void LogStorage::PollIndexData(IndexDataProto* data) {
+bool LogStorage::PollIndexData(IndexDataProto* data) {
+    if (index_data_.seqnum_halves_size() == 0) {
+        return false;
+    }
     data->Swap(&index_data_);
     index_data_.Clear();
     index_data_.set_logspace_id(identifier());
+    return true;
 }
 
 bool LogStorage::GrabShardProgressForSending(std::vector<uint32_t>* progress) {

@@ -56,13 +56,14 @@ void Storage::OnViewFinalized(const FinalizedView* finalized_view) {
     DCHECK(zk_session()->WithinMyEventLoopThread());
     HLOG(INFO) << fmt::format("View {} finalized", finalized_view->view()->id());
     LogStorage::ReadResultVec results;
+    std::vector<IndexDataProto> index_data_vec;
     {
         absl::MutexLock view_lk(&view_mu_);
         DCHECK_EQ(finalized_view->view()->id(), current_view_->id());
         storage_collection_.ForEachActiveLogSpace(
             finalized_view->view(),
-            [finalized_view, &results, this] (uint32_t logspace_id,
-                                              LockablePtr<LogStorage> storage_ptr) {
+            [&, finalized_view] (uint32_t logspace_id,
+                                 LockablePtr<LogStorage> storage_ptr) {
                 auto locked_storage = storage_ptr.Lock();
                 bool success = locked_storage->Finalize(
                     finalized_view->final_metalog_position(logspace_id),
@@ -74,6 +75,10 @@ void Storage::OnViewFinalized(const FinalizedView* finalized_view) {
                 LogStorage::ReadResultVec tmp;
                 locked_storage->PollReadResults(&tmp);
                 results.insert(results.end(), tmp.begin(), tmp.end());
+                IndexDataProto index_data;
+                if (locked_storage->PollIndexData(&index_data)) {
+                    index_data_vec.push_back(std::move(index_data));
+                }
             }
         );
     }
@@ -81,6 +86,16 @@ void Storage::OnViewFinalized(const FinalizedView* finalized_view) {
         SomeIOWorker()->ScheduleFunction(
             nullptr, [this, results = std::move(results)] {
                 ProcessReadResults(results);
+            }
+        );
+    }
+    if (!index_data_vec.empty()) {
+        SomeIOWorker()->ScheduleFunction(
+            nullptr, [this, view = finalized_view->view(),
+                      index_data_vec = std::move(index_data_vec)] {
+                for (const IndexDataProto& index_data : index_data_vec) {
+                    SendIndexData(view, index_data);
+                }
             }
         );
     }
@@ -163,11 +178,15 @@ void Storage::OnRecvNewMetaLogs(const SharedLogMessage& message,
     DCHECK(SharedLogMessageHelper::GetOpType(message) == SharedLogOpType::METALOGS);
     MetaLogsProto metalogs_proto = log_utils::MetaLogsFromPayload(payload);
     DCHECK_EQ(metalogs_proto.logspace_id(), message.logspace_id);
+    const View* view = nullptr;
     LogStorage::ReadResultVec results;
+    IndexDataProto index_data;
+    bool has_index_data = false;
     {
         absl::ReaderMutexLock view_lk(&view_mu_);
         ONHOLD_IF_FROM_FUTURE_VIEW(message, payload);
         IGNORE_IF_FROM_PAST_VIEW(message);
+        view = current_view_;
         auto storage_ptr = storage_collection_.GetLogSpaceChecked(message.logspace_id);
         {
             auto locked_storage = storage_ptr.Lock();
@@ -176,9 +195,13 @@ void Storage::OnRecvNewMetaLogs(const SharedLogMessage& message,
                 locked_storage->ProvideMetaLog(metalog_proto);
             }
             locked_storage->PollReadResults(&results);
+            has_index_data = locked_storage->PollIndexData(&index_data);
         }
     }
     ProcessReadResults(results);
+    if (has_index_data) {
+        SendIndexData(DCHECK_NOTNULL(view), index_data);
+    }
 }
 
 #undef ONHOLD_IF_FROM_FUTURE_VIEW

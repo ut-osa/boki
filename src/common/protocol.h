@@ -606,6 +606,13 @@ public:
         return message;
     }
 
+    static SharedLogMessage NewIndexDataMessage(uint32_t logspace_id) {
+        NEW_EMPTY_SHAREDLOG_MESSAGE(message);
+        message.op_type = static_cast<uint16_t>(SharedLogOpType::INDEX_DATA);
+        message.logspace_id = logspace_id;
+        return message;
+    }
+
     static SharedLogMessage NewResponse(SharedLogResultType result) {
         NEW_EMPTY_SHAREDLOG_MESSAGE(message);
         message.op_type = static_cast<uint16_t>(SharedLogOpType::RESPONSE);

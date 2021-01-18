@@ -195,7 +195,6 @@ void EngineBase::OnRecvSharedLogMessage(int conn_type, uint16_t src_node_id,
         (conn_type == kSequencerIngressTypeId && op_type == SharedLogOpType::METALOGS)
      || (conn_type == kEngineIngressTypeId && op_type == SharedLogOpType::READ_NEXT)
      || (conn_type == kEngineIngressTypeId && op_type == SharedLogOpType::READ_PREV)
-     || (conn_type == kEngineIngressTypeId && op_type == SharedLogOpType::INDEX_DATA)
      || (conn_type == kStorageIngressTypeId && op_type == SharedLogOpType::INDEX_DATA)
      || op_type == SharedLogOpType::RESPONSE
     ) << fmt::format("Invalid combination: conn_type={:#x}, op_type={:#x}",

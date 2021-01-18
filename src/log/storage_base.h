@@ -40,6 +40,7 @@ protected:
     bool GetLogEntryFromDB(uint64_t seqnum, LogEntryProto* log_entry_proto);
     void PutLogEntriesToDB(const std::vector<const LogEntry*>& log_entires);
 
+    void SendIndexData(const View* view, const IndexDataProto& index_data_proto);
     bool SendSequencerMessage(uint16_t sequencer_id,
                               protocol::SharedLogMessage* message,
                               std::span<const char> payload);

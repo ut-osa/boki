@@ -135,11 +135,21 @@ void Index::ProvideIndexData(const IndexDataProto& index_data) {
     DCHECK_EQ(n, index_data.user_tags_size());
     for (int i = 0; i < n; i++) {
         uint32_t seqnum = index_data.seqnum_halves(i);
-        received_data_[seqnum] = IndexData {
-            .engine_id     = gsl::narrow_cast<uint16_t>(index_data.engine_ids(i)),
-            .user_logspace = index_data.user_logspaces(i),
-            .user_tag      = index_data.user_tags(i)
-        };
+        if (received_data_.count(seqnum) == 0) {
+            received_data_[seqnum] = IndexData {
+                .engine_id     = gsl::narrow_cast<uint16_t>(index_data.engine_ids(i)),
+                .user_logspace = index_data.user_logspaces(i),
+                .user_tag      = index_data.user_tags(i)
+            };
+        } else {
+#if DCHECK_IS_ON()
+            const IndexData& data = received_data_[seqnum];
+            DCHECK_EQ(data.engine_id,
+                      gsl::narrow_cast<uint16_t>(index_data.engine_ids(i)));
+            DCHECK_EQ(data.user_logspace, index_data.user_logspaces(i));
+            DCHECK_EQ(data.user_tag, index_data.user_tags(i));
+#endif
+        }
     }
     while (received_data_.count(data_received_seqnum_position_) > 0) {
         data_received_seqnum_position_++;

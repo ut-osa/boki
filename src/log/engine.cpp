@@ -33,9 +33,14 @@ void Engine::OnViewCreated(const View* view) {
     {
         absl::MutexLock view_lk(&view_mu_);
         if (contains_myself) {
+            const View::Engine* engine_node = view->GetEngineNode(my_node_id());
             for (uint16_t sequencer_id : view->GetSequencerNodes()) {
                 producer_collection_.InstallLogSpace(std::make_unique<LogProducer>(
                     my_node_id(), view, sequencer_id));
+                if (engine_node->HasIndexFor(sequencer_id)) {
+                    index_collection_.InstallLogSpace(std::make_unique<Index>(
+                        view, sequencer_id));
+                }
             }
         }
         {
@@ -95,14 +100,15 @@ void Engine::OnViewFrozen(const View* view) {
 void Engine::OnViewFinalized(const FinalizedView* finalized_view) {
     DCHECK(zk_session()->WithinMyEventLoopThread());
     HLOG(INFO) << fmt::format("View {} finalized", finalized_view->view()->id());
-    LogProducer::AppendResultVec results;
+    LogProducer::AppendResultVec append_results;
+    Index::QueryResultVec query_results;
     {
         absl::MutexLock view_lk(&view_mu_);
         DCHECK_EQ(finalized_view->view()->id(), current_view_->id());
         producer_collection_.ForEachActiveLogSpace(
             finalized_view->view(),
-            [finalized_view, &results, this] (uint32_t logspace_id,
-                                              LockablePtr<LogProducer> producer_ptr) {
+            [finalized_view, &append_results, this] (uint32_t logspace_id,
+                                                     LockablePtr<LogProducer> producer_ptr) {
                 auto locked_producer = producer_ptr.Lock();
                 bool success = locked_producer->Finalize(
                     finalized_view->final_metalog_position(logspace_id),
@@ -113,13 +119,13 @@ void Engine::OnViewFinalized(const FinalizedView* finalized_view) {
                 }
                 LogProducer::AppendResultVec tmp;
                 locked_producer->PollAppendResults(&tmp);
-                results.insert(results.end(), tmp.begin(), tmp.end());
+                append_results.insert(append_results.end(), tmp.begin(), tmp.end());
             }
         );
-        if (!results.empty()) {
+        if (!append_results.empty()) {
             absl::MutexLock pending_appends_lk(&pending_appends_mu_);
             LogProducer::AppendResultVec tmp;
-            for (const LogProducer::AppendResult& result : results) {
+            for (const LogProducer::AppendResult& result : append_results) {
                 if (result.seqnum == kInvalidLogSeqNum) {
                     LocalOp* op = reinterpret_cast<LocalOp*>(result.caller_data);
                     DCHECK(pending_appends_.count(op->id) == 0);
@@ -128,10 +134,28 @@ void Engine::OnViewFinalized(const FinalizedView* finalized_view) {
                     tmp.push_back(result);
                 }
             }
-            results = std::move(tmp);
+            append_results = std::move(tmp);
         }
+        index_collection_.ForEachActiveLogSpace(
+            finalized_view->view(),
+            [finalized_view, &query_results, this] (uint32_t logspace_id,
+                                                    LockablePtr<Index> index_ptr) {
+                auto locked_index = index_ptr.Lock();
+                bool success = locked_index->Finalize(
+                    finalized_view->final_metalog_position(logspace_id),
+                    finalized_view->tail_metalogs(logspace_id));
+                if (!success) {
+                    HLOG(FATAL) << fmt::format("Failed to finalize log space {}",
+                                                bits::HexStr0x(logspace_id));
+                }
+                Index::QueryResultVec tmp;
+                locked_index->PollQueryResults(&tmp);
+                query_results.insert(query_results.end(), tmp.begin(), tmp.end());
+            }
+        );
     }
-    ProcessAppendResults(results);
+    ProcessAppendResults(append_results);
+    ProcessIndexQueryResults(query_results);
 }
 
 // Start handlers for local requests (from functions)
@@ -223,7 +247,8 @@ void Engine::OnRecvNewMetaLogs(const SharedLogMessage& message,
     DCHECK(SharedLogMessageHelper::GetOpType(message) == SharedLogOpType::METALOGS);
     MetaLogsProto metalogs_proto = log_utils::MetaLogsFromPayload(payload);
     DCHECK_EQ(metalogs_proto.logspace_id(), message.logspace_id);
-    LogProducer::AppendResultVec results;
+    LogProducer::AppendResultVec append_results;
+    Index::QueryResultVec query_results;
     {
         absl::ReaderMutexLock view_lk(&view_mu_);
         ONHOLD_IF_FROM_FUTURE_VIEW(message, payload);
@@ -234,16 +259,52 @@ void Engine::OnRecvNewMetaLogs(const SharedLogMessage& message,
             for (const MetaLogProto& metalog_proto : metalogs_proto.metalogs()) {
                 locked_producer->ProvideMetaLog(metalog_proto);
             }
-            locked_producer->PollAppendResults(&results);
+            locked_producer->PollAppendResults(&append_results);
+        }
+        if (current_view_->GetEngineNode(my_node_id())->HasIndexFor(message.sequencer_id)) {
+            auto index_ptr = index_collection_.GetLogSpaceChecked(message.logspace_id);
+            {
+                auto locked_index = index_ptr.Lock();
+                for (const MetaLogProto& metalog_proto : metalogs_proto.metalogs()) {
+                    locked_index->ProvideMetaLog(metalog_proto);
+                }
+                locked_index->PollQueryResults(&query_results);
+            }
         }
     }
-    ProcessAppendResults(results);
+    ProcessAppendResults(append_results);
+    ProcessIndexQueryResults(query_results);
 }
 
 void Engine::OnRecvNewIndexData(const SharedLogMessage& message,
                                 std::span<const char> payload) {
     DCHECK(SharedLogMessageHelper::GetOpType(message) == SharedLogOpType::INDEX_DATA);
-    NOT_IMPLEMENTED();
+    IndexDataProto index_data_proto;
+    if (!index_data_proto.ParseFromArray(payload.data(), payload.size())) {
+        LOG(FATAL) << "Failed to parse IndexDataProto";
+    }
+    Index::QueryResultVec query_results;
+    {
+        absl::ReaderMutexLock view_lk(&view_mu_);
+        ONHOLD_IF_FROM_FUTURE_VIEW(message, payload);
+        DCHECK(message.view_id < views_.size());
+        const View* view = views_.at(message.view_id);
+        if (!view->contains_engine_node(my_node_id())) {
+            HLOG(FATAL) << fmt::format("View {} does not contain myself", view->id());
+        }
+        const View::Engine* engine_node = view->GetEngineNode(my_node_id());
+        if (!engine_node->HasIndexFor(message.sequencer_id)) {
+            HLOG(FATAL) << fmt::format("This node is not index node for log space {}",
+                                       bits::HexStr0x(message.logspace_id));
+        }
+        auto index_ptr = index_collection_.GetLogSpaceChecked(message.logspace_id);
+        {
+            auto locked_index = index_ptr.Lock();
+            locked_index->ProvideIndexData(index_data_proto);
+            locked_index->PollQueryResults(&query_results);
+        }
+    }
+    ProcessIndexQueryResults(query_results);
 }
 
 #undef ONHOLD_IF_FROM_FUTURE_VIEW
@@ -262,6 +323,10 @@ void Engine::ProcessAppendResults(const LogProducer::AppendResultVec& results) {
             SharedLogResultType::APPEND_OK, result.seqnum);
         FinishLocalOpWithResponse(op, &response, result.metalog_progress);
     }
+}
+
+void Engine::ProcessIndexQueryResults(const Index::QueryResultVec& results) {
+
 }
 
 void Engine::ProcessRequests(const std::vector<SharedLogRequest>& requests) {
