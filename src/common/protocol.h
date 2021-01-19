@@ -415,67 +415,6 @@ public:
         return message;
     }
 
-    // static Message NewSharedLogAppend(uint64_t log_tag, uint64_t log_client_data) {
-    //     NEW_EMPTY_MESSAGE(message);
-    //     message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
-    //     message.log_op = static_cast<uint16_t>(SharedLogOpType::APPEND);
-    //     message.log_tag = log_tag;
-    //     message.log_fsm_progress = 0;
-    //     message.log_client_data = log_client_data;
-    //     return message;
-    // }
-
-    // static Message NewSharedLogReadAt(uint64_t log_seqnum, uint32_t log_fsm_progress,
-    //                                   uint64_t log_client_data) {
-    //     NEW_EMPTY_MESSAGE(message);
-    //     message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
-    //     message.log_op = static_cast<uint16_t>(SharedLogOpType::READ_AT);
-    //     message.log_seqnum = log_seqnum;
-    //     message.log_fsm_progress = log_fsm_progress;
-    //     message.log_client_data = log_client_data;
-    //     return message;
-    // }
-
-    // static Message NewSharedLogRead(uint64_t log_tag, uint64_t log_seqnum, int direction,
-    //                                 uint32_t log_fsm_progress, uint64_t log_client_data) {
-    //     NEW_EMPTY_MESSAGE(message);
-    //     message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
-    //     if (direction > 0) {
-    //         message.log_op = static_cast<uint16_t>(SharedLogOpType::READ_NEXT);
-    //     } else {
-    //         DCHECK(direction < 0);
-    //         message.log_op = static_cast<uint16_t>(SharedLogOpType::READ_PREV);
-    //     }
-    //     message.log_tag = log_tag;
-    //     message.log_seqnum = log_seqnum;
-    //     message.log_fsm_progress = log_fsm_progress;
-    //     message.log_client_data = log_client_data;
-    //     return message;
-    // }
-
-    // static Message NewSharedLogReplicate(uint64_t log_tag, uint64_t log_localid) {
-    //     NEW_EMPTY_MESSAGE(message);
-    //     message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
-    //     message.log_op = static_cast<uint16_t>(SharedLogOpType::REPLICATE);
-    //     message.log_tag = log_tag;
-    //     message.log_localid = log_localid;
-    //     message.log_fsm_progress = 0;
-    //     return message;
-    // }
-
-    // static Message NewSharedLogIndexData(uint64_t start_seqnum,
-    //                                      std::span<const uint64_t> tags) {
-    //     if (tags.size() * sizeof(uint64_t) > MESSAGE_INLINE_DATA_SIZE) {
-    //         LOG(FATAL) << "Well, the unexpected thing happens";
-    //     }
-    //     NEW_EMPTY_MESSAGE(message);
-    //     message.message_type = static_cast<uint16_t>(MessageType::SHARED_LOG_OP);
-    //     message.log_op = static_cast<uint16_t>(SharedLogOpType::INDEX_DATA);
-    //     message.log_seqnum = start_seqnum;
-    //     SetInlineData(&message, tags);
-    //     return message;
-    // }
-
     static Message NewSharedLogOpSucceeded(SharedLogResultType result,
                                            uint64_t log_seqnum = kInvalidLogSeqNum) {
         NEW_EMPTY_MESSAGE(message);
@@ -610,6 +549,14 @@ public:
         NEW_EMPTY_SHAREDLOG_MESSAGE(message);
         message.op_type = static_cast<uint16_t>(SharedLogOpType::INDEX_DATA);
         message.logspace_id = logspace_id;
+        return message;
+    }
+
+    static SharedLogMessage NewReadAtMessage(uint32_t logspace_id, uint32_t seqnum_lowhalf) {
+        NEW_EMPTY_SHAREDLOG_MESSAGE(message);
+        message.op_type = static_cast<uint16_t>(SharedLogOpType::READ_AT);
+        message.logspace_id = logspace_id;
+        message.seqnum_lowhalf = seqnum_lowhalf;
         return message;
     }
 

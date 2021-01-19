@@ -9,6 +9,7 @@ struct IndexQuery {
     enum ReadDirection { kReadNext, kReadPrev };
     ReadDirection direction;
     uint16_t origin_node_id;
+    uint16_t hop_times;
     uint64_t client_data;
 
     uint32_t user_logspace;
@@ -20,13 +21,13 @@ struct IndexQuery {
 struct IndexFoundResult {
     const View::Engine* engine_node;
     uint64_t seqnum;
-    uint64_t metalog_progress;
 };
 
 struct IndexQueryResult {
     enum State { kFound, kEmpty, kContinue };
     State state;
 
+    uint64_t metalog_progress;
     IndexQuery original_query;
     IndexFoundResult found_result;
 };

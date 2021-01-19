@@ -4,6 +4,7 @@
 #include "log/common.h"
 #include "log/view.h"
 #include "log/view_watcher.h"
+#include "log/index.h"
 #include "server/io_worker.h"
 #include "utils/object_pool.h"
 #include "utils/appendable_buffer.h"
@@ -79,9 +80,10 @@ protected:
 
     void FinishLocalOpWithResponse(LocalOp* op, protocol::Message* response,
                                    uint64_t metalog_progress);
-    void FinishLocalOpWithFailure(LocalOp* op, protocol::SharedLogResultType result);
+    void FinishLocalOpWithFailure(LocalOp* op, protocol::SharedLogResultType result,
+                                  uint64_t metalog_progress = 0);
 
-    bool SendReadRequest(uint16_t engine_id, protocol::SharedLogMessage* message);
+    bool SendReadRequest(const IndexQueryResult& result);
     bool SendSequencerMessage(uint16_t sequencer_id,
                               protocol::SharedLogMessage* message,
                               std::span<const char> payload = EMPTY_CHAR_SPAN);

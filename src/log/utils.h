@@ -84,6 +84,7 @@ bool ThreadedMap<T>::Poll(uint64_t key, T** value) {
     if (rep_.contains(key)) {
         *value = rep_.at(key);
         rep_.erase(key);
+        return true;
     } else {
         return false;
     }

@@ -195,8 +195,8 @@ void Engine::HandleLocalTrim(LocalOp* op) {
 }
 
 void Engine::HandleLocalRead(LocalOp* op) {
-    DCHECK(op->type == SharedLogOpType::READ_NEXT
-             || op->type == SharedLogOpType::READ_PREV);
+    DCHECK(  op->type == SharedLogOpType::READ_NEXT
+          || op->type == SharedLogOpType::READ_PREV);
     int direction = (op->type == SharedLogOpType::READ_NEXT) ? 1 : -1;
     HVLOG(1) << fmt::format("Handle local read: op_id={}, logspace={}, tag={}, direction={}",
                             op->id, op->user_logspace, op->user_tag, direction);
@@ -222,6 +222,7 @@ void Engine::HandleLocalRead(LocalOp* op) {
         IndexQuery query = {
             .direction = (direction > 0) ? IndexQuery::kReadNext : IndexQuery::kReadPrev,
             .origin_node_id = my_node_id(),
+            .hop_times = 0,
             .client_data = op->id,
             .user_logspace = op->user_logspace,
             .user_tag = op->user_tag,
@@ -265,8 +266,8 @@ void Engine::HandleLocalRead(LocalOp* op) {
 
 void Engine::HandleRemoteRead(const SharedLogMessage& request) {
     SharedLogOpType op_type = SharedLogMessageHelper::GetOpType(request);
-    DCHECK(op_type == SharedLogOpType::READ_NEXT
-             || op_type == SharedLogOpType::READ_PREV);
+    DCHECK(  op_type == SharedLogOpType::READ_NEXT
+          || op_type == SharedLogOpType::READ_PREV);
     NOT_IMPLEMENTED();
 }
 
@@ -341,7 +342,37 @@ void Engine::OnRecvNewIndexData(const SharedLogMessage& message,
 void Engine::OnRecvResponse(const SharedLogMessage& message,
                             std::span<const char> payload) {
     DCHECK(SharedLogMessageHelper::GetOpType(message) == SharedLogOpType::RESPONSE);
-    NOT_IMPLEMENTED();
+    SharedLogResultType result = SharedLogMessageHelper::GetResultType(message);
+    if (    result == SharedLogResultType::READ_OK
+         || result == SharedLogResultType::EMPTY
+         || result == SharedLogResultType::DATA_LOST) {
+        uint64_t op_id = message.client_data;
+        LocalOp* op;
+        if (!onging_reads_.Poll(op_id, &op)) {
+            HLOG(WARNING) << fmt::format("Cannot find read op with id {}", op_id);
+            return;
+        }
+        if (result == SharedLogResultType::READ_OK) {
+            uint64_t seqnum = bits::JoinTwo32(message.logspace_id, message.seqnum_lowhalf);
+            Message response = MessageHelper::NewSharedLogOpSucceeded(
+                SharedLogResultType::READ_OK, seqnum);
+            response.log_tag = message.user_tag;
+            if (payload.size() > MESSAGE_INLINE_DATA_SIZE) {
+                HLOG(FATAL) << fmt::format("Log data too large: size={}", payload.size());
+            }
+            MessageHelper::SetInlineData(&response, payload);
+            FinishLocalOpWithResponse(op, &response, message.user_metalog_progress);
+        } else if (result == SharedLogResultType::EMPTY) {
+            FinishLocalOpWithFailure(
+                op, SharedLogResultType::EMPTY, message.user_metalog_progress);
+        } else if (result == SharedLogResultType::DATA_LOST) {
+            FinishLocalOpWithFailure(op, SharedLogResultType::DATA_LOST);
+        } else {
+            UNREACHABLE();
+        }
+    } else {
+        HLOG(FATAL) << "Unknown result type: " << message.op_result;
+    }
 }
 
 void Engine::ProcessAppendResults(const LogProducer::AppendResultVec& results) {
@@ -363,11 +394,15 @@ void Engine::ProcessIndexQueryResults(const Index::QueryResultVec& results) {
         uint64_t op_id = query.client_data;
         switch (result.state) {
         case IndexQueryResult::kFound:
-            NOT_IMPLEMENTED();
+            if (!SendReadRequest(result)) {
+                LocalOp* op = onging_reads_.PollChecked(op_id);
+                FinishLocalOpWithFailure(op, SharedLogResultType::DATA_LOST);
+            }
             break;
         case IndexQueryResult::kEmpty:
             FinishLocalOpWithFailure(
-                onging_reads_.PollChecked(op_id), SharedLogResultType::EMPTY);
+                onging_reads_.PollChecked(op_id), SharedLogResultType::EMPTY,
+                result.metalog_progress);
             break;
         case IndexQueryResult::kContinue:
             NOT_IMPLEMENTED();

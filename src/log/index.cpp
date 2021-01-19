@@ -275,11 +275,11 @@ IndexQueryResult Index::BuildFoundResult(const IndexQuery& query,
                                          uint64_t seqnum, uint16_t engine_id) {
     IndexFoundResult found_result = {
         .engine_node = view_->GetEngineNode(engine_id),
-        .seqnum = seqnum,
-        .metalog_progress = indexed_metalog_position_
+        .seqnum = seqnum
     };
     return IndexQueryResult {
         .state = IndexQueryResult::kFound,
+        .metalog_progress = indexed_metalog_position_,
         .original_query = query,
         .found_result = std::move(found_result)
     };
@@ -289,6 +289,7 @@ IndexQueryResult Index::BuildNotFoundResult(const IndexQuery& query) {
     // TODO: revisit this part
     return IndexQueryResult {
         .state = IndexQueryResult::kEmpty,
+        .metalog_progress = indexed_metalog_position_,
         .original_query = query,
         .found_result = {}
     };

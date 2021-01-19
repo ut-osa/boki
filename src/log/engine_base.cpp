@@ -231,13 +231,33 @@ void EngineBase::FinishLocalOpWithResponse(LocalOp* op, Message* response,
     log_op_pool_.Return(op);
 }
 
-void EngineBase::FinishLocalOpWithFailure(LocalOp* op, SharedLogResultType result) {
+void EngineBase::FinishLocalOpWithFailure(LocalOp* op, SharedLogResultType result,
+                                          uint64_t metalog_progress) {
     Message response = MessageHelper::NewSharedLogOpFailed(result);
-    FinishLocalOpWithResponse(op, &response, /* metalog_progress= */ 0);
+    FinishLocalOpWithResponse(op, &response, metalog_progress);
 }
 
-bool EngineBase::SendReadRequest(uint16_t engine_id, SharedLogMessage* message) {
-    NOT_IMPLEMENTED();
+bool EngineBase::SendReadRequest(const IndexQueryResult& result) {
+    static constexpr int kMaxRetries = 3;
+    DCHECK(result.state == IndexQueryResult::kFound);
+
+    uint64_t seqnum = result.found_result.seqnum;
+    SharedLogMessage request = SharedLogMessageHelper::NewReadAtMessage(
+        bits::HighHalf64(seqnum), bits::LowHalf64(seqnum));
+    request.user_metalog_progress = result.metalog_progress;
+    request.origin_node_id = result.original_query.origin_node_id;
+    request.hop_times = result.original_query.hop_times + 1;
+    request.client_data = result.original_query.client_data;
+    for (int i = 0; i < kMaxRetries; i++) {
+        uint16_t storage_id = result.found_result.engine_node->PickStorageNode();
+        bool success = engine_->SendSharedLogMessage(
+            protocol::ConnType::ENGINE_TO_STORAGE, storage_id,
+            request, /* payload= */ EMPTY_CHAR_SPAN);
+        if (success) {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool EngineBase::SendSequencerMessage(uint16_t sequencer_id,
