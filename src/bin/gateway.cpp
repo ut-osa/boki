@@ -11,7 +11,7 @@ ABSL_FLAG(std::string, func_config_file, "", "Path to function config file");
 namespace faas {
 
 static std::atomic<server::ServerBase*> server_ptr{nullptr};
-static void SignalHandlerToStopServer(int signal) {
+static void StopServerHandler() {
     server::ServerBase* server = server_ptr.exchange(nullptr);
     if (server != nullptr) {
         server->ScheduleStop();
@@ -19,8 +19,8 @@ static void SignalHandlerToStopServer(int signal) {
 }
 
 void GatewayMain(int argc, char* argv[]) {
-    signal(SIGINT, SignalHandlerToStopServer);
     base::InitMain(argc, argv);
+    base::SetInterruptHandler(StopServerHandler);
 
     auto server = std::make_unique<gateway::Server>();
     server->set_http_port(absl::GetFlag(FLAGS_http_port));

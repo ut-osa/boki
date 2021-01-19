@@ -11,7 +11,7 @@ ABSL_FLAG(int, node_id, -1,
 namespace faas {
 
 static std::atomic<server::ServerBase*> server_ptr{nullptr};
-static void SignalHandlerToStopServer(int signal) {
+static void StopServerHandler() {
     server::ServerBase* server = server_ptr.exchange(nullptr);
     if (server != nullptr) {
         server->ScheduleStop();
@@ -19,8 +19,8 @@ static void SignalHandlerToStopServer(int signal) {
 }
 
 void SequencerMain(int argc, char* argv[]) {
-    signal(SIGINT, SignalHandlerToStopServer);
     base::InitMain(argc, argv);
+    base::SetInterruptHandler(StopServerHandler);
 
     int node_id = absl::GetFlag(FLAGS_node_id);
     if (node_id == -1) {

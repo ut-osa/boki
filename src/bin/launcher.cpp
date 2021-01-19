@@ -21,7 +21,7 @@ ABSL_FLAG(int, engine_tcp_port, -1, "If set, will connect to engine via localhos
 namespace faas {
 
 static std::atomic<launcher::Launcher*> launcher_ptr{nullptr};
-static void SignalHandlerToStopLauncher(int signal) {
+static void StopLauncherHandler() {
     launcher::Launcher* launcher = launcher_ptr.exchange(nullptr);
     if (launcher != nullptr) {
         launcher->ScheduleStop();
@@ -29,8 +29,8 @@ static void SignalHandlerToStopLauncher(int signal) {
 }
 
 void LauncherMain(int argc, char* argv[]) {
-    signal(SIGINT, SignalHandlerToStopLauncher);
     base::InitMain(argc, argv);
+    base::SetInterruptHandler(StopLauncherHandler);
     ipc::SetRootPathForIpc(absl::GetFlag(FLAGS_root_path_for_ipc));
 
     auto launcher = std::make_unique<launcher::Launcher>();

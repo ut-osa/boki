@@ -12,7 +12,7 @@ ABSL_FLAG(size_t, index_replicas, 3, "Replicas for log index");
 namespace faas {
 
 static std::atomic<log::Controller*> controller_ptr{nullptr};
-static void SignalHandlerToStopController(int signal) {
+static void StopControllerHandler() {
     log::Controller* controller = controller_ptr.exchange(nullptr);
     if (controller != nullptr) {
         controller->ScheduleStop();
@@ -20,8 +20,8 @@ static void SignalHandlerToStopController(int signal) {
 }
 
 void ControllerMain(int argc, char* argv[]) {
-    signal(SIGINT, SignalHandlerToStopController);
     base::InitMain(argc, argv);
+    base::SetInterruptHandler(StopControllerHandler);
 
     auto controller = std::make_unique<log::Controller>();
 

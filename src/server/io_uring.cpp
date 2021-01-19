@@ -1,5 +1,6 @@
 #include "server/io_uring.h"
 
+#include "base/init.h"
 #include "common/time.h"
 
 #include <absl/flags/flag.h>
@@ -60,6 +61,7 @@ IOUring::IOUring()
             << "io_uring_cq_nr_wait should be set to 1 if timeout is 0";
     }
     size_t n_fd_slots = absl::GetFlag(FLAGS_io_uring_fd_slots);
+    CHECK_GT(n_fd_slots, 0U);
     std::vector<int> tmp;
     tmp.resize(n_fd_slots, -1);
     ret = io_uring_register_files(&ring_, tmp.data(), n_fd_slots);
@@ -68,13 +70,29 @@ IOUring::IOUring()
     }
     HLOG(INFO) << fmt::format("register {} fd slots", n_fd_slots);
     fds_.resize(n_fd_slots);
-    for (int i = n_fd_slots - 1; i >= 0; i--) {
+    free_fd_slots_.reserve(n_fd_slots);
+    for (size_t i = 0; i < n_fd_slots; i++) {
+        fds_[i].fd = -1;
         free_fd_slots_.push_back(i);
     }
+    absl::c_reverse(free_fd_slots_);
+    base::ChainCleanupFn(absl::bind_front(&IOUring::CleanUpFn, this));
 }
 
 IOUring::~IOUring() {
     CHECK(ops_.empty()) << "There are still inflight Ops";
+    io_uring_queue_exit(&ring_);
+}
+
+void IOUring::CleanUpFn() {
+    size_t n_fd_slots = fds_.size();
+    for (size_t i = 0; i < n_fd_slots; i++) {
+        int fd = fds_[i].fd;
+        if (fd != -1) {
+            close(fd);
+        }
+    }
+    io_uring_unregister_files(&ring_);
     io_uring_queue_exit(&ring_);
 }
 
@@ -404,6 +422,7 @@ void IOUring::UnregisterFd(Descriptor* desc) {
     if (ret < 0) {
         LOG(FATAL) << "io_uring_register_files_update failed: " << ERRNO_LOGSTR(-ret);
     }
+    fds_[index].fd = -1;
     free_fd_slots_.push_back(index);
     fd_indices_.erase(fd);
     HLOG(INFO) << fmt::format("unregister fd {}, {} registered fds in total",

@@ -22,7 +22,7 @@ ABSL_FLAG(bool, enable_shared_log, false, "If to enable shared log.");
 namespace faas {
 
 static std::atomic<server::ServerBase*> server_ptr{nullptr};
-static void SignalHandlerToStopServer(int signal) {
+static void StopServerHandler() {
     server::ServerBase* server = server_ptr.exchange(nullptr);
     if (server != nullptr) {
         server->ScheduleStop();
@@ -40,8 +40,8 @@ static uint16_t GenerateNodeId() {
 }
 
 void EngineMain(int argc, char* argv[]) {
-    signal(SIGINT, SignalHandlerToStopServer);
     base::InitMain(argc, argv);
+    base::SetInterruptHandler(StopServerHandler);
     ipc::SetRootPathForIpc(absl::GetFlag(FLAGS_root_path_for_ipc), /* create= */ true);
 
     std::string cgroup_fs_root(utils::GetEnvVariable("FAAS_CGROUP_FS_ROOT", ""));
