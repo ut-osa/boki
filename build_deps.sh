@@ -95,7 +95,7 @@ cd $BASE_DIR/deps/zookeeper-client-c && autoreconf -if && \
 cd $BASE_DIR/deps/tkrzw && \
   ./configure --prefix=${DEPS_INSTALL_PATH} --disable-shared \
               --enable-debug=${ENABLE_DEBUG} && \
-  make -j$(nproc) install && make clean
+  make -j$(nproc) && make install && make clean
 
 # Build rocksdb
 cd $BASE_DIR/deps/rocksdb && rm -rf build && mkdir -p build && cd build && \

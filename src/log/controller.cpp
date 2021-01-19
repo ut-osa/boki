@@ -139,6 +139,12 @@ void Controller::StartCommandHandler() {
         view_proto.add_storage_nodes(node_id);
     }
 
+    HLOG(INFO) << fmt::format("Create initial view with {} sequencers, {} engines, "
+                              "and {} storages",
+                              view_proto.sequencer_nodes_size(),
+                              view_proto.engine_nodes_size(),
+                              view_proto.storage_nodes_size());
+
     // Now all maps to the first sequencer
     // TODO: implement hashing properly
     view_proto.set_log_space_hash_seed(0);

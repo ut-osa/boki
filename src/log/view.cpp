@@ -52,7 +52,7 @@ View::View(const ViewProto& view_proto)
         for (size_t j = 0; j < index_replicas_; j++) {
             uint16_t engine_node_id = gsl::narrow_cast<uint16_t>(
                 view_proto.index_plan(i * index_replicas_ + j));
-            DCHECK(sequencer_node_id_set.contains(engine_node_id));
+            DCHECK(engine_node_id_set.contains(engine_node_id));
             index_engine_nodes[sequencer_node_id].push_back(engine_node_id);
             index_sequencer_nodes[engine_node_id].push_back(sequencer_node_id);
         }
