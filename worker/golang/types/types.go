@@ -6,6 +6,7 @@ import (
 
 type LogEntry struct {
 	SeqNum uint64
+	Tag    uint64
 	Data   []byte
 }
 

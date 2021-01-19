@@ -108,6 +108,10 @@ func GetLogSeqNumFromMessage(buffer []byte) uint64 {
 	return binary.LittleEndian.Uint64(buffer[8:16])
 }
 
+func GetLogTagFromMessage(buffer []byte) uint64 {
+	return binary.LittleEndian.Uint64(buffer[40:48])
+}
+
 func GetLogClientDataFromMessage(buffer []byte) uint64 {
 	return binary.LittleEndian.Uint64(buffer[48:56])
 }

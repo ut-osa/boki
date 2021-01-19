@@ -556,6 +556,7 @@ func (w *FuncWorker) sharedLogReadCommon(message []byte, opId uint64) (*types.Lo
 	if result == protocol.SharedLogResultType_READ_OK {
 		logEntry := types.LogEntry{
 			SeqNum: protocol.GetLogSeqNumFromMessage(response),
+			Tag:    protocol.GetLogTagFromMessage(response),
 			Data:   protocol.GetInlineDataFromMessage(response),
 		}
 		return &logEntry, nil
