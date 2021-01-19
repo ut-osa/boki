@@ -85,6 +85,7 @@ IOUring::~IOUring() {
 }
 
 void IOUring::CleanUpFn() {
+    fprintf(stderr, "Cleaning up io_uring[%d]\n", uring_id_);
     size_t n_fd_slots = fds_.size();
     for (size_t i = 0; i < n_fd_slots; i++) {
         int fd = fds_[i].fd;

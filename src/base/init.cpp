@@ -4,9 +4,7 @@
 
 #include <stdio.h>
 #include <string.h>
-#include <stdlib.h>
 #include <signal.h>
-#include <unistd.h>
 
 #include <absl/flags/flag.h>
 #include <absl/flags/parse.h>
@@ -41,6 +39,7 @@ static void RaiseToDefaultHandler(int signo) {
 static void SignalHandler(int signo) {
     if (signo == SIGTERM || signo == SIGABRT) {
         size_t n = next_cleanup_fn.load();
+        fprintf(stderr, "Invoke %d clean-up functions\n", (int) n);
         for (size_t i = 0; i < n; i++) {
             cleanup_fns[i]();
         }
