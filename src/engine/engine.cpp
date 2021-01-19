@@ -236,7 +236,7 @@ void Engine::OnRecvGatewayMessage(const GatewayMessage& message,
                                   std::span<const char> payload) {
     if (GatewayMessageHelper::IsDispatchFuncCall(message)) {
         FuncCall func_call = GatewayMessageHelper::GetFuncCall(message);
-        OnExternalFuncCall(func_call, payload);
+        OnExternalFuncCall(func_call, message.logspace, payload);
     } else {
         HLOG(ERROR) << "Unknown engine message type";
     }
@@ -414,7 +414,8 @@ void Engine::HandleFuncCallFailedMessage(const Message& message) {
     }
 }
 
-void Engine::OnExternalFuncCall(const FuncCall& func_call, std::span<const char> input) {
+void Engine::OnExternalFuncCall(const FuncCall& func_call, uint32_t logspace,
+                                std::span<const char> input) {
     inflight_external_requests_.fetch_add(1, std::memory_order_relaxed);
     std::unique_ptr<ipc::ShmRegion> input_region = nullptr;
     if (input.size() > MESSAGE_INLINE_DATA_SIZE) {
@@ -459,9 +460,7 @@ void Engine::OnExternalFuncCall(const FuncCall& func_call, std::span<const char>
         return;
     }
     if (enable_shared_log_) {
-        // TODO: Implement log space
-        DCHECK_NOTNULL(shared_log_engine_)->OnNewExternalFuncCall(
-            func_call, /* log_space= */ 0);
+        DCHECK_NOTNULL(shared_log_engine_)->OnNewExternalFuncCall(func_call, logspace);
     }
     bool ret = false;
     if (input.size() <= MESSAGE_INLINE_DATA_SIZE) {

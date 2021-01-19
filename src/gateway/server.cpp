@@ -196,11 +196,11 @@ void Server::TryDispatchingPendingFuncCalls() {
         bool dispatched = false;
         if (node_picked) {
             if (async_call) {
-                dispatched = DispatchAsyncFuncCall(func_call, STRING_TO_SPAN(state.input),
-                                                   node_id);
+                dispatched = DispatchAsyncFuncCall(
+                    func_call, state.logspace, STRING_TO_SPAN(state.input), node_id);
             } else {
-                dispatched = DispatchFuncCall(std::move(parent_connection),
-                                              state.context, node_id);
+                dispatched = DispatchFuncCall(
+                    std::move(parent_connection), state.context, node_id);
             }
         }
         mu_.Lock();
@@ -337,6 +337,7 @@ void Server::OnNewFuncCallCommon(std::shared_ptr<server::ConnectionBase> parent_
     FuncCall func_call = func_call_context->func_call();
     FuncCallState state = {
         .func_call = func_call,
+        .logspace = func_call_context->logspace(),
         .connection_id = func_call_context->is_async() ? -1 : parent_connection->id(),
         .context = func_call_context->is_async() ? nullptr : func_call_context,
         .recv_timestamp = 0,
@@ -374,7 +375,8 @@ void Server::OnNewFuncCallCommon(std::shared_ptr<server::ConnectionBase> parent_
     if (func_call_context->is_async()) {
         if (!node_picked) {
             func_call_context->set_status(FuncCallContext::kSuccess);
-        } else if (DispatchAsyncFuncCall(func_call, func_call_context->input(), node_id)) {
+        } else if (DispatchAsyncFuncCall(func_call, func_call_context->logspace(),
+                                         func_call_context->input(), node_id)) {
             dispatched = true;
             func_call_context->set_status(FuncCallContext::kSuccess);
         } else {
@@ -398,7 +400,8 @@ void Server::OnNewFuncCallCommon(std::shared_ptr<server::ConnectionBase> parent_
 bool Server::DispatchFuncCall(std::shared_ptr<server::ConnectionBase> parent_connection,
                               FuncCallContext* func_call_context, uint16_t node_id) {
     FuncCall func_call = func_call_context->func_call();
-    GatewayMessage dispatch_message = GatewayMessageHelper::NewDispatchFuncCall(func_call);
+    GatewayMessage dispatch_message = GatewayMessageHelper::NewDispatchFuncCall(
+        func_call, func_call_context->logspace());
     dispatch_message.payload_size = func_call_context->input().size();
     bool success = SendMessageToEngine(node_id, dispatch_message, func_call_context->input());
     if (!success) {
@@ -409,9 +412,10 @@ bool Server::DispatchFuncCall(std::shared_ptr<server::ConnectionBase> parent_con
     return success;
 }
 
-bool Server::DispatchAsyncFuncCall(const FuncCall& func_call, std::span<const char> input,
-                                   uint16_t node_id) {
-    GatewayMessage dispatch_message = GatewayMessageHelper::NewDispatchFuncCall(func_call);
+bool Server::DispatchAsyncFuncCall(const FuncCall& func_call, uint32_t logspace,
+                                   std::span<const char> input, uint16_t node_id) {
+    GatewayMessage dispatch_message = GatewayMessageHelper::NewDispatchFuncCall(
+        func_call, logspace);
     dispatch_message.payload_size = input.size();
     bool success = SendMessageToEngine(node_id, dispatch_message, input);
     if (!success) {

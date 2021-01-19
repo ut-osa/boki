@@ -98,6 +98,11 @@ bool FuncConfig::Load(std::string_view json_contents) {
             if (item.contains("maxWorkers")) {
                 entry->max_workers = item.at("maxWorkers").get<int>();
             }
+            if (item.contains("defaultLogSpace")) {
+                entry->default_logspace = item.at("defaultLogSpace").get<uint32_t>();
+            } else {
+                entry->default_logspace = 0;
+            }
             entry->allow_http_get = false;
             entry->qs_as_input = false;
             entry->is_grpc_service = false;

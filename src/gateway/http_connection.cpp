@@ -258,7 +258,8 @@ void HttpConnection::HttpParserOnNewHeader() {
                            header_value_buffer_.length() - header_value_buffer_pos_);
     header_value_buffer_pos_ = header_value_buffer_.length();
     HVLOG(1) << "Parse new HTTP header: " << field << " = " << value;
-    headers_[field] = value;
+    std::string field_str = absl::AsciiStrToLower(field);
+    headers_[field_str] = value;
 }
 
 void HttpConnection::ResetHttpParser() {
@@ -291,9 +292,20 @@ void HttpConnection::OnNewHttpRequest(std::string_view method, std::string_view 
         return;
     }
 
+    int logspace = func_entry->default_logspace;
+    if (headers_.contains("x-faas-log-space")) {
+        int tmp;
+        if (absl::SimpleAtoi(headers_.at("x-faas-log-space"), &tmp)) {
+            logspace = tmp;
+        } else {
+            HLOG(ERROR) << "Failed to parse X-Faas-Log-Space header";
+        }
+    }
+
     func_call_context_.Reset();
     func_call_context_.set_func_name(func_name);
     func_call_context_.set_async(async);
+    func_call_context_.set_logspace(logspace);
     if (func_entry->qs_as_input) {
         if (body_buffer_.length() > 0) {
             HLOG(WARNING) << "Body not empty, but qsAsInput is set for func " << func_name;

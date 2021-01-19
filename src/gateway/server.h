@@ -59,6 +59,7 @@ private:
 
     struct FuncCallState {
         protocol::FuncCall func_call;
+        uint32_t           logspace;
         int                connection_id;  // of HttpConnection or GrpcConnection, or -1 for async calls
         FuncCallContext*   context;
         int64_t            recv_timestamp;
@@ -111,7 +112,7 @@ private:
                              FuncCallContext* func_call_context);
     bool DispatchFuncCall(std::shared_ptr<server::ConnectionBase> parent_connection,
                           FuncCallContext* func_call_context, uint16_t node_id);
-    bool DispatchAsyncFuncCall(const protocol::FuncCall& func_call,
+    bool DispatchAsyncFuncCall(const protocol::FuncCall& func_call, uint32_t logspace,
                                std::span<const char> input, uint16_t node_id);
     void FinishFuncCall(std::shared_ptr<server::ConnectionBase> parent_connection,
                         FuncCallContext* func_call_context);

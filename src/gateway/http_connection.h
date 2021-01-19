@@ -51,7 +51,7 @@ private:
     utils::AppendableBuffer body_buffer_;
     size_t header_field_buffer_pos_;
     size_t header_value_buffer_pos_;
-    absl::flat_hash_map<std::string_view, std::string_view> headers_;
+    absl::flat_hash_map<std::string, std::string_view> headers_;
 
     // For response
     std::string response_header_;

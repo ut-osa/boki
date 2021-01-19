@@ -204,10 +204,11 @@ struct GatewayMessage {
         uint32_t call_id;
     } __attribute__ ((packed));
     union {
-        int32_t processing_time; // Used in FUNC_CALL_COMPLETE
-        int32_t status_code;     // Used in FUNC_CALL_FAILED
+        int32_t  processing_time; // Used in FUNC_CALL_COMPLETE
+        int32_t  status_code;     // Used in FUNC_CALL_FAILED
+        uint32_t logspace;        // Used in DISPATCH_FUNC_CALL
     };
-    int32_t payload_size;        // Used in INVOKE_FUNC, FUNC_CALL_COMPLETE
+    int32_t payload_size;        // Used in DISPATCH_FUNC_CALL, FUNC_CALL_COMPLETE
 } __attribute__ ((packed));
 
 static_assert(sizeof(GatewayMessage) == 16, "Unexpected GatewayMessage size");
@@ -475,10 +476,11 @@ public:
 #define NEW_EMPTY_GATEWAY_MESSAGE(MSG_VAR) \
     GatewayMessage MSG_VAR; memset(&MSG_VAR, 0, sizeof(GatewayMessage))
 
-    static GatewayMessage NewDispatchFuncCall(const FuncCall& func_call) {
+    static GatewayMessage NewDispatchFuncCall(const FuncCall& func_call, uint32_t logspace = 0) {
         NEW_EMPTY_GATEWAY_MESSAGE(message);
         message.message_type = static_cast<uint16_t>(MessageType::DISPATCH_FUNC_CALL);
         SetFuncCall(&message, func_call);
+        message.logspace = logspace;
         return message;
     }
 

@@ -18,6 +18,7 @@ public:
         int func_id;
         int min_workers;
         int max_workers;
+        uint32_t default_logspace;
         bool allow_http_get;
         bool qs_as_input;
         bool is_grpc_service;
