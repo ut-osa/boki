@@ -43,24 +43,19 @@ void Engine::OnViewCreated(const View* view) {
                 }
             }
         }
-        {
-            absl::MutexLock future_request_lk(&future_request_mu_);
-            future_requests_.OnNewView(view, contains_myself ? &ready_requests : nullptr);
-        }
+        future_requests_.OnNewView(view, contains_myself ? &ready_requests : nullptr);
         current_view_ = view;
         if (contains_myself) {
             current_view_active_ = true;
-            absl::MutexLock pending_appends_lk(&pending_appends_mu_);
-            if (!pending_appends_.empty()) {
-                for (const auto& [op_id, op] : pending_appends_) {
-                    LogMetaData log_metadata = MetaDataFromAppendOp(op);
-                    uint32_t logspace_id = view->LogSpaceIdentifier(op->user_logspace);
-                    log_metadata.seqnum = bits::JoinTwo32(logspace_id, 0);
-                    auto producer_ptr = producer_collection_.GetLogSpaceChecked(logspace_id);
-                    producer_ptr.Lock()->LocalAppend(op, &log_metadata.localid);
-                    new_appends.push_back(std::make_pair(log_metadata, op));
-                }
-                pending_appends_.clear();
+            std::vector<std::pair<uint64_t, LocalOp*>> appends;
+            pending_appends_.PollAllSorted(&appends);
+            for (const auto& [op_id, op] : appends) {
+                LogMetaData log_metadata = MetaDataFromAppendOp(op);
+                uint32_t logspace_id = view->LogSpaceIdentifier(op->user_logspace);
+                log_metadata.seqnum = bits::JoinTwo32(logspace_id, 0);
+                auto producer_ptr = producer_collection_.GetLogSpaceChecked(logspace_id);
+                producer_ptr.Lock()->LocalAppend(op, &log_metadata.localid);
+                new_appends.push_back(std::make_pair(log_metadata, op));
             }
         }
         views_.push_back(view);
@@ -123,13 +118,11 @@ void Engine::OnViewFinalized(const FinalizedView* finalized_view) {
             }
         );
         if (!append_results.empty()) {
-            absl::MutexLock pending_appends_lk(&pending_appends_mu_);
             LogProducer::AppendResultVec tmp;
             for (const LogProducer::AppendResult& result : append_results) {
                 if (result.seqnum == kInvalidLogSeqNum) {
                     LocalOp* op = reinterpret_cast<LocalOp*>(result.caller_data);
-                    DCHECK(pending_appends_.count(op->id) == 0);
-                    pending_appends_[op->id] = op;
+                    pending_appends_.PutChecked(op->id, op);
                 } else {
                     tmp.push_back(result);
                 }
@@ -164,10 +157,9 @@ void Engine::OnViewFinalized(const FinalizedView* finalized_view) {
     do {                                                                \
         if (current_view_ == nullptr                                    \
                 || GetLastViewId(LOCAL_OP_VAR) > current_view_->id()) { \
-            absl::MutexLock future_request_lk(&future_request_mu_);     \
-            SharedLogRequest local_request;                             \
-            local_request.local_op = (LOCAL_OP_VAR);                    \
-            future_requests_.OnHoldRequest(std::move(local_request));   \
+            future_requests_.OnHoldRequest(                             \
+                GetLastViewId(LOCAL_OP_VAR),                            \
+                SharedLogRequest(LOCAL_OP_VAR));                        \
             return;                                                     \
         }                                                               \
     } while (0)
@@ -182,9 +174,7 @@ void Engine::HandleLocalAppend(LocalOp* op) {
         absl::ReaderMutexLock view_lk(&view_mu_);
         if (!current_view_active_) {
             HLOG(WARNING) << "Current view not active";
-            absl::MutexLock pending_appends_lk(&pending_appends_mu_);
-            DCHECK(pending_appends_.count(op->id) == 0);
-            pending_appends_[op->id] = op;
+            pending_appends_.PutChecked(op->id, op);
             return;
         }
         view = current_view_;
@@ -207,7 +197,45 @@ void Engine::HandleLocalTrim(LocalOp* op) {
 void Engine::HandleLocalRead(LocalOp* op) {
     DCHECK(op->type == SharedLogOpType::READ_NEXT
              || op->type == SharedLogOpType::READ_PREV);
-    NOT_IMPLEMENTED();
+    int direction = (op->type == SharedLogOpType::READ_NEXT) ? 1 : -1;
+    HVLOG(1) << fmt::format("Handle local read: op_id={}, logspace={}, tag={}, direction={}",
+                            op->id, op->user_logspace, op->user_tag, direction);
+    onging_reads_.PutChecked(op->id, op);
+    Index::QueryResultVec query_results;
+    {
+        absl::ReaderMutexLock view_lk(&view_mu_);
+        ONHOLD_IF_FROM_FUTURE_VIEW(op);
+        uint64_t query_seqnum = op->seqnum;
+        uint16_t view_id = bits::HighHalf32(bits::HighHalf64(query_seqnum));
+        if (direction < 0 && query_seqnum == kMaxLogSeqNum) {
+            // This is a CheckTail read
+            view_id = current_view_->id();
+        }
+        if (view_id != current_view_->id()) {
+            NOT_IMPLEMENTED();
+        }
+        uint32_t logspace_id = current_view_->LogSpaceIdentifier(op->user_logspace);
+        const View::Engine* engine_node = current_view_->GetEngineNode(my_node_id());
+        if (!engine_node->HasIndexFor(bits::LowHalf32(logspace_id))) {
+            NOT_IMPLEMENTED();
+        }
+        IndexQuery query = {
+            .direction = (direction > 0) ? IndexQuery::kReadNext : IndexQuery::kReadPrev,
+            .origin_node_id = my_node_id(),
+            .client_data = op->id,
+            .user_logspace = op->user_logspace,
+            .user_tag = op->user_tag,
+            .query_seqnum = query_seqnum,
+            .metalog_progress = op->metalog_progress
+        };
+        auto index_ptr = index_collection_.GetLogSpaceChecked(logspace_id);
+        {
+            auto locked_index = index_ptr.Lock();
+            locked_index->MakeQuery(query);
+            locked_index->PollQueryResults(&query_results);
+        }
+    }
+    ProcessIndexQueryResults(query_results);
 }
 
 #undef ONHOLD_IF_FROM_FUTURE_VIEW
@@ -218,8 +246,8 @@ void Engine::HandleLocalRead(LocalOp* op) {
     do {                                                            \
         if (current_view_ == nullptr                                \
                 || (MESSAGE_VAR).view_id > current_view_->id()) {   \
-            absl::MutexLock future_request_lk(&future_request_mu_); \
             future_requests_.OnHoldRequest(                         \
+                (MESSAGE_VAR).view_id,                              \
                 SharedLogRequest(MESSAGE_VAR, PAYLOAD_VAR));        \
             return;                                                 \
         }                                                           \
@@ -327,10 +355,27 @@ void Engine::ProcessAppendResults(const LogProducer::AppendResultVec& results) {
 }
 
 void Engine::ProcessIndexQueryResults(const Index::QueryResultVec& results) {
-    if (results.empty()) {
-        return;
+    for (const IndexQueryResult& result : results) {
+        const IndexQuery& query = result.original_query;
+        if (query.origin_node_id != my_node_id()) {
+            NOT_IMPLEMENTED();
+        }
+        uint64_t op_id = query.client_data;
+        switch (result.state) {
+        case IndexQueryResult::kFound:
+            NOT_IMPLEMENTED();
+            break;
+        case IndexQueryResult::kEmpty:
+            FinishLocalOpWithFailure(
+                onging_reads_.PollChecked(op_id), SharedLogResultType::EMPTY);
+            break;
+        case IndexQueryResult::kContinue:
+            NOT_IMPLEMENTED();
+            break;
+        default:
+            UNREACHABLE();
+        }
     }
-    NOT_IMPLEMENTED();
 }
 
 void Engine::ProcessRequests(const std::vector<SharedLogRequest>& requests) {

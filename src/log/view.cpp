@@ -130,7 +130,8 @@ View::Engine::Engine(const View* view, uint16_t node_id,
       node_id_(node_id),
       storage_nodes_(storage_nodes),
       indexed_sequencer_node_set_(index_sequencer_nodes.begin(),
-                                  index_sequencer_nodes.end()) {}
+                                  index_sequencer_nodes.end()),
+      next_storage_node_(0) {}
 
 View::Sequencer::Sequencer(const View* view, uint16_t node_id,
                            const View::NodeIdVec& replica_sequencer_nodes,
@@ -142,7 +143,8 @@ View::Sequencer::Sequencer(const View* view, uint16_t node_id,
       replica_sequencer_node_set_(replica_sequencer_nodes.begin(),
                                   replica_sequencer_nodes.end()),
       index_engine_node_set_(index_engine_nodes.begin(),
-                             index_engine_nodes.end()) {}
+                             index_engine_nodes.end()),
+      next_index_engine_node_(0) {}
 
 View::Storage::Storage(const View* view, uint16_t node_id,
                        const View::NodeIdVec& source_engine_nodes)

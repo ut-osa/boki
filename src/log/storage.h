@@ -20,9 +20,7 @@ private:
     LogSpaceCollection<LogStorage>
         storage_collection_        ABSL_GUARDED_BY(view_mu_);
 
-    absl::Mutex future_request_mu_ ABSL_ACQUIRED_AFTER(view_mu_);
-    log_utils::FutureRequests
-        future_requests_           ABSL_GUARDED_BY(future_request_mu_);
+    log_utils::FutureRequests future_requests_;
 
     void OnViewCreated(const View* view) override;
     void OnViewFinalized(const FinalizedView* finalized_view) override;

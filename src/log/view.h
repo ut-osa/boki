@@ -58,6 +58,11 @@ public:
             return storage_nodes_;
         }
 
+        uint16_t PickStorageNode() const {
+            size_t idx = __atomic_fetch_add(&next_storage_node_, 1, __ATOMIC_RELAXED);
+            return storage_nodes_.at(idx % storage_nodes_.size());
+        }
+
         bool HasIndexFor(uint16_t sequencer_node_id) const {
             return indexed_sequencer_node_set_.contains(sequencer_node_id);
         }
@@ -69,6 +74,8 @@ public:
 
         View::NodeIdVec storage_nodes_;
         absl::flat_hash_set<uint16_t> indexed_sequencer_node_set_;
+
+        mutable size_t next_storage_node_;
 
         Engine(const View* view, uint16_t node_id,
                const View::NodeIdVec& storage_nodes,
@@ -105,6 +112,11 @@ public:
             return index_engine_node_set_.contains(engine_node_id);
         }
 
+        uint16_t PickIndexEngineNode() const {
+            size_t idx = __atomic_fetch_add(&next_index_engine_node_, 1, __ATOMIC_RELAXED);
+            return index_engine_nodes_.at(idx % index_engine_nodes_.size());
+        }
+
     private:
         friend class View;
         const View* view_;
@@ -114,6 +126,8 @@ public:
         View::NodeIdVec index_engine_nodes_;
         absl::flat_hash_set<uint16_t> replica_sequencer_node_set_;
         absl::flat_hash_set<uint16_t> index_engine_node_set_;
+
+        mutable size_t next_index_engine_node_;
 
         Sequencer(const View* view, uint16_t node_id,
                   const View::NodeIdVec& replica_sequencer_nodes,

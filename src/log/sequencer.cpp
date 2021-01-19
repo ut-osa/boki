@@ -39,10 +39,7 @@ void Sequencer::OnViewCreated(const View* view) {
         current_primary_ = primary_collection_.GetLogSpace(
             bits::JoinTwo16(view->id(), my_node_id()));
         DCHECK(!contains_myself || current_primary_ != nullptr);
-        {
-            absl::MutexLock future_request_lk(&future_request_mu_);
-            future_requests_.OnNewView(view, contains_myself ? &ready_requests : nullptr);
-        }
+        future_requests_.OnNewView(view, contains_myself ? &ready_requests : nullptr);
         current_view_ = view;
         log_header_ = fmt::format("Sequencer[{}-{}]: ", my_node_id(), view->id());
     }
@@ -93,8 +90,8 @@ void Sequencer::OnViewFinalized(const FinalizedView* finalized_view) {
     do {                                                            \
         if (current_view_ == nullptr                                \
                 || (MESSAGE_VAR).view_id > current_view_->id()) {   \
-            absl::MutexLock future_request_lk(&future_request_mu_); \
             future_requests_.OnHoldRequest(                         \
+                (MESSAGE_VAR).view_id,                              \
                 SharedLogRequest(MESSAGE_VAR, PAYLOAD_VAR));        \
             return;                                                 \
         }                                                           \

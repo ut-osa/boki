@@ -17,6 +17,9 @@ struct SharedLogRequest {
     std::string                payload;
     void*                      local_op;
 
+    explicit SharedLogRequest(void* local_op)
+        : local_op(local_op) {}
+
     explicit SharedLogRequest(const protocol::SharedLogMessage& message,
                               std::span<const char> payload = EMPTY_CHAR_SPAN)
         : message(message),

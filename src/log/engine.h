@@ -31,13 +31,9 @@ private:
     LogSpaceCollection<Index>
         index_collection_            ABSL_GUARDED_BY(view_mu_);
 
-    absl::Mutex future_request_mu_   ABSL_ACQUIRED_AFTER(view_mu_);
-    log_utils::FutureRequests
-        future_requests_             ABSL_GUARDED_BY(future_request_mu_);
-    
-    absl::Mutex pending_appends_mu_  ABSL_ACQUIRED_AFTER(view_mu_);
-    std::map</* op_id */ uint64_t, LocalOp*>
-        pending_appends_             ABSL_GUARDED_BY(pending_appends_mu_);
+    log_utils::FutureRequests       future_requests_;
+    log_utils::ThreadedMap<LocalOp> pending_appends_;
+    log_utils::ThreadedMap<LocalOp> onging_reads_;
 
     void OnViewCreated(const View* view) override;
     void OnViewFrozen(const View* view) override;

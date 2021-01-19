@@ -35,10 +35,7 @@ void Storage::OnViewCreated(const View* view) {
                     my_node_id(), view, sequencer_id));
             }
         }
-        {
-            absl::MutexLock future_request_lk(&future_request_mu_);
-            future_requests_.OnNewView(view, contains_myself ? &ready_requests : nullptr);
-        }
+        future_requests_.OnNewView(view, contains_myself ? &ready_requests : nullptr);
         current_view_ = view;
         log_header_ = fmt::format("Storage[{}-{}]: ", my_node_id(), view->id());
     }
@@ -105,8 +102,8 @@ void Storage::OnViewFinalized(const FinalizedView* finalized_view) {
     do {                                                            \
         if (current_view_ == nullptr                                \
                 || (MESSAGE_VAR).view_id > current_view_->id()) {   \
-            absl::MutexLock future_request_lk(&future_request_mu_); \
             future_requests_.OnHoldRequest(                         \
+                (MESSAGE_VAR).view_id,                              \
                 SharedLogRequest(MESSAGE_VAR, PAYLOAD_VAR));        \
             return;                                                 \
         }                                                           \
