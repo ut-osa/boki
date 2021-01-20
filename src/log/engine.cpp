@@ -416,7 +416,7 @@ void Engine::ProcessIndexQueryResults(const Index::QueryResultVec& results) {
 void Engine::ProcessRequests(const std::vector<SharedLogRequest>& requests) {
     for (const SharedLogRequest& request : requests) {
         if (request.local_op == nullptr) {
-            MessageHandler(request.message, STRING_TO_SPAN(request.payload));
+            MessageHandler(request.message, STRING_AS_SPAN(request.payload));
         } else {
             LocalOpHandler(reinterpret_cast<LocalOp*>(request.local_op));
         }

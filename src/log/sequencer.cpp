@@ -224,7 +224,7 @@ void Sequencer::OnRecvNewMetaLogs(const SharedLogMessage& message,
 
 void Sequencer::ProcessRequests(const std::vector<SharedLogRequest>& requests) {
     for (const SharedLogRequest& request : requests) {
-        MessageHandler(request.message, STRING_TO_SPAN(request.payload));
+        MessageHandler(request.message, STRING_AS_SPAN(request.payload));
     }
 }
 

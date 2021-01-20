@@ -135,7 +135,7 @@ void EgressHub::OnSocketConnected(int sockfd, int status) {
     io_worker_->NewWriteBuffer(&buf);
     CHECK_LE(handshake.size(), buf.size());
     URING_DCHECK_OK(current_io_uring()->SendAll(
-        sockfd, CopyToBuffer(buf, STRING_TO_SPAN(handshake)),
+        sockfd, CopyToBuffer(buf, STRING_AS_SPAN(handshake)),
         [this, sockfd, buf] (int status) {
             io_worker_->ReturnWriteBuffer(buf);
             if (status != 0) {

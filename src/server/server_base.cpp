@@ -176,7 +176,7 @@ void ServerBase::SetupMessageServer() {
     std::string my_addr(fmt::format("{}:{}", iface_ip, message_port));
     std::string znode_path = fmt::format("node/{}", node_name_);
     auto status = zk_utils::CreateSync(
-        zk_session(), /* path= */ znode_path, /* value= */ STRING_TO_SPAN(my_addr),
+        zk_session(), /* path= */ znode_path, /* value= */ STRING_AS_SPAN(my_addr),
         zk::ZKCreateMode::kEphemeral, nullptr);
     CHECK(status.ok()) << fmt::format("Failed to create ZooKeeper node {}: {}",
                                       znode_path, status.ToString());

@@ -278,7 +278,7 @@ void StorageBase::SendIndexData(const View* view,
     message.payload_size = serialized_data.size();
     for (uint16_t engine_id : sequencer_node->GetIndexEngineNodes()) {
         SendSharedLogMessage(protocol::ConnType::STORAGE_TO_ENGINE,
-                             engine_id, message, STRING_TO_SPAN(serialized_data));
+                             engine_id, message, STRING_AS_SPAN(serialized_data));
     }
 }
 

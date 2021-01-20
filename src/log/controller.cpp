@@ -50,7 +50,7 @@ void Controller::InstallNewView(const ViewProto& view_proto) {
     std::string serialized;
     CHECK(view_proto.SerializeToString(&serialized));
     zk_session_.Create(
-        "view/new", STRING_TO_SPAN(serialized),
+        "view/new", STRING_AS_SPAN(serialized),
         zk::ZKCreateMode::kPersistentSequential,
         [view] (zk::ZKStatus status, const zk::ZKResult& result, bool*) {
             if (!status.ok()) {

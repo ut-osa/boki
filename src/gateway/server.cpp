@@ -206,7 +206,7 @@ void Server::TryDispatchingPendingFuncCalls() {
         if (node_picked) {
             if (async_call) {
                 dispatched = DispatchAsyncFuncCall(
-                    func_call, state.logspace, STRING_TO_SPAN(state.input), node_id);
+                    func_call, state.logspace, STRING_AS_SPAN(state.input), node_id);
             } else {
                 dispatched = DispatchFuncCall(
                     std::move(parent_connection), state.context, node_id);
@@ -466,7 +466,7 @@ std::string Server::EncodeAsyncCallResult(const Server::AsyncCallResult& result)
     data["dispatchTs"] = result.dispatch_timestamp;
     data["finishedTs"] = result.finished_timestamp;
     if (result.success) {
-        data["output"] = utils::Base64Encode(STRING_TO_SPAN(result.output));
+        data["output"] = utils::Base64Encode(STRING_AS_SPAN(result.output));
     }
     return std::string(data.dump());
 }
@@ -488,7 +488,7 @@ void Server::BackgroundThreadMain() {
         if (fd != -1) {
             std::string data = EncodeAsyncCallResult(result);
             data.push_back('\n');
-            if (!io_utils::WriteData(fd, STRING_TO_SPAN(data))) {
+            if (!io_utils::WriteData(fd, STRING_AS_SPAN(data))) {
                 HPLOG(ERROR) << "Failed to write data to FIFO";
             }
         }

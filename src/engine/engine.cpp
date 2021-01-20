@@ -211,7 +211,7 @@ bool Engine::OnNewHandshake(MessageConnection* connection,
         if (func_worker_use_engine_socket_) {
             response->flags |= protocol::kFuncWorkerUseEngineSocketFlag;
         }
-        *response_payload = STRING_TO_SPAN(func_config_json_);
+        *response_payload = STRING_AS_SPAN(func_config_json_);
     } else {
         *response = MessageHelper::NewHandshakeResponse(0);
         if (use_fifo_for_nested_call_) {

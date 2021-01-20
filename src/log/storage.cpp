@@ -216,7 +216,7 @@ void Storage::ProcessReadResults(const LogStorage::ReadResultVec& results) {
             DCHECK_EQ(response.seqnum_lowhalf, request.seqnum_lowhalf);
             response.user_metalog_progress = request.user_metalog_progress;
             SendEngineResponse(request, &response,
-                               STRING_TO_SPAN(result.log_entry->data));
+                               STRING_AS_SPAN(result.log_entry->data));
             break;
         case LogStorage::ReadResult::kLookupDB:
             ProcessReadFromDB(request);
@@ -250,12 +250,12 @@ void Storage::ProcessReadFromDB(const SharedLogMessage& request) {
     DCHECK_EQ(response.logspace_id, request.logspace_id);
     DCHECK_EQ(response.seqnum_lowhalf, request.seqnum_lowhalf);
     response.user_metalog_progress = request.user_metalog_progress;
-    SendEngineResponse(request, &response, STRING_TO_SPAN(log_entry.data()));
+    SendEngineResponse(request, &response, STRING_AS_SPAN(log_entry.data()));
 }
 
 void Storage::ProcessRequests(const std::vector<SharedLogRequest>& requests) {
     for (const SharedLogRequest& request : requests) {
-        MessageHandler(request.message, STRING_TO_SPAN(request.payload));
+        MessageHandler(request.message, STRING_AS_SPAN(request.payload));
     }
 }
 
@@ -305,7 +305,7 @@ void Storage::SendShardProgressIfNeeded() {
         uint32_t logspace_id = entry.first;
         SharedLogMessage message = SharedLogMessageHelper::NewShardProgressMessage(logspace_id);
         SendSequencerMessage(bits::LowHalf32(logspace_id), &message,
-                             VECTOR_TO_CHAR_SPAN(entry.second));
+                             VECTOR_AS_CHAR_SPAN(entry.second));
     }
 }
 
