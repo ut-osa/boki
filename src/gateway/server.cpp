@@ -3,9 +3,13 @@
 #include "common/time.h"
 #include "utils/fs.h"
 #include "utils/io.h"
+#include "utils/base64.h"
 #include "utils/socket.h"
 #include "server/constants.h"
 #include "gateway/flags.h"
+
+#include <fcntl.h>
+#include <nlohmann/json.hpp>
 
 #define log_header_ "Server: "
 
@@ -27,6 +31,7 @@ Server::Server()
       next_grpc_connection_id_(0),
       node_manager_(this),
       next_call_id_(1),
+      background_thread_("BG", absl::bind_front(&Server::BackgroundThreadMain, this)),
       last_request_timestamp_(-1),
       incoming_requests_stat_(
           stat::Counter::StandardReportCallback("incoming_requests")),
@@ -62,6 +67,8 @@ void Server::StartInternal() {
         absl::bind_front(&NodeManager::OnNodeOnline, &node_manager_));
     node_watcher()->SetNodeOfflineCallback(
         absl::bind_front(&NodeManager::OnNodeOffline, &node_manager_));
+    // Start background thread
+    background_thread_.Start();
 }
 
 void Server::StopInternal() {
@@ -71,6 +78,8 @@ void Server::StopInternal() {
     if (grpc_sockfd_ != -1) {
         PCHECK(close(grpc_sockfd_) == 0) << "Failed to close gRPC server fd";
     }
+    async_call_results_.Stop();
+    background_thread_.Join();
 }
 
 void Server::OnConnectionClose(server::ConnectionBase* connection) {
@@ -242,8 +251,10 @@ void Server::HandleFuncCallCompleteOrFailedMessage(uint16_t node_id,
     FuncCall func_call = GatewayMessageHelper::GetFuncCall(message);
     node_manager_.FuncCallFinished(func_call, node_id);
     bool async_call = false;
+    AsyncCallResult async_result;
     FuncCallContext* func_call_context = nullptr;
     std::shared_ptr<server::ConnectionBase> parent_connection;
+    int64_t current_timestamp = GetMonotonicMicroTimestamp();
     {
         absl::MutexLock lk(&mu_);
         if (!running_func_calls_.contains(func_call.full_call_id)) {
@@ -254,6 +265,11 @@ void Server::HandleFuncCallCompleteOrFailedMessage(uint16_t node_id,
         const FuncCallState& state = running_func_calls_[func_call.full_call_id];
         if (state.connection_id == -1) {
             async_call = true;
+            async_result.func_id = state.func_call.func_id;
+            async_result.logspace = state.logspace;
+            async_result.recv_timestamp = state.recv_timestamp;
+            async_result.dispatch_timestamp = state.recv_timestamp;
+            async_result.finished_timestamp = current_timestamp;
         }
         if (!async_call && !discarded_func_calls_.contains(func_call.full_call_id)) {
             // Check if corresponding connection is still active
@@ -265,7 +281,6 @@ void Server::HandleFuncCallCompleteOrFailedMessage(uint16_t node_id,
         if (discarded_func_calls_.contains(func_call.full_call_id)) {
             discarded_func_calls_.erase(func_call.full_call_id);
         }
-        int64_t current_timestamp = GetMonotonicMicroTimestamp();
         dispatch_overhead_stat_.AddSample(gsl::narrow_cast<int32_t>(
             current_timestamp - state.dispatch_timestamp - message.processing_time));
         if (async_call && GatewayMessageHelper::IsFuncCallComplete(message)) {
@@ -279,10 +294,15 @@ void Server::HandleFuncCallCompleteOrFailedMessage(uint16_t node_id,
     }
     if (async_call) {
         if (GatewayMessageHelper::IsFuncCallFailed(message)) {
+            async_result.success = false;
             auto func_entry = func_config_.find_by_func_id(func_call.func_id);
             HLOG(WARNING) << fmt::format("Async call of {} failed",
                                          DCHECK_NOTNULL(func_entry)->func_name);
+        } else {
+            async_result.success = true;
+            async_result.output.assign(payload.data(), payload.size());
         }
+        async_call_results_.Push(std::move(async_result));
     } else if (func_call_context != nullptr) {
         if (GatewayMessageHelper::IsFuncCallComplete(message)) {
             func_call_context->set_status(FuncCallContext::kSuccess);
@@ -340,7 +360,7 @@ void Server::OnNewFuncCallCommon(std::shared_ptr<server::ConnectionBase> parent_
         .logspace = func_call_context->logspace(),
         .connection_id = func_call_context->is_async() ? -1 : parent_connection->id(),
         .context = func_call_context->is_async() ? nullptr : func_call_context,
-        .recv_timestamp = 0,
+        .recv_timestamp = GetMonotonicMicroTimestamp(),
         .dispatch_timestamp = 0,
         .input = std::string()
     };
@@ -349,7 +369,6 @@ void Server::OnNewFuncCallCommon(std::shared_ptr<server::ConnectionBase> parent_
     {
         absl::MutexLock lk(&mu_);
         int64_t current_timestamp = GetMonotonicMicroTimestamp();
-        state.recv_timestamp = current_timestamp;
         incoming_requests_stat_.Tick();
         if (current_timestamp <= last_request_timestamp_) {
             current_timestamp = last_request_timestamp_ + 1;
@@ -436,6 +455,48 @@ void Server::FinishFuncCall(std::shared_ptr<server::ConnectionBase> parent_conne
     default:
         UNREACHABLE();
     }
+}
+
+std::string Server::EncodeAsyncCallResult(const Server::AsyncCallResult& result) {
+    nlohmann::json data;
+    data["success"] = result.success;
+    data["funcId"] = result.func_id;
+    data["logspace"] = result.logspace;
+    data["recvTs"] = result.recv_timestamp;
+    data["dispatchTs"] = result.dispatch_timestamp;
+    data["finishedTs"] = result.finished_timestamp;
+    if (result.success) {
+        data["output"] = utils::Base64Encode(STRING_TO_SPAN(result.output));
+    }
+    return std::string(data.dump());
+}
+
+void Server::BackgroundThreadMain() {
+    int fd = -1;
+    std::string file_path(absl::GetFlag(FLAGS_async_call_result_path));
+    if (!file_path.empty()) {
+        fd = fs_utils::Create(file_path);
+        if (fd == -1) {
+            HLOG(FATAL) << "Failed to create file for async call results";
+        }
+    }
+    while (true) {
+        AsyncCallResult result;
+        if (!async_call_results_.Pop(&result)) {
+            break;
+        }
+        if (fd != -1) {
+            std::string data = EncodeAsyncCallResult(result);
+            data.push_back('\n');
+            if (!io_utils::WriteData(fd, STRING_TO_SPAN(data))) {
+                HPLOG(ERROR) << "Failed to write data to FIFO";
+            }
+        }
+    }
+    if (fd != -1) {
+        close(fd);
+    }
+    HLOG(INFO) << "Background thread stopped";
 }
 
 void Server::OnRemoteMessageConn(const protocol::HandshakeMessage& handshake, int sockfd) {

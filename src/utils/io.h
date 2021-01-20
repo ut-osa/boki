@@ -75,6 +75,10 @@ inline bool SendData(int fd, std::span<const char> data) {
     return SendData(fd, data.data(), data.size());
 }
 
+inline bool WriteData(int fd, std::span<const char> data) {
+    return SendData(fd, data.data(), data.size());
+}
+
 inline bool RecvData(int fd, char* buffer, size_t size, bool* eof) {
     size_t pos = 0;
     if (eof != nullptr) {

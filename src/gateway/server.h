@@ -1,10 +1,12 @@
 #pragma once
 
 #include "base/common.h"
+#include "base/thread.h"
 #include "common/zk.h"
 #include "common/stat.h"
 #include "common/protocol.h"
 #include "common/func_config.h"
+#include "utils/blocking_queue.h"
 #include "server/server_base.h"
 #include "server/ingress_connection.h"
 #include "server/egress_hub.h"
@@ -68,6 +70,19 @@ private:
         std::string        input;
     };
 
+    struct AsyncCallResult {
+        bool        success;
+        uint16_t    func_id;
+        uint32_t    logspace;
+        int64_t     recv_timestamp;
+        int64_t     dispatch_timestamp;
+        int64_t     finished_timestamp;
+        std::string output;
+    };
+
+    utils::BlockingQueue<AsyncCallResult> async_call_results_;
+    base::Thread background_thread_;
+
     struct PerFuncStat {
         int64_t last_request_timestamp;
         stat::Counter incoming_requests_stat;
@@ -119,6 +134,9 @@ private:
     void TickNewFuncCall(uint16_t func_id, int64_t current_timestamp)
         ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
     void TryDispatchingPendingFuncCalls();
+
+    static std::string EncodeAsyncCallResult(const AsyncCallResult& result);
+    void BackgroundThreadMain();
 
     bool SendMessageToEngine(uint16_t node_id, const protocol::GatewayMessage& message,
                              std::span<const char> payload);
