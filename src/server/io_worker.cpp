@@ -32,7 +32,7 @@ IOWorker::~IOWorker() {
 void IOWorker::Start(int pipe_to_server_fd) {
     DCHECK(state_.load() == kCreated);
     // Setup eventfd for scheduling functions
-    eventfd_ = eventfd(0, 0);
+    eventfd_ = eventfd(0, EFD_CLOEXEC);
     PCHECK(eventfd_ >= 0) << "Failed to create eventfd";
     io_uring_.PrepareBuffers(kOctaBufGroup, 8);
     URING_DCHECK_OK(io_uring_.RegisterFd(eventfd_));

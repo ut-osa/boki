@@ -84,7 +84,7 @@ void Monitor::BackgroundThreadMain() {
     timer_spec.it_interval.tv_sec = gsl::narrow_cast<time_t>(interval_in_ns / 1000000000);
     timer_spec.it_interval.tv_nsec = gsl::narrow_cast<long>(interval_in_ns % 1000000000);
 
-    int timer_fd = timerfd_create(CLOCK_MONOTONIC, 0);
+    int timer_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC);
     PCHECK(timer_fd != -1) << "timerfd_create failed";
     PCHECK(timerfd_settime(timer_fd, TFD_TIMER_ABSTIME, &timer_spec, 0) == 0)
         << "timerfd_settime failed";

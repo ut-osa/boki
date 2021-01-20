@@ -25,9 +25,9 @@ ZKSession::ZKSession(std::string_view host, std::string_view root_path)
                          absl::bind_front(&ZKSession::EventLoopThreadMain, this)),
       stop_eventfd_(-1),
       new_op_eventfd_(-1) {
-    stop_eventfd_ = eventfd(0, 0);
+    stop_eventfd_ = eventfd(0, EFD_CLOEXEC);
     PCHECK(stop_eventfd_ >= 0) << "Failed to create eventfd";
-    new_op_eventfd_ = eventfd(0, 0);
+    new_op_eventfd_ = eventfd(0, EFD_CLOEXEC);
     PCHECK(new_op_eventfd_ >= 0) << "Failed to create eventfd";
 }
 

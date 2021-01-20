@@ -30,42 +30,21 @@ void FifoRemove(std::string_view name) {
 }
 
 int FifoOpenForRead(std::string_view name, bool nonblocking) {
-    std::string full_path = fs_utils::JoinPath(GetRootPathForFifo(), name);
-    int flags = O_RDONLY | O_CLOEXEC;
-    if (nonblocking) {
-        flags |= O_NONBLOCK;
-    }
-    int fd = open(full_path.c_str(), flags);
-    if (fd == -1) {
-        PLOG(ERROR) << "open " << full_path << " failed";
-    }
-    return fd;
+    return fs_utils::Open(
+        fs_utils::JoinPath(GetRootPathForFifo(), name),
+        /* flags= */ O_RDONLY | (nonblocking ? O_NONBLOCK : 0));
 }
 
 int FifoOpenForWrite(std::string_view name, bool nonblocking) {
-    std::string full_path = fs_utils::JoinPath(GetRootPathForFifo(), name);
-    int flags = O_WRONLY | O_CLOEXEC;
-    if (nonblocking) {
-        flags |= O_NONBLOCK;
-    }
-    int fd = open(full_path.c_str(), flags);
-    if (fd == -1) {
-        PLOG(ERROR) << "open " << full_path << " failed";
-    }
-    return fd;
+    return fs_utils::Open(
+        fs_utils::JoinPath(GetRootPathForFifo(), name),
+        /* flags= */ O_WRONLY | (nonblocking ? O_NONBLOCK : 0));
 }
 
 int FifoOpenForReadWrite(std::string_view name, bool nonblocking) {
-    std::string full_path = fs_utils::JoinPath(GetRootPathForFifo(), name);
-    int flags = O_RDWR | O_CLOEXEC;
-    if (nonblocking) {
-        flags |= O_NONBLOCK;
-    }
-    int fd = open(full_path.c_str(), flags);
-    if (fd == -1) {
-        PLOG(ERROR) << "open " << full_path << " failed";
-    }
-    return fd;
+    return fs_utils::Open(
+        fs_utils::JoinPath(GetRootPathForFifo(), name),
+        /* flags= */ O_RDWR | (nonblocking ? O_NONBLOCK : 0));
 }
 
 }  // namespace ipc

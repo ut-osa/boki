@@ -19,7 +19,7 @@ namespace server {
 ServerBase::ServerBase(std::string_view node_name)
     : state_(kCreated),
       node_name_(node_name),
-      stop_eventfd_(eventfd(0, 0)),
+      stop_eventfd_(eventfd(0, EFD_CLOEXEC)),
       message_sockfd_(-1),
       event_loop_thread_("Srv/EL",
                          absl::bind_front(&ServerBase::EventLoopThreadMain, this)),
@@ -147,7 +147,7 @@ void ServerBase::SetupIOWorkers() {
         auto io_worker = std::make_unique<IOWorker>(
             fmt::format("IO-{}", i), kDefaultIOWorkerBufferSize);
         int pipe_fds[2] = { -1, -1 };
-        if (socketpair(AF_UNIX, SOCK_STREAM, 0, pipe_fds) < 0) {
+        if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pipe_fds) < 0) {
             PLOG(FATAL) << "socketpair failed";
         }
         io_worker->Start(pipe_fds[1]);
@@ -266,7 +266,7 @@ void ServerBase::DoAcceptConnection(int server_sockfd) {
     DCHECK(WithinMyEventLoopThread());
     DCHECK(connection_cbs_.contains(server_sockfd));
     while (true) {
-        int client_sockfd = accept4(server_sockfd, nullptr, nullptr, 0);
+        int client_sockfd = accept4(server_sockfd, nullptr, nullptr, SOCK_CLOEXEC);
         if (client_sockfd < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 break;

@@ -120,7 +120,7 @@ int UnixSocketBindAndListen(std::string_view path, int backlog) {
         LOG(ERROR) << "Failed to fill Unix socket path: " << path;
         return -1;
     }
-    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if (fd == -1) {
         PLOG(ERROR) << "Failed to create Unix socket";
         return -1;
@@ -143,7 +143,7 @@ int UnixSocketConnect(std::string_view path) {
         LOG(ERROR) << "Failed to fill Unix socket path: " << path;
         return -1;
     }
-    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if (fd == -1) {
         PLOG(ERROR) << "Failed to create Unix socket";
         return -1;
@@ -162,7 +162,7 @@ int TcpSocketBindAndListen(std::string_view ip, uint16_t port, int backlog) {
         LOG(ERROR) << fmt::format("Failed to fill socket addr: {}:{}", ip, port);
         return -1;
     }
-    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    int fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if (fd == -1) {
         PLOG(ERROR) << "Failed to create AF_INET socket";
         return -1;
@@ -188,7 +188,7 @@ int TcpSocketConnect(std::string_view ip, uint16_t port) {
         LOG(ERROR) << fmt::format("Failed to fill socket addr: {}:{}", ip, port);
         return -1;
     }
-    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    int fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if (fd == -1) {
         PLOG(ERROR) << "Failed to create AF_INET socket";
         return -1;
@@ -207,7 +207,7 @@ int Tcp6SocketBindAndListen(std::string_view ip, uint16_t port, int backlog) {
         LOG(ERROR) << fmt::format("Failed to fill socket addr: {}:{}", ip, port);
         return -1;
     }
-    int fd = socket(AF_INET6, SOCK_STREAM, 0);
+    int fd = socket(AF_INET6, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if (fd == -1) {
         PLOG(ERROR) << "Failed to create AF_INET6 socket";
         return -1;
@@ -230,7 +230,7 @@ int Tcp6SocketConnect(std::string_view ip, uint16_t port) {
         LOG(ERROR) << fmt::format("Failed to fill socket addr: {}:{}", ip, port);
         return -1;
     }
-    int fd = socket(AF_INET6, SOCK_STREAM, 0);
+    int fd = socket(AF_INET6, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if (fd == -1) {
         PLOG(ERROR) << "Failed to create AF_INET6 socket";
         return -1;
@@ -261,7 +261,7 @@ int TcpSocketBindArbitraryPort(std::string_view ip, uint16_t* port) {
                 LOG(ERROR) << fmt::format("Failed to fill socket addr: {}:{}", ip, random_port);
                 return false;
             }
-            sockfd = socket(AF_INET, SOCK_STREAM, 0);
+            sockfd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
             if (sockfd == -1) {
                 PLOG(ERROR) << "Failed to create AF_INET socket";
                 return false;
@@ -333,7 +333,6 @@ bool ResolveInterfaceIp(std::string_view interface, std::string* ip) {
     ifr.ifr_name[length] = '\0';
     if (ioctl(fd, SIOCGIFADDR, &ifr) != 0) {
         PLOG(ERROR) << "ioctl failed";
-        close(fd);
         return false;
     }
     struct sockaddr_in* addr = (struct sockaddr_in*) &ifr.ifr_addr;

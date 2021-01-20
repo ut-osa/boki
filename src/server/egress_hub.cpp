@@ -25,7 +25,7 @@ void EgressHub::Start(IOWorker* io_worker) {
     DCHECK(io_worker->WithinMyEventLoopThread());
     io_worker_ = io_worker;
     for (size_t i = 0; i < sockfds_.size(); i++) {
-        int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+        int sockfd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
         PCHECK(sockfd >= 0) << "Failed to create socket";
         sockfds_[i] = sockfd;
         URING_DCHECK_OK(current_io_uring()->RegisterFd(sockfd));

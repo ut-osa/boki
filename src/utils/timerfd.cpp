@@ -7,7 +7,7 @@ namespace faas {
 namespace io_utils {
 
 int CreateTimerFd() {
-    int fd = timerfd_create(CLOCK_MONOTONIC, 0);
+    int fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC);
     if (fd == -1) {
         PLOG(ERROR) << "Failed to create timerfd";
         return -1;
