@@ -11,10 +11,8 @@
 
 namespace faas {
 
-// Forward declarations
-namespace engine {
-class Engine;
-}  // namespace engine
+// Forward declaration
+namespace engine { class Engine; }
 
 namespace log {
 
