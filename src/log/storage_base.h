@@ -4,6 +4,7 @@
 #include "log/common.h"
 #include "log/view.h"
 #include "log/view_watcher.h"
+#include "log/db.h"
 #include "server/server_base.h"
 #include "server/ingress_connection.h"
 #include "server/egress_hub.h"
@@ -36,7 +37,7 @@ protected:
     void MessageHandler(const protocol::SharedLogMessage& message,
                         std::span<const char> payload);
     bool GetLogEntryFromDB(uint64_t seqnum, LogEntryProto* log_entry_proto);
-    void PutLogEntriesToDB(const std::vector<const LogEntry*>& log_entires);
+    void PutLogEntryToDB(const LogEntry& log_entry);
 
     void SendIndexData(const View* view, const IndexDataProto& index_data_proto);
     bool SendSequencerMessage(uint16_t sequencer_id,
@@ -51,10 +52,8 @@ private:
 
     ViewWatcher view_watcher_;
 
-    enum class DBBackend { kRocksDB, kTkrzwHashDBM };
-    DBBackend   db_backend_;
     std::string db_path_;
-    void*       db_;
+    std::unique_ptr<DBInterface> db_;
 
     base::Thread background_thread_;
 
@@ -68,11 +67,6 @@ private:
     void SetupDB();
     void SetupZKWatchers();
     void SetupTimers();
-
-    void OpenRocksDB();
-    void CloseRocksDB();
-    void OpenTkrzwDBM();
-    void CloseTkrzwDBM();
 
     void StartInternal() override;
     void StopInternal() override;

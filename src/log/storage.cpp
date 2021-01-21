@@ -334,12 +334,9 @@ void Storage::FlushLogEntries() {
         return;
     }
     HVLOG(1) << fmt::format("Will flush {} log entries", log_entires.size());
-    std::vector<const LogEntry*> log_entry_ptrs;
-    log_entry_ptrs.resize(log_entires.size());
     for (size_t i = 0; i < log_entires.size(); i++) {
-        log_entry_ptrs[i] = log_entires[i].get();
+        PutLogEntryToDB(*log_entires[i]);
     }
-    PutLogEntriesToDB(log_entry_ptrs);
 
     std::vector<uint32_t> finalized_logspaces;
     for (auto& [storage_ptr, new_position] : storages) {
