@@ -237,7 +237,25 @@ void EngineBase::FinishLocalOpWithFailure(LocalOp* op, SharedLogResultType resul
     FinishLocalOpWithResponse(op, &response, metalog_progress);
 }
 
-bool EngineBase::SendReadRequest(const IndexQueryResult& result) {
+bool EngineBase::SendIndexReadRequest(const View::Sequencer* sequencer_node,
+                                      SharedLogMessage* request) {
+    static constexpr int kMaxRetries = 3;
+
+    request->sequencer_id = sequencer_node->node_id();
+    request->view_id = sequencer_node->view()->id();
+    for (int i = 0; i < kMaxRetries; i++) {
+        uint16_t engine_id = sequencer_node->PickIndexEngineNode();
+        bool success = engine_->SendSharedLogMessage(
+            protocol::ConnType::SLOG_ENGINE_TO_ENGINE, engine_id,
+            *request, /* payload= */ EMPTY_CHAR_SPAN);
+        if (success) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool EngineBase::SendStorageReadRequest(const IndexQueryResult& result) {
     static constexpr int kMaxRetries = 3;
     DCHECK(result.state == IndexQueryResult::kFound);
 

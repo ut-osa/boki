@@ -40,6 +40,7 @@ public:
     bool Poll(uint64_t key, T** value);       // Remove the given key if it is found
     void PutChecked(uint64_t key, T* value);  // Panic if key exists
     T*   PollChecked(uint64_t key);           // Panic if key does not exist
+    void RemoveChecked(uint64_t key);         // Panic if key does not exist
     void PollAll(std::vector<std::pair<uint64_t, T*>>* values);
     void PollAllSorted(std::vector<std::pair<uint64_t, T*>>* values);
 
@@ -104,6 +105,13 @@ T* ThreadedMap<T>::PollChecked(uint64_t key) {
     T* value = rep_.at(key);
     rep_.erase(key);
     return value;
+}
+
+template<class T>
+void ThreadedMap<T>::RemoveChecked(uint64_t key) {
+    absl::MutexLock lk(&mu_);
+    DCHECK(rep_.contains(key));
+    rep_.erase(key);
 }
 
 template<class T>

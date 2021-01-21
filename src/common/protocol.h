@@ -241,6 +241,7 @@ struct SharedLogMessage {
 
     union {
         uint64_t localid;       // [40:48]
+        uint64_t query_seqnum;  // [40:48]
         uint64_t trim_seqnum;   // [40:48]
     };
     uint64_t client_data;       // [48:56]
@@ -551,6 +552,16 @@ public:
         NEW_EMPTY_SHAREDLOG_MESSAGE(message);
         message.op_type = static_cast<uint16_t>(SharedLogOpType::INDEX_DATA);
         message.logspace_id = logspace_id;
+        return message;
+    }
+
+    static SharedLogMessage NewReadMessage(int direction) {
+        NEW_EMPTY_SHAREDLOG_MESSAGE(message);
+        if (direction > 0) {
+            message.op_type = static_cast<uint16_t>(SharedLogOpType::READ_NEXT);
+        } else {
+            message.op_type = static_cast<uint16_t>(SharedLogOpType::READ_PREV);
+        }
         return message;
     }
 

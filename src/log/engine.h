@@ -67,6 +67,8 @@ private:
         };
     }
 
+    protocol::SharedLogMessage BuildReadRequestMessage(LocalOp* op);
+
     DISALLOW_COPY_AND_ASSIGN(Engine);
 };
 

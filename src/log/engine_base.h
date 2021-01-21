@@ -81,7 +81,9 @@ protected:
     void FinishLocalOpWithFailure(LocalOp* op, protocol::SharedLogResultType result,
                                   uint64_t metalog_progress = 0);
 
-    bool SendReadRequest(const IndexQueryResult& result);
+    bool SendIndexReadRequest(const View::Sequencer* sequencer_node,
+                              protocol::SharedLogMessage* request);
+    bool SendStorageReadRequest(const IndexQueryResult& result);
     bool SendSequencerMessage(uint16_t sequencer_id,
                               protocol::SharedLogMessage* message,
                               std::span<const char> payload = EMPTY_CHAR_SPAN);

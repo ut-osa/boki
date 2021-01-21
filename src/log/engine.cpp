@@ -153,7 +153,7 @@ void Engine::OnViewFinalized(const FinalizedView* finalized_view) {
 
 // Start handlers for local requests (from functions)
 
-#define ONHOLD_IF_FROM_FUTURE_VIEW(LOCAL_OP_VAR)                        \
+#define ONHOLD_IF_SEEN_FUTURE_VIEW(LOCAL_OP_VAR)                        \
     do {                                                                \
         if (current_view_ == nullptr                                    \
                 || GetLastViewId(LOCAL_OP_VAR) > current_view_->id()) { \
@@ -201,10 +201,11 @@ void Engine::HandleLocalRead(LocalOp* op) {
     HVLOG(1) << fmt::format("Handle local read: op_id={}, logspace={}, tag={}, direction={}",
                             op->id, op->user_logspace, op->user_tag, direction);
     onging_reads_.PutChecked(op->id, op);
-    Index::QueryResultVec query_results;
+    const View::Sequencer* sequencer_node = nullptr;
+    LockablePtr<Index> index_ptr;
     {
         absl::ReaderMutexLock view_lk(&view_mu_);
-        ONHOLD_IF_FROM_FUTURE_VIEW(op);
+        ONHOLD_IF_SEEN_FUTURE_VIEW(op);
         uint64_t query_seqnum = op->seqnum;
         uint16_t view_id = bits::HighHalf32(bits::HighHalf64(query_seqnum));
         if (direction < 0 && query_seqnum == kMaxLogSeqNum) {
@@ -215,10 +216,13 @@ void Engine::HandleLocalRead(LocalOp* op) {
             NOT_IMPLEMENTED();
         }
         uint32_t logspace_id = current_view_->LogSpaceIdentifier(op->user_logspace);
-        const View::Engine* engine_node = current_view_->GetEngineNode(my_node_id());
-        if (!engine_node->HasIndexFor(bits::LowHalf32(logspace_id))) {
-            NOT_IMPLEMENTED();
+        sequencer_node = current_view_->GetSequencerNode(bits::LowHalf32(logspace_id));
+        if (sequencer_node->IsIndexEngineNode(my_node_id())) {
+            index_ptr = index_collection_.GetLogSpaceChecked(logspace_id);
         }
+    }
+    if (index_ptr != nullptr) {
+        // Use local index
         IndexQuery query = {
             .direction = (direction > 0) ? IndexQuery::kReadNext : IndexQuery::kReadPrev,
             .origin_node_id = my_node_id(),
@@ -226,20 +230,26 @@ void Engine::HandleLocalRead(LocalOp* op) {
             .client_data = op->id,
             .user_logspace = op->user_logspace,
             .user_tag = op->user_tag,
-            .query_seqnum = query_seqnum,
+            .query_seqnum = op->seqnum,
             .metalog_progress = op->metalog_progress
         };
-        auto index_ptr = index_collection_.GetLogSpaceChecked(logspace_id);
+        Index::QueryResultVec query_results;
         {
             auto locked_index = index_ptr.Lock();
             locked_index->MakeQuery(query);
             locked_index->PollQueryResults(&query_results);
         }
+        ProcessIndexQueryResults(query_results);
+    } else {
+        SharedLogMessage request = BuildReadRequestMessage(op);
+        if (!SendIndexReadRequest(DCHECK_NOTNULL(sequencer_node), &request)) {
+            onging_reads_.RemoveChecked(op->id);
+            FinishLocalOpWithFailure(op, SharedLogResultType::DATA_LOST);
+        }
     }
-    ProcessIndexQueryResults(query_results);
 }
 
-#undef ONHOLD_IF_FROM_FUTURE_VIEW
+#undef ONHOLD_IF_SEEN_FUTURE_VIEW
 
 // Start handlers for remote messages
 
@@ -394,7 +404,7 @@ void Engine::ProcessIndexQueryResults(const Index::QueryResultVec& results) {
         uint64_t op_id = query.client_data;
         switch (result.state) {
         case IndexQueryResult::kFound:
-            if (!SendReadRequest(result)) {
+            if (!SendStorageReadRequest(result)) {
                 LocalOp* op = onging_reads_.PollChecked(op_id);
                 FinishLocalOpWithFailure(op, SharedLogResultType::DATA_LOST);
             }
@@ -421,6 +431,21 @@ void Engine::ProcessRequests(const std::vector<SharedLogRequest>& requests) {
             LocalOpHandler(reinterpret_cast<LocalOp*>(request.local_op));
         }
     }
+}
+
+protocol::SharedLogMessage Engine::BuildReadRequestMessage(LocalOp* op) {
+    DCHECK(  op->type == SharedLogOpType::READ_NEXT
+          || op->type == SharedLogOpType::READ_PREV);
+    int direction = (op->type == SharedLogOpType::READ_NEXT) ? 1 : -1;
+    SharedLogMessage request = SharedLogMessageHelper::NewReadMessage(direction);
+    request.origin_node_id = my_node_id();
+    request.hop_times = 1;
+    request.client_data = op->id;
+    request.user_logspace = op->user_logspace;
+    request.user_tag = op->user_tag;
+    request.query_seqnum = op->seqnum;
+    request.user_metalog_progress = op->metalog_progress;
+    return request;
 }
 
 }  // namespace log
