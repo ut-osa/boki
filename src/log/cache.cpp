@@ -22,7 +22,9 @@ static inline std::string EncodeLogEntry(const LogEntry& log_entry) {
     std::string encoded;
     size_t data_size = log_entry.data.size();
     encoded.resize(data_size + sizeof(LogMetaData));
-    memcpy(encoded.data(), log_entry.data.data(), data_size);
+    if (data_size > 0) {
+        memcpy(encoded.data(), log_entry.data.data(), data_size);
+    }
     memcpy(encoded.data() + data_size, &log_entry.metadata, sizeof(LogMetaData));
     return encoded;
 }
