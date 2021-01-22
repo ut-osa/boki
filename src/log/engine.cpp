@@ -415,10 +415,6 @@ void Engine::ProcessAppendResults(const LogProducer::AppendResultVec& results) {
     for (const LogProducer::AppendResult& result : results) {
         DCHECK_NE(result.seqnum, kInvalidLogSeqNum);
         LocalOp* op = reinterpret_cast<LocalOp*>(result.caller_data);
-        Message response = MessageHelper::NewSharedLogOpSucceeded(
-            SharedLogResultType::APPEND_OK, result.seqnum);
-        FinishLocalOpWithResponse(op, &response, result.metalog_progress);
-        // Put the newly created log entry into log cache
         LogMetaData log_metadata = {
             .user_logspace = op->user_logspace,
             .data_size = gsl::narrow_cast<uint32_t>(op->data.length()),
@@ -427,6 +423,9 @@ void Engine::ProcessAppendResults(const LogProducer::AppendResultVec& results) {
             .localid = result.localid
         };
         LogCachePut(log_metadata, op->data.to_span());
+        Message response = MessageHelper::NewSharedLogOpSucceeded(
+            SharedLogResultType::APPEND_OK, result.seqnum);
+        FinishLocalOpWithResponse(op, &response, result.metalog_progress);
     }
 }
 
