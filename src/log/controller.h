@@ -6,6 +6,8 @@
 #include "server/node_watcher.h"
 #include "log/view.h"
 
+#include <random>
+
 namespace faas {
 namespace log {
 
@@ -13,7 +15,7 @@ class Controller {
 public:
     static constexpr size_t kDefaultNumReplicas = 3;
 
-    Controller();
+    explicit Controller(uint32_t random_seed);
     ~Controller();
 
     void set_metalog_replicas(size_t value) { metalog_replicas_ = value; }
@@ -27,6 +29,8 @@ public:
 private:
     enum State { kCreated, kViewActive, kViewFrozen };
 
+    std::mt19937 rnd_gen_;
+
     size_t metalog_replicas_;
     size_t userlog_replicas_;
     size_t index_replicas_;
@@ -37,9 +41,9 @@ private:
     server::NodeWatcher node_watcher_;
     std::unique_ptr<zk_utils::DirWatcher> cmd_watcher_;
 
-    absl::flat_hash_set</* node_id */ uint16_t> sequencer_nodes_;
-    absl::flat_hash_set</* node_id */ uint16_t> engine_nodes_;
-    absl::flat_hash_set</* node_id */ uint16_t> storage_nodes_;
+    std::set</* node_id */ uint16_t> sequencer_nodes_;
+    std::set</* node_id */ uint16_t> engine_nodes_;
+    std::set</* node_id */ uint16_t> storage_nodes_;
 
     std::vector<std::unique_ptr<View>> views_;
 

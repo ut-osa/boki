@@ -84,12 +84,12 @@ protected:
     bool SendIndexReadRequest(const View::Sequencer* sequencer_node,
                               protocol::SharedLogMessage* request);
     bool SendStorageReadRequest(const IndexQueryResult& result);
+    void SendReadFailureResponse(const IndexQuery& query,
+                                 protocol::SharedLogResultType result_type,
+                                 uint64_t metalog_progress = 0);
     bool SendSequencerMessage(uint16_t sequencer_id,
                               protocol::SharedLogMessage* message,
                               std::span<const char> payload = EMPTY_CHAR_SPAN);
-    bool SendEngineResponse(const protocol::SharedLogMessage& request,
-                            protocol::SharedLogMessage* response,
-                            std::span<const char> payload = EMPTY_CHAR_SPAN);
 
     server::IOWorker* SomeIOWorker();
 

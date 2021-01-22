@@ -1,6 +1,9 @@
 #include "log/controller.h"
 
-#include "common/flags.h"
+#include "log/flags.h"
+#include "utils/random.h"
+#include "utils/bits.h"
+#include "utils/hash.h"
 
 #define log_header_ "Controller: "
 
@@ -9,13 +12,16 @@ namespace log {
 
 using server::NodeWatcher;
 
-Controller::Controller()
-    : metalog_replicas_(kDefaultNumReplicas),
+Controller::Controller(uint32_t random_seed)
+    : rnd_gen_(random_seed),
+      metalog_replicas_(kDefaultNumReplicas),
       userlog_replicas_(kDefaultNumReplicas),
       index_replicas_(kDefaultNumReplicas),
       state_(kCreated),
       zk_session_(absl::GetFlag(FLAGS_zookeeper_host),
-                  absl::GetFlag(FLAGS_zookeeper_root_path)) {}
+                  absl::GetFlag(FLAGS_zookeeper_root_path)) {
+    LOG(INFO) << fmt::format("Random seed is {}", bits::HexStr0x(random_seed));
+}
 
 Controller::~Controller() {}
 
@@ -145,10 +151,15 @@ void Controller::StartCommandHandler() {
                               view_proto.engine_nodes_size(),
                               view_proto.storage_nodes_size());
 
-    // Now all maps to the first sequencer
-    // TODO: implement hashing properly
-    view_proto.set_log_space_hash_seed(0);
-    view_proto.add_log_space_hash_tokens(view_proto.sequencer_nodes(0));
+    view_proto.set_log_space_hash_seed(hash::xxHash64(rnd_gen_()));
+    std::vector<uint32_t> tokens(absl::GetFlag(FLAGS_slog_log_space_hash_tokens));
+    for (size_t i = 0; i < tokens.size(); i++) {
+        tokens[i] = view_proto.sequencer_nodes(i % sequencer_nodes_.size());
+    }
+    std::shuffle(tokens.begin(), tokens.end(), rnd_gen_);
+    for (size_t i = 0; i < tokens.size(); i++) {
+        view_proto.add_log_space_hash_tokens(tokens[i]);
+    }
 
     for (size_t i = 0; i < engine_nodes_.size() * userlog_replicas_; i++) {
         view_proto.add_storage_plan(

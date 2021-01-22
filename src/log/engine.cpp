@@ -241,6 +241,9 @@ void Engine::HandleLocalRead(LocalOp* op) {
         }
         ProcessIndexQueryResults(query_results);
     } else {
+        HVLOG(1) << fmt::format("There is no local index for sequencer {}, "
+                                "will send request to remote engine node",
+                                sequencer_node->node_id());
         SharedLogMessage request = BuildReadRequestMessage(op);
         if (!SendIndexReadRequest(DCHECK_NOTNULL(sequencer_node), &request)) {
             onging_reads_.RemoveChecked(op->id);
@@ -278,7 +281,30 @@ void Engine::HandleRemoteRead(const SharedLogMessage& request) {
     SharedLogOpType op_type = SharedLogMessageHelper::GetOpType(request);
     DCHECK(  op_type == SharedLogOpType::READ_NEXT
           || op_type == SharedLogOpType::READ_PREV);
-    NOT_IMPLEMENTED();
+    LockablePtr<Index> index_ptr;
+    {
+        absl::ReaderMutexLock view_lk(&view_mu_);
+        ONHOLD_IF_FROM_FUTURE_VIEW(request, EMPTY_CHAR_SPAN);
+        index_ptr = index_collection_.GetLogSpaceChecked(request.logspace_id);
+    }
+    IndexQuery query = {
+        .direction = (op_type == SharedLogOpType::READ_NEXT) ? IndexQuery::kReadNext
+                                                             : IndexQuery::kReadPrev,
+        .origin_node_id = request.origin_node_id,
+        .hop_times = request.hop_times,
+        .client_data = request.client_data,
+        .user_logspace = request.user_logspace,
+        .user_tag = request.user_tag,
+        .query_seqnum = request.query_seqnum,
+        .metalog_progress = request.user_metalog_progress
+    };
+    Index::QueryResultVec query_results;
+    {
+        auto locked_index = index_ptr.Lock();
+        locked_index->MakeQuery(query);
+        locked_index->PollQueryResults(&query_results);
+    }
+    ProcessIndexQueryResults(query_results);
 }
 
 void Engine::OnRecvNewMetaLogs(const SharedLogMessage& message,
@@ -398,21 +424,26 @@ void Engine::ProcessAppendResults(const LogProducer::AppendResultVec& results) {
 void Engine::ProcessIndexQueryResults(const Index::QueryResultVec& results) {
     for (const IndexQueryResult& result : results) {
         const IndexQuery& query = result.original_query;
-        if (query.origin_node_id != my_node_id()) {
-            NOT_IMPLEMENTED();
-        }
-        uint64_t op_id = query.client_data;
         switch (result.state) {
         case IndexQueryResult::kFound:
             if (!SendStorageReadRequest(result)) {
-                LocalOp* op = onging_reads_.PollChecked(op_id);
-                FinishLocalOpWithFailure(op, SharedLogResultType::DATA_LOST);
+                if (query.origin_node_id == my_node_id()) {
+                    LocalOp* op = onging_reads_.PollChecked(query.client_data);
+                    FinishLocalOpWithFailure(op, SharedLogResultType::DATA_LOST);
+                } else {
+                    SendReadFailureResponse(query, SharedLogResultType::DATA_LOST);
+                }
             }
             break;
         case IndexQueryResult::kEmpty:
-            FinishLocalOpWithFailure(
-                onging_reads_.PollChecked(op_id), SharedLogResultType::EMPTY,
-                result.metalog_progress);
+            if (query.origin_node_id == my_node_id()) {
+                FinishLocalOpWithFailure(
+                    onging_reads_.PollChecked(query.client_data),
+                    SharedLogResultType::EMPTY, result.metalog_progress);
+            } else {
+                SendReadFailureResponse(
+                    query, SharedLogResultType::EMPTY, result.metalog_progress);
+            }
             break;
         case IndexQueryResult::kContinue:
             NOT_IMPLEMENTED();

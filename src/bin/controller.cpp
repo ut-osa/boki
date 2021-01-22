@@ -5,6 +5,7 @@
 
 #include <signal.h>
 
+ABSL_FLAG(uint32_t, random_seed, 23333, "Random seed");
 ABSL_FLAG(size_t, metalog_replicas, 3, "Replicas for meta logs");
 ABSL_FLAG(size_t, userlog_replicas, 3, "Replicas for users' logs");
 ABSL_FLAG(size_t, index_replicas, 3, "Replicas for log index");
@@ -23,7 +24,8 @@ void ControllerMain(int argc, char* argv[]) {
     base::InitMain(argc, argv);
     base::SetInterruptHandler(StopControllerHandler);
 
-    auto controller = std::make_unique<log::Controller>();
+    auto controller = std::make_unique<log::Controller>(
+        absl::GetFlag(FLAGS_random_seed));
 
     controller->set_metalog_replicas(absl::GetFlag(FLAGS_metalog_replicas));
     controller->set_userlog_replicas(absl::GetFlag(FLAGS_userlog_replicas));
