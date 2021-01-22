@@ -196,6 +196,7 @@ void SequencerBase::OnRecvSharedLogMessage(int conn_type, uint16_t src_node_id,
 bool SequencerBase::SendSharedLogMessage(protocol::ConnType conn_type, uint16_t dst_node_id,
                                          const SharedLogMessage& message,
                                          std::span<const char> payload) {
+    DCHECK_EQ(size_t{message.payload_size}, payload.size());
     EgressHub* hub = CurrentIOWorkerChecked()->PickOrCreateConnection<EgressHub>(
         ServerBase::GetEgressHubTypeId(conn_type, dst_node_id),
         absl::bind_front(&SequencerBase::CreateEgressHub, this, conn_type, dst_node_id));
