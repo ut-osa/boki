@@ -332,6 +332,7 @@ void LogStorage::OnNewLogs(uint32_t metalog_seqnum,
         // Build the log entry for live_log_entries_
         LogEntry* log_entry = pending_log_entries_[localid].release();
         pending_log_entries_.erase(localid);
+        HVLOG(1) << fmt::format("Store the log entry (seqnum {})", bits::HexStr0x(seqnum));
         log_entry->metadata.seqnum = seqnum;
         std::shared_ptr<const LogEntry> log_entry_ptr(log_entry);
         // Add the new entry to index data

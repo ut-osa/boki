@@ -31,6 +31,8 @@ ABSL_FLAG(bool, rocksdb_enable_compression, false, "");
         }                                                   \
     } while (0)
 
+#define log_header_ "LogDB: "
+
 namespace faas {
 namespace log {
 
@@ -48,6 +50,7 @@ RocksDBBackend::RocksDBBackend(std::string_view db_path) {
 RocksDBBackend::~RocksDBBackend() {}
 
 void RocksDBBackend::InstallLogSpace(uint32_t logspace_id) {
+    HLOG(INFO) << fmt::format("Install log space {}", bits::HexStr(logspace_id));
     rocksdb::ColumnFamilyOptions options;
     if (absl::GetFlag(FLAGS_rocksdb_enable_compression)) {
         options.compression = rocksdb::kZSTD;
@@ -113,6 +116,7 @@ TkrzwDBMBackend::~TkrzwDBMBackend() {
 }
 
 void TkrzwDBMBackend::InstallLogSpace(uint32_t logspace_id) {
+    HLOG(INFO) << fmt::format("Install log space {}", bits::HexStr(logspace_id));
     tkrzw::DBM* db_ptr = nullptr;
     if (type_ == kHashDBM) {
         tkrzw::HashDBM* db = new tkrzw::HashDBM();

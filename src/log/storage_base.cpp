@@ -111,7 +111,7 @@ static inline std::string SerializedLogEntry(const LogEntry& log_entry) {
 
 bool StorageBase::GetLogEntryFromDB(uint64_t seqnum, LogEntryProto* log_entry_proto) {
     std::string data;
-    bool found = db_->Get(bits::HighHalf32(seqnum), bits::LowHalf32(seqnum), &data);
+    bool found = db_->Get(bits::LowHalf64(seqnum), bits::LowHalf64(seqnum), &data);
     if (!found) {
         return false;
     }
@@ -124,7 +124,7 @@ bool StorageBase::GetLogEntryFromDB(uint64_t seqnum, LogEntryProto* log_entry_pr
 void StorageBase::PutLogEntryToDB(const LogEntry& log_entry) {
     uint64_t seqnum = log_entry.metadata.seqnum;
     std::string data = SerializedLogEntry(log_entry);
-    db_->Put(bits::HighHalf32(seqnum), bits::LowHalf32(seqnum), STRING_AS_SPAN(data));
+    db_->Put(bits::HighHalf64(seqnum), bits::LowHalf64(seqnum), STRING_AS_SPAN(data));
 }
 
 void StorageBase::SendIndexData(const View* view,
