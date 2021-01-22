@@ -43,7 +43,8 @@ static void SignalHandler(int signo) {
         for (size_t i = 0; i < n; i++) {
             cleanup_fns[i]();
         }
-        RaiseToDefaultHandler(signo);
+        fprintf(stderr, "Exit with failure\n");
+        exit(EXIT_FAILURE);
     } else if (signo == SIGINT) {
         if (sigint_handler) {
             sigint_handler();

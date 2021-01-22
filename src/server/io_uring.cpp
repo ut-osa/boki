@@ -89,11 +89,10 @@ void IOUring::CleanUpFn() {
     size_t n_fd_slots = fds_.size();
     for (size_t i = 0; i < n_fd_slots; i++) {
         int fd = fds_[i].fd;
-        if (fd != -1) {
-            close(fd);
+        if (fd != -1 && close(fd) != 0) {
+            fprintf(stderr, "Failed to close fd %d: %s\n", fd, strerror(errno));
         }
     }
-    io_uring_unregister_files(&ring_);
     io_uring_queue_exit(&ring_);
 }
 
