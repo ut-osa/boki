@@ -119,7 +119,7 @@ private:
     absl::flat_hash_map</* full_call_id */ uint64_t, FnCallContext>
         fn_call_ctx_ ABSL_GUARDED_BY(fn_ctx_mu_);
 
-    LRUCache log_cache_;
+    std::unique_ptr<LRUCache> log_cache_;
 
     void SetupZKWatchers();
     void SetupTimers();

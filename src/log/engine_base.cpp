@@ -24,8 +24,7 @@ using protocol::SharedLogResultType;
 EngineBase::EngineBase(engine::Engine* engine)
     : node_id_(engine->node_id_),
       engine_(engine),
-      next_local_op_id_(0),
-      log_cache_(absl::GetFlag(FLAGS_slog_engine_cache_cap_mb)) {}
+      next_local_op_id_(0) {}
 
 EngineBase::~EngineBase() {}
 
@@ -36,6 +35,11 @@ zk::ZKSession* EngineBase::zk_session() {
 void EngineBase::Start() {
     SetupZKWatchers();
     SetupTimers();
+    // Setup cache
+    if (absl::GetFlag(FLAGS_slog_engine_enable_cache)) {
+        log_cache_.reset(
+            new LRUCache(absl::GetFlag(FLAGS_slog_engine_cache_cap_mb)));
+    }
 }
 
 void EngineBase::Stop() {}
@@ -239,13 +243,19 @@ void EngineBase::FinishLocalOpWithFailure(LocalOp* op, SharedLogResultType resul
 }
 
 void EngineBase::LogCachePut(const LogEntry& log_entry) {
+    if (log_cache_ == nullptr) {
+        return;
+    }
     HVLOG(1) << fmt::format("Store cache for log entry (seqnum {})",
                             bits::HexStr0x(log_entry.metadata.seqnum));
-    log_cache_.Put(log_entry);
+    log_cache_->Put(log_entry);
 }
 
 bool EngineBase::LogCacheGet(uint64_t seqnum, LogEntry* log_entry) {
-    return log_cache_.Get(seqnum, log_entry);
+    if (log_cache_ == nullptr) {
+        return false;
+    }
+    return log_cache_->Get(seqnum, log_entry);
 }
 
 bool EngineBase::SendIndexReadRequest(const View::Sequencer* sequencer_node,

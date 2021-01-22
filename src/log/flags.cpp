@@ -7,6 +7,7 @@ ABSL_FLAG(size_t, slog_log_space_hash_tokens, 128, "");
 ABSL_FLAG(bool, slog_enable_statecheck, false, "");
 ABSL_FLAG(int, slog_statecheck_interval_sec, 10, "");
 
+ABSL_FLAG(bool, slog_engine_enable_cache, false, "");
 ABSL_FLAG(int, slog_engine_cache_cap_mb, 1024, "");
 
 ABSL_FLAG(std::string, slog_storage_backend, "rocksdb",
