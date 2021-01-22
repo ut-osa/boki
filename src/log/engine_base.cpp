@@ -24,7 +24,8 @@ using protocol::SharedLogResultType;
 EngineBase::EngineBase(engine::Engine* engine)
     : node_id_(engine->node_id_),
       engine_(engine),
-      next_local_op_id_(0) {}
+      next_local_op_id_(0),
+      log_cache_(absl::GetFlag(FLAGS_slog_engine_cache_cap_mb)) {}
 
 EngineBase::~EngineBase() {}
 
@@ -237,6 +238,14 @@ void EngineBase::FinishLocalOpWithFailure(LocalOp* op, SharedLogResultType resul
     FinishLocalOpWithResponse(op, &response, metalog_progress);
 }
 
+void EngineBase::LogCachePut(const LogEntry& log_entry) {
+    log_cache_.Put(log_entry);
+}
+
+bool EngineBase::LogCacheGet(uint64_t seqnum, LogEntry* log_entry) {
+    return log_cache_.Get(seqnum, log_entry);
+}
+
 bool EngineBase::SendIndexReadRequest(const View::Sequencer* sequencer_node,
                                       SharedLogMessage* request) {
     static constexpr int kMaxRetries = 3;
@@ -278,22 +287,28 @@ bool EngineBase::SendStorageReadRequest(const IndexQueryResult& result) {
     return false;
 }
 
-void EngineBase::SendReadFailureResponse(const IndexQuery& query,
-                                         protocol::SharedLogResultType result_type,
-                                         uint64_t metalog_progress) {
-    SharedLogMessage request = SharedLogMessageHelper::NewResponse(result_type);
-    request.user_metalog_progress = metalog_progress;
-    request.origin_node_id = node_id_;
-    request.hop_times = query.hop_times + 1;
-    request.client_data = query.client_data;
+void EngineBase::SendReadResponse(const IndexQuery& query,
+                                  protocol::SharedLogMessage* response,
+                                  std::span<const char> payload) {
+    response->origin_node_id = node_id_;
+    response->hop_times = query.hop_times + 1;
+    response->client_data = query.client_data;
     uint16_t engine_id = query.origin_node_id;
     bool success = engine_->SendSharedLogMessage(
         protocol::ConnType::SLOG_ENGINE_TO_ENGINE,
-        engine_id, request, /* payload= */ EMPTY_CHAR_SPAN);
+        engine_id, *response, payload);
     if (!success) {
-        HLOG(WARNING) << fmt::format("Failed to send failure response to engine {}",
+        HLOG(WARNING) << fmt::format("Failed to send read response to engine {}",
                                      engine_id);
     }
+}
+
+void EngineBase::SendReadFailureResponse(const IndexQuery& query,
+                                         protocol::SharedLogResultType result_type,
+                                         uint64_t metalog_progress) {
+    SharedLogMessage response = SharedLogMessageHelper::NewResponse(result_type);
+    response.user_metalog_progress = metalog_progress;
+    SendReadResponse(query, &response);
 }
 
 bool EngineBase::SendSequencerMessage(uint16_t sequencer_id,

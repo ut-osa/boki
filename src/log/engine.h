@@ -53,6 +53,8 @@ private:
     void ProcessIndexQueryResults(const Index::QueryResultVec& results);
     void ProcessRequests(const std::vector<SharedLogRequest>& requests);
 
+    void ProcessIndexFoundResult(const IndexQueryResult& query_result);
+
     inline uint16_t GetLastViewId(LocalOp* op) {
         return bits::HighHalf32(bits::HighHalf64(op->metalog_progress));
     }
@@ -68,6 +70,8 @@ private:
     }
 
     protocol::SharedLogMessage BuildReadRequestMessage(LocalOp* op);
+    protocol::Message BuildLocalReadOKResponse(uint64_t seqnum, uint64_t user_tag,
+                                               std::span<const char> log_data);
 
     DISALLOW_COPY_AND_ASSIGN(Engine);
 };

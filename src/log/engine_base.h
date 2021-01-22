@@ -5,6 +5,7 @@
 #include "log/view.h"
 #include "log/view_watcher.h"
 #include "log/index.h"
+#include "log/cache.h"
 #include "server/io_worker.h"
 #include "utils/object_pool.h"
 #include "utils/appendable_buffer.h"
@@ -81,9 +82,15 @@ protected:
     void FinishLocalOpWithFailure(LocalOp* op, protocol::SharedLogResultType result,
                                   uint64_t metalog_progress = 0);
 
+    void LogCachePut(const LogEntry& log_entry);
+    bool LogCacheGet(uint64_t seqnum, LogEntry* log_entry);
+
     bool SendIndexReadRequest(const View::Sequencer* sequencer_node,
                               protocol::SharedLogMessage* request);
     bool SendStorageReadRequest(const IndexQueryResult& result);
+    void SendReadResponse(const IndexQuery& query,
+                          protocol::SharedLogMessage* response,
+                          std::span<const char> payload = EMPTY_CHAR_SPAN);
     void SendReadFailureResponse(const IndexQuery& query,
                                  protocol::SharedLogResultType result_type,
                                  uint64_t metalog_progress = 0);
@@ -111,6 +118,8 @@ private:
     absl::Mutex fn_ctx_mu_;
     absl::flat_hash_map</* full_call_id */ uint64_t, FnCallContext>
         fn_call_ctx_ ABSL_GUARDED_BY(fn_ctx_mu_);
+
+    LRUCache log_cache_;
 
     void SetupZKWatchers();
     void SetupTimers();

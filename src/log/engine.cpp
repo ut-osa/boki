@@ -243,9 +243,10 @@ void Engine::HandleLocalRead(LocalOp* op) {
     } else {
         HVLOG(1) << fmt::format("There is no local index for sequencer {}, "
                                 "will send request to remote engine node",
-                                sequencer_node->node_id());
+                                DCHECK_NOTNULL(sequencer_node)->node_id());
         SharedLogMessage request = BuildReadRequestMessage(op);
-        if (!SendIndexReadRequest(DCHECK_NOTNULL(sequencer_node), &request)) {
+        bool send_success = SendIndexReadRequest(DCHECK_NOTNULL(sequencer_node), &request);
+        if (!send_success) {
             onging_reads_.RemoveChecked(op->id);
             FinishLocalOpWithFailure(op, SharedLogResultType::DATA_LOST);
         }
@@ -390,14 +391,13 @@ void Engine::OnRecvResponse(const SharedLogMessage& message,
         }
         if (result == SharedLogResultType::READ_OK) {
             uint64_t seqnum = bits::JoinTwo32(message.logspace_id, message.seqnum_lowhalf);
-            Message response = MessageHelper::NewSharedLogOpSucceeded(
-                SharedLogResultType::READ_OK, seqnum);
-            response.log_tag = message.user_tag;
-            if (payload.size() > MESSAGE_INLINE_DATA_SIZE) {
-                HLOG(FATAL) << fmt::format("Log data too large: size={}", payload.size());
-            }
-            MessageHelper::SetInlineData(&response, payload);
+            Message response = BuildLocalReadOKResponse(seqnum, message.user_tag, payload);
             FinishLocalOpWithResponse(op, &response, message.user_metalog_progress);
+            // Put the received log entry into log cache
+            LogEntry log_entry;
+            log_entry.metadata = log_utils::GetMetaDataFromMessage(message);
+            log_entry.data.assign(payload.data(), payload.size());
+            LogCachePut(log_entry);
         } else if (result == SharedLogResultType::EMPTY) {
             FinishLocalOpWithFailure(
                 op, SharedLogResultType::EMPTY, message.user_metalog_progress);
@@ -418,6 +418,50 @@ void Engine::ProcessAppendResults(const LogProducer::AppendResultVec& results) {
         Message response = MessageHelper::NewSharedLogOpSucceeded(
             SharedLogResultType::APPEND_OK, result.seqnum);
         FinishLocalOpWithResponse(op, &response, result.metalog_progress);
+        // Put the newly created log entry into log cache
+        LogEntry log_entry;
+        log_entry.metadata = LogMetaData {
+            .user_logspace = op->user_logspace,
+            .user_tag = op->user_tag,
+            .seqnum = result.seqnum,
+            .localid = result.localid
+        };
+        std::span<const char> data = op->data.to_span();
+        log_entry.data.assign(data.data(), data.size());
+        LogCachePut(log_entry);
+    }
+}
+
+void Engine::ProcessIndexFoundResult(const IndexQueryResult& query_result) {
+    DCHECK(query_result.state == IndexQueryResult::kFound);
+    const IndexQuery& query = query_result.original_query;
+    bool local_request = (query.origin_node_id == my_node_id());
+    uint64_t seqnum = query_result.found_result.seqnum;
+    LogEntry log_entry;
+    bool cache_hit = LogCacheGet(seqnum, &log_entry);
+    bool send_success = false;
+    if (cache_hit) {
+        if (local_request) {
+            LocalOp* op = onging_reads_.PollChecked(query.client_data);
+            Message response = BuildLocalReadOKResponse(
+                seqnum, log_entry.metadata.user_tag, STRING_AS_SPAN(log_entry.data));
+            FinishLocalOpWithResponse(op, &response, query_result.metalog_progress);
+        } else {
+            SharedLogMessage response = SharedLogMessageHelper::NewReadOkResponse();
+            log_utils::PopulateMetaDataToMessage(log_entry.metadata, &response);
+            response.user_metalog_progress = query_result.metalog_progress;
+            SendReadResponse(query, &response, STRING_AS_SPAN(log_entry.data));
+        }
+    } else {
+        send_success = SendStorageReadRequest(query_result);
+    }
+    if (!cache_hit && !send_success) {
+        if (local_request) {
+            LocalOp* op = onging_reads_.PollChecked(query.client_data);
+            FinishLocalOpWithFailure(op, SharedLogResultType::DATA_LOST);
+        } else {
+            SendReadFailureResponse(query, SharedLogResultType::DATA_LOST);
+        }
     }
 }
 
@@ -426,14 +470,7 @@ void Engine::ProcessIndexQueryResults(const Index::QueryResultVec& results) {
         const IndexQuery& query = result.original_query;
         switch (result.state) {
         case IndexQueryResult::kFound:
-            if (!SendStorageReadRequest(result)) {
-                if (query.origin_node_id == my_node_id()) {
-                    LocalOp* op = onging_reads_.PollChecked(query.client_data);
-                    FinishLocalOpWithFailure(op, SharedLogResultType::DATA_LOST);
-                } else {
-                    SendReadFailureResponse(query, SharedLogResultType::DATA_LOST);
-                }
-            }
+            ProcessIndexFoundResult(result);
             break;
         case IndexQueryResult::kEmpty:
             if (query.origin_node_id == my_node_id()) {
@@ -464,7 +501,7 @@ void Engine::ProcessRequests(const std::vector<SharedLogRequest>& requests) {
     }
 }
 
-protocol::SharedLogMessage Engine::BuildReadRequestMessage(LocalOp* op) {
+SharedLogMessage Engine::BuildReadRequestMessage(LocalOp* op) {
     DCHECK(  op->type == SharedLogOpType::READ_NEXT
           || op->type == SharedLogOpType::READ_PREV);
     int direction = (op->type == SharedLogOpType::READ_NEXT) ? 1 : -1;
@@ -477,6 +514,18 @@ protocol::SharedLogMessage Engine::BuildReadRequestMessage(LocalOp* op) {
     request.query_seqnum = op->seqnum;
     request.user_metalog_progress = op->metalog_progress;
     return request;
+}
+
+Message Engine::BuildLocalReadOKResponse(uint64_t seqnum, uint64_t user_tag,
+                                         std::span<const char> log_data) {
+    Message response = MessageHelper::NewSharedLogOpSucceeded(
+        SharedLogResultType::READ_OK, seqnum);
+    response.log_tag = user_tag;
+    if (log_data.size() > MESSAGE_INLINE_DATA_SIZE) {
+        HLOG(FATAL) << fmt::format("Log data too large: size={}", log_data.size());
+    }
+    MessageHelper::SetInlineData(&response, log_data);
+    return response;
 }
 
 }  // namespace log

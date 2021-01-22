@@ -33,6 +33,7 @@ struct SharedLogRequest {
 
 struct LogMetaData {
     uint32_t user_logspace;
+    uint32_t __padding__;
     uint64_t user_tag;
     uint64_t seqnum;
     uint64_t localid;
