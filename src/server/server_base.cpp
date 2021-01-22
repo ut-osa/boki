@@ -292,8 +292,8 @@ void ServerBase::CreatePeriodicTimer(int timer_type, absl::Duration interval,
     absl::Time initial = absl::Now() + absl::Seconds(1);
     ForEachIOWorker([&, this] (IOWorker* io_worker) {
         Timer* timer = new Timer(timer_type, cb);
-        RegisterConnection(io_worker, timer);
         timer->SetPeriodic(initial, interval * io_workers_.size());
+        RegisterConnection(io_worker, timer);
         timers_.insert(std::unique_ptr<Timer>(timer));
         initial += interval;
     });
