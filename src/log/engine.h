@@ -63,6 +63,7 @@ private:
         DCHECK(op->type == protocol::SharedLogOpType::APPEND);
         return LogMetaData {
             .user_logspace = op->user_logspace,
+            .data_size = gsl::narrow_cast<uint32_t>(op->data.length()),
             .user_tag = op->user_tag,
             .seqnum = 0,
             .localid = 0

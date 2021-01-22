@@ -18,21 +18,23 @@ LRUCache::LRUCache(int mem_cap_mb) {
 LRUCache::~LRUCache() {}
 
 namespace {
-static inline std::string EncodeLogEntry(const LogEntry& log_entry) {
+static inline std::string EncodeLogEntry(const LogMetaData& log_metadata,
+                                         std::span<const char> log_data) {
     std::string encoded;
-    size_t data_size = log_entry.data.size();
-    encoded.resize(data_size + sizeof(LogMetaData));
-    if (data_size > 0) {
-        memcpy(encoded.data(), log_entry.data.data(), data_size);
+    DCHECK_EQ(size_t{log_metadata.data_size}, log_data.size());
+    encoded.resize(log_data.size() + sizeof(LogMetaData));
+    if (log_data.size() > 0) {
+        memcpy(encoded.data(), log_data.data(), log_data.size());
     }
-    memcpy(encoded.data() + data_size, &log_entry.metadata, sizeof(LogMetaData));
+    memcpy(encoded.data() + log_data.size(), &log_metadata, sizeof(LogMetaData));
     return encoded;
 }
 
-static inline void DecodeLogEntry(std::string&& encoded, LogEntry* log_entry) {
+static inline void DecodeLogEntry(std::string encoded, LogEntry* log_entry) {
     DCHECK_GE(encoded.size(), sizeof(LogMetaData));
     size_t data_size = encoded.size() - sizeof(LogMetaData);
     memcpy(&log_entry->metadata, encoded.data() + data_size, sizeof(LogMetaData));
+    DCHECK_EQ(size_t{log_entry->metadata.data_size}, data_size);
     if (data_size > 0) {
         log_entry->data = std::move(encoded);
         DCHECK_GT(log_entry->data.size(), data_size);
@@ -43,9 +45,10 @@ static inline void DecodeLogEntry(std::string&& encoded, LogEntry* log_entry) {
 }
 }  // namespace
 
-void LRUCache::Put(const LogEntry& log_entry) {
-    std::string key_str = bits::HexStr(log_entry.metadata.seqnum);
-    std::string data = EncodeLogEntry(log_entry);
+void LRUCache::Put(const LogMetaData& log_metadata,
+                   std::span<const char> log_data) {
+    std::string key_str = bits::HexStr(log_metadata.seqnum);
+    std::string data = EncodeLogEntry(log_metadata, log_data);
     dbm_->Set(key_str, data, /* overwrite= */ false);
 }
 
@@ -55,6 +58,7 @@ bool LRUCache::Get(uint64_t seqnum, LogEntry* log_entry) {
     auto status = dbm_->Get(key_str, &data);
     if (status.IsOK()) {
         DecodeLogEntry(std::move(data), log_entry);
+        DCHECK_EQ(seqnum, log_entry->metadata.seqnum);
         return true;
     } else {
         return false;

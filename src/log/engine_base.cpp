@@ -242,13 +242,14 @@ void EngineBase::FinishLocalOpWithFailure(LocalOp* op, SharedLogResultType resul
     FinishLocalOpWithResponse(op, &response, metalog_progress);
 }
 
-void EngineBase::LogCachePut(const LogEntry& log_entry) {
+void EngineBase::LogCachePut(const LogMetaData& log_metadata,
+                             std::span<const char> log_data) {
     if (log_cache_ == nullptr) {
         return;
     }
     HVLOG(1) << fmt::format("Store cache for log entry (seqnum {})",
-                            bits::HexStr0x(log_entry.metadata.seqnum));
-    log_cache_->Put(log_entry);
+                            bits::HexStr0x(log_metadata.seqnum));
+    log_cache_->Put(log_metadata, log_data);
 }
 
 bool EngineBase::LogCacheGet(uint64_t seqnum, LogEntry* log_entry) {

@@ -65,6 +65,7 @@ MetaLogsProto MetaLogsFromPayload(std::span<const char> payload) {
 LogMetaData GetMetaDataFromMessage(const SharedLogMessage& message) {
     return LogMetaData {
         .user_logspace = message.user_logspace,
+        .data_size = message.payload_size,
         .user_tag = message.user_tag,
         .seqnum = bits::JoinTwo32(message.logspace_id, message.seqnum_lowhalf),
         .localid = message.localid

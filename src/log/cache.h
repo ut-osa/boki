@@ -13,7 +13,7 @@ public:
     explicit LRUCache(int mem_cap_mb);
     ~LRUCache();
 
-    void Put(const LogEntry& log_entry);
+    void Put(const LogMetaData& log_metadata, std::span<const char> log_data);
     bool Get(uint64_t seqnum, LogEntry* log_entry);
 
 private:

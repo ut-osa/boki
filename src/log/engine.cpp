@@ -396,10 +396,8 @@ void Engine::OnRecvResponse(const SharedLogMessage& message,
             Message response = BuildLocalReadOKResponse(seqnum, message.user_tag, payload);
             FinishLocalOpWithResponse(op, &response, message.user_metalog_progress);
             // Put the received log entry into log cache
-            LogEntry log_entry;
-            log_entry.metadata = log_utils::GetMetaDataFromMessage(message);
-            log_entry.data.assign(payload.data(), payload.size());
-            LogCachePut(log_entry);
+            LogMetaData log_metadata = log_utils::GetMetaDataFromMessage(message);
+            LogCachePut(log_metadata, payload);
         } else if (result == SharedLogResultType::EMPTY) {
             FinishLocalOpWithFailure(
                 op, SharedLogResultType::EMPTY, message.user_metalog_progress);
@@ -421,16 +419,14 @@ void Engine::ProcessAppendResults(const LogProducer::AppendResultVec& results) {
             SharedLogResultType::APPEND_OK, result.seqnum);
         FinishLocalOpWithResponse(op, &response, result.metalog_progress);
         // Put the newly created log entry into log cache
-        LogEntry log_entry;
-        log_entry.metadata = LogMetaData {
+        LogMetaData log_metadata = {
             .user_logspace = op->user_logspace,
+            .data_size = gsl::narrow_cast<uint32_t>(op->data.length()),
             .user_tag = op->user_tag,
             .seqnum = result.seqnum,
             .localid = result.localid
         };
-        std::span<const char> data = op->data.to_span();
-        log_entry.data.assign(data.data(), data.size());
-        LogCachePut(log_entry);
+        LogCachePut(log_metadata, op->data.to_span());
     }
 }
 

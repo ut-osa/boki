@@ -82,7 +82,7 @@ protected:
     void FinishLocalOpWithFailure(LocalOp* op, protocol::SharedLogResultType result,
                                   uint64_t metalog_progress = 0);
 
-    void LogCachePut(const LogEntry& log_entry);
+    void LogCachePut(const LogMetaData& log_metadata, std::span<const char> log_data);
     bool LogCacheGet(uint64_t seqnum, LogEntry* log_entry);
 
     bool SendIndexReadRequest(const View::Sequencer* sequencer_node,

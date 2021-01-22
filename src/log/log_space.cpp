@@ -221,6 +221,7 @@ LogStorage::~LogStorage() {}
 bool LogStorage::Store(const LogMetaData& log_metadata,
                        std::span<const char> log_data) {
     uint64_t localid = log_metadata.localid;
+    DCHECK_EQ(size_t{log_metadata.data_size}, log_data.size());
     uint16_t engine_id = gsl::narrow_cast<uint16_t>(bits::HighHalf64(localid));
     HVLOG(1) << fmt::format("Store log from engine {} with localid {}",
                             engine_id, bits::HexStr0x(localid));

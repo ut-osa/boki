@@ -33,10 +33,12 @@ struct SharedLogRequest {
 
 struct LogMetaData {
     uint32_t user_logspace;
+    uint32_t data_size;
     uint64_t user_tag;
     uint64_t seqnum;
     uint64_t localid;
 };
+static_assert(sizeof(LogMetaData) == 32);
 
 struct LogEntry {
     LogMetaData metadata;
