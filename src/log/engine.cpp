@@ -391,6 +391,8 @@ void Engine::OnRecvResponse(const SharedLogMessage& message,
         }
         if (result == SharedLogResultType::READ_OK) {
             uint64_t seqnum = bits::JoinTwo32(message.logspace_id, message.seqnum_lowhalf);
+            HVLOG(1) << fmt::format("Receive remote read response for log (seqnum {})",
+                                    bits::HexStr0x(seqnum));
             Message response = BuildLocalReadOKResponse(seqnum, message.user_tag, payload);
             FinishLocalOpWithResponse(op, &response, message.user_metalog_progress);
             // Put the received log entry into log cache
@@ -441,12 +443,16 @@ void Engine::ProcessIndexFoundResult(const IndexQueryResult& query_result) {
     bool cache_hit = LogCacheGet(seqnum, &log_entry);
     bool send_success = false;
     if (cache_hit) {
+        HVLOG(1) << fmt::format("Cache hit for log entry (seqnum {})",
+                                bits::HexStr0x(seqnum));
         if (local_request) {
             LocalOp* op = onging_reads_.PollChecked(query.client_data);
             Message response = BuildLocalReadOKResponse(
                 seqnum, log_entry.metadata.user_tag, STRING_AS_SPAN(log_entry.data));
             FinishLocalOpWithResponse(op, &response, query_result.metalog_progress);
         } else {
+            HVLOG(1) << fmt::format("Send read response for log (seqnum {})",
+                                    bits::HexStr0x(seqnum));
             SharedLogMessage response = SharedLogMessageHelper::NewReadOkResponse();
             log_utils::PopulateMetaDataToMessage(log_entry.metadata, &response);
             response.user_metalog_progress = query_result.metalog_progress;

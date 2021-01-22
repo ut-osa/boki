@@ -239,6 +239,8 @@ void EngineBase::FinishLocalOpWithFailure(LocalOp* op, SharedLogResultType resul
 }
 
 void EngineBase::LogCachePut(const LogEntry& log_entry) {
+    HVLOG(1) << fmt::format("Store cache for log entry (seqnum {})",
+                            bits::HexStr0x(log_entry.metadata.seqnum));
     log_cache_.Put(log_entry);
 }
 
@@ -293,6 +295,7 @@ void EngineBase::SendReadResponse(const IndexQuery& query,
     response->origin_node_id = node_id_;
     response->hop_times = query.hop_times + 1;
     response->client_data = query.client_data;
+    response->payload_size = payload.size();
     uint16_t engine_id = query.origin_node_id;
     bool success = engine_->SendSharedLogMessage(
         protocol::ConnType::SLOG_ENGINE_TO_ENGINE,

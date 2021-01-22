@@ -50,7 +50,7 @@ RocksDBBackend::RocksDBBackend(std::string_view db_path) {
 RocksDBBackend::~RocksDBBackend() {}
 
 void RocksDBBackend::InstallLogSpace(uint32_t logspace_id) {
-    HLOG(INFO) << fmt::format("Install log space {}", bits::HexStr(logspace_id));
+    HLOG(INFO) << fmt::format("Install log space {}", bits::HexStr0x(logspace_id));
     rocksdb::ColumnFamilyOptions options;
     if (absl::GetFlag(FLAGS_rocksdb_enable_compression)) {
         options.compression = rocksdb::kZSTD;
@@ -87,7 +87,7 @@ bool RocksDBBackend::Get(uint32_t logspace_id, uint32_t key, std::string* data) 
 void RocksDBBackend::Put(uint32_t logspace_id, uint32_t key, std::span<const char> data) {
     rocksdb::ColumnFamilyHandle* cf_handle = GetCFHandle(logspace_id);
     if (cf_handle == nullptr) {
-        LOG(FATAL) << fmt::format("Log space {} not created", bits::HexStr(logspace_id));
+        LOG(FATAL) << fmt::format("Log space {} not created", bits::HexStr0x(logspace_id));
     }
     std::string key_str = bits::HexStr(key);
     auto status = db_->Put(
@@ -116,7 +116,7 @@ TkrzwDBMBackend::~TkrzwDBMBackend() {
 }
 
 void TkrzwDBMBackend::InstallLogSpace(uint32_t logspace_id) {
-    HLOG(INFO) << fmt::format("Install log space {}", bits::HexStr(logspace_id));
+    HLOG(INFO) << fmt::format("Install log space {}", bits::HexStr0x(logspace_id));
     tkrzw::DBM* db_ptr = nullptr;
     if (type_ == kHashDBM) {
         tkrzw::HashDBM* db = new tkrzw::HashDBM();
@@ -172,7 +172,7 @@ bool TkrzwDBMBackend::Get(uint32_t logspace_id, uint32_t key, std::string* data)
 void TkrzwDBMBackend::Put(uint32_t logspace_id, uint32_t key, std::span<const char> data) {
     tkrzw::DBM* dbm = GetDBM(logspace_id);
     if (dbm == nullptr) {
-        LOG(FATAL) << fmt::format("Log space {} not created", bits::HexStr(logspace_id));
+        LOG(FATAL) << fmt::format("Log space {} not created", bits::HexStr0x(logspace_id));
     }
     std::string key_str = bits::HexStr(key);
     auto status = dbm->Set(key_str, std::string_view(data.data(), data.size()));

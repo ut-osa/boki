@@ -150,6 +150,7 @@ void EgressHub::OnSocketConnected(int sockfd, int status) {
 
 void EgressHub::SocketReady(int sockfd) {
     DCHECK(io_worker_->WithinMyEventLoopThread());
+    HLOG(INFO) << fmt::format("Socket {} is ready", sockfd);
     connections_for_pick_.Add(sockfd);
     if (!write_buffer_.empty()) {
         ScheduleSendFunction();
@@ -158,6 +159,7 @@ void EgressHub::SocketReady(int sockfd) {
 
 void EgressHub::RemoveSocket(int sockfd) {
     DCHECK(io_worker_->WithinMyEventLoopThread());
+    HLOG(INFO) << fmt::format("Socket {} is down", sockfd);
     connections_for_pick_.Remove(sockfd);
     URING_DCHECK_OK(current_io_uring()->Close(sockfd, [this, sockfd] () {
         int valid_socks = 0;
