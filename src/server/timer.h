@@ -8,7 +8,7 @@ namespace server {
 
 class Timer final : public server::ConnectionBase {
 public:
-    typedef std::function<void()> Callback;
+    using Callback = std::function<void()>;
     Timer(int timer_type, Callback cb);
     ~Timer();
 

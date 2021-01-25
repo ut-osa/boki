@@ -20,26 +20,26 @@ public:
     std::string_view func_name() { return config_entry_->func_name; }
     std::string_view grpc_service_name() { return config_entry_->grpc_service_name; }
 
-    typedef std::function<void(int /* fd */)> WatchFdReadableCallback;
+    using WatchFdReadableCallback = std::function<void(int /* fd */)>;
     void SetWatchFdReadableCallback(WatchFdReadableCallback callback) {
         watch_fd_readable_cb_ = callback;
     }
 
-    typedef std::function<void(int /* fd */)> StopWatchFdCallback;
+    using StopWatchFdCallback = std::function<void(int /* fd */)>;
     void SetStopWatchFdCallback(StopWatchFdCallback callback) {
         stop_watch_fd_cb_ = callback;
     }
 
-    typedef std::function<void(int64_t /* handle */, std::string_view /* method */,
-                               std::span<const char> /* request */)>
-            IncomingFuncCallCallback;
+    using IncomingFuncCallCallback =
+        std::function<void(int64_t /* handle */, std::string_view /* method */,
+                           std::span<const char> /* request */)>;
     void SetIncomingFuncCallCallback(IncomingFuncCallCallback callback) {
         incoming_func_call_cb_ = callback;
     }
 
-    typedef std::function<void(int64_t /* handle */, bool /* success */,
-                               std::span<const char> /* output */)>
-            OutgoingFuncCallCompleteCallback;
+    using OutgoingFuncCallCompleteCallback = 
+        std::function<void(int64_t /* handle */, bool /* success */,
+                           std::span<const char> /* output */)>;
     void SetOutgoingFuncCallCompleteCallback(OutgoingFuncCallCompleteCallback callback) {
         outgoing_func_call_complete_cb_ = callback;
     }

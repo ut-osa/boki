@@ -58,8 +58,9 @@ public:
         T p30; T p50; T p70; T p90; T p99; T p99_9;
     };
 
-    typedef std::function<void(int /* duration_ms */, size_t /* n_samples */,
-                               const Report& /* report */)> ReportCallback;
+    using ReportCallback =
+        std::function<void(int /* duration_ms */, size_t /* n_samples */,
+                           const Report& /* report */)>;
     static ReportCallback StandardReportCallback(std::string_view stat_name) {
         return [name = std::string(stat_name)] (int duration_ms, size_t n_samples,
                                                 const Report& report) {
@@ -151,8 +152,9 @@ private:
 
 class Counter {
 public:
-    typedef std::function<void(int /* duration_ms */, int64_t /* new_value */,
-                               int64_t /* old_value */)> ReportCallback;
+    using ReportCallback =
+        std::function<void(int /* duration_ms */, int64_t /* new_value */,
+                           int64_t /* old_value */)>;
     static ReportCallback StandardReportCallback(std::string_view counter_name) {
         return [name = std::string(counter_name)] (int duration_ms,
                                                    int64_t new_value, int64_t old_value) {
@@ -207,8 +209,8 @@ private:
 
 class CategoryCounter {
 public:
-    typedef std::function<void(int /* duration_ms */,
-                               const std::map<int, int64_t>& /* values */)> ReportCallback;
+    using ReportCallback =
+        std::function<void(int /* duration_ms */, const std::map<int, int64_t>& /* values */)>;
     static ReportCallback StandardReportCallback(std::string_view counter_name) {
         std::string counter_name_copy = std::string(counter_name);
         return [counter_name_copy] (int duration_ms, const std::map<int, int64_t>& values) {

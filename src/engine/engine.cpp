@@ -164,7 +164,7 @@ void Engine::OnConnectionClose(ConnectionBase* connection) {
     case kStorageEgressHubTypeId:
         {
             absl::MutexLock lk(&conn_mu_);
-            DCHECK(!egress_hubs_.contains(connection->id()));
+            DCHECK(egress_hubs_.contains(connection->id()));
             egress_hubs_.erase(connection->id());
         }
         break;

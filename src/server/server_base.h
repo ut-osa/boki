@@ -40,7 +40,7 @@ protected:
 
     void RegisterConnection(IOWorker* io_worker, ConnectionBase* connection);
 
-    typedef std::function<void(int /* client_sockfd */)> ConnectionCallback;
+    using ConnectionCallback = std::function<void(int /* client_sockfd */)>;
     void ListenForNewConnections(int server_sockfd, ConnectionCallback cb);
 
     Timer* CreateTimer(int timer_type, IOWorker* io_worker, Timer::Callback cb);

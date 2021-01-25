@@ -41,8 +41,10 @@ public:
     void AddEnvVariable(std::string_view name, std::string_view value);
     void AddEnvVariable(std::string_view name, int value);
 
-    typedef std::function<void(long /* exit_status */, std::span<const char> /* stdout */,
-                               std::span<const char> /* stderr */)> ExitCallback;
+    using ExitCallback =
+        std::function<void(long /* exit_status */,
+                           std::span<const char> /* stdout */,
+                           std::span<const char> /* stderr */)>;
 
     bool Start(uv_loop_t* uv_loop, utils::BufferPool* read_buffer_pool,
                ExitCallback exit_callback);

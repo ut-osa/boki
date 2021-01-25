@@ -19,7 +19,7 @@ void ReportCpuRelatedPerfEventValues(std::string_view header,
 
 class BenchLoop {
 public:
-    typedef std::function<bool()> LoopFn;
+    using LoopFn = std::function<bool()>;
 
     explicit BenchLoop(LoopFn fn);
     BenchLoop(absl::Duration max_duration, LoopFn fn);

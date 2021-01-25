@@ -18,26 +18,26 @@ public:
     void PrepareBuffers(uint16_t gid, size_t buf_size);
     bool RegisterFd(int fd);
 
-    typedef std::function<void(int /* status */)> ConnectCallback;
+    using ConnectCallback = std::function<void(int /* status */)>;
     bool Connect(int fd, const struct sockaddr* addr, size_t addrlen, ConnectCallback cb);
 
-    typedef std::function<bool(int /* status */, std::span<const char> /* data */)> ReadCallback;
+    using ReadCallback = std::function<bool(int /* status */, std::span<const char> /* data */)>;
     bool StartRead(int fd, uint16_t buf_gid, ReadCallback cb);
     bool StartRecv(int fd, uint16_t buf_gid, ReadCallback cb);
     bool StopReadOrRecv(int fd);
 
     // Partial write may happen. The caller is responsible for handling partial writes.
-    typedef std::function<void(int /* status */, size_t /* nwrite */)> WriteCallback;
+    using WriteCallback = std::function<void(int /* status */, size_t /* nwrite */)>;
     bool Write(int fd, std::span<const char> data, WriteCallback cb);
 
     // Only works for sockets. Partial write will not happen.
     // IOUring implementation will correctly order all SendAll writes.
-    typedef std::function<void(int /* status */)> SendAllCallback;
+    using SendAllCallback = std::function<void(int /* status */)>;
     bool SendAll(int sockfd, std::span<const char> data, SendAllCallback cb);
     bool SendAll(int sockfd, const std::vector<std::span<const char>>& data_vec,
                  SendAllCallback cb);
 
-    typedef std::function<void()> CloseCallback;
+    using CloseCallback = std::function<void()>;
     bool Close(int fd, CloseCallback cb);
 
     void EventLoopRunOnce(int* inflight_ops);

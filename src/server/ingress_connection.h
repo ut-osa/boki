@@ -23,12 +23,10 @@ public:
         buf_size_  = buf_size;
     }
 
-    typedef std::function<size_t(std::span<const char> /* header */)>
-            MessageFullSizeCallback;
+    using MessageFullSizeCallback = std::function<size_t(std::span<const char> /* header */)>;
     void SetMessageFullSizeCallback(MessageFullSizeCallback cb);
 
-    typedef std::function<void(std::span<const char> /* message */)>
-            NewMessageCallback;
+    using NewMessageCallback = std::function<void(std::span<const char> /* message */)>;
     void SetNewMessageCallback(NewMessageCallback cb);
 
     static size_t GatewayMessageFullSizeCallback(std::span<const char> header);

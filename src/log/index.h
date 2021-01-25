@@ -41,7 +41,7 @@ public:
 
     void MakeQuery(const IndexQuery& query);
 
-    typedef absl::InlinedVector<IndexQueryResult, 4> QueryResultVec;
+    using QueryResultVec = absl::InlinedVector<IndexQueryResult, 4>;
     void PollQueryResults(QueryResultVec* results);
 
 private:

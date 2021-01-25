@@ -64,7 +64,7 @@ public:
         uint64_t metalog_progress;
         void*    caller_data;
     };
-    typedef absl::InlinedVector<AppendResult, 4> AppendResultVec;
+    using AppendResultVec = absl::InlinedVector<AppendResult, 4>;
     void PollAppendResults(AppendResultVec* results);
 
 private:
@@ -101,7 +101,7 @@ public:
         std::shared_ptr<const LogEntry> log_entry;
         protocol::SharedLogMessage original_request;
     };
-    typedef absl::InlinedVector<ReadResult, 4> ReadResultVec;
+    using ReadResultVec = absl::InlinedVector<ReadResult, 4>;
     void PollReadResults(ReadResultVec* results);
 
     bool PollIndexData(IndexDataProto* index_data);

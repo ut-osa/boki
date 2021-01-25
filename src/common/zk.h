@@ -73,9 +73,9 @@ public:
     void ScheduleStop();
     void WaitForFinish();
 
-    typedef std::function<void(ZKEvent /* event */, std::string_view /* path */)> WatcherFn;
-    typedef std::function<void(ZKStatus /* status */, const ZKResult& /* result */,
-                               bool* /* remove_watch */)> Callback;
+    using WatcherFn = std::function<void(ZKEvent /* event */, std::string_view /* path */)>;
+    using Callback = std::function<void(ZKStatus /* status */,
+                                        const ZKResult& /* result */, bool* /* remove_watch */)>;
 
     // If succeeded, `result.path` is set to the path of newly created node
     void Create(std::string_view path, std::span<const char> value,

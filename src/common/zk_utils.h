@@ -35,18 +35,17 @@ public:
                bool sequential_znodes = false);
     ~DirWatcher();
 
-    typedef std::function<void(std::string_view /* path */,
-                               std::span<const char> /* contents */)>
-            NodeCreatedCallback;
+    using NodeCreatedCallback =
+        std::function<void(std::string_view /* path */,
+                           std::span<const char> /* contents */)>;
     void SetNodeCreatedCallback(NodeCreatedCallback cb);
 
-    typedef std::function<void(std::string_view /* path */,
-                               std::span<const char> /* contents */)>
-            NodeChangedCallback;
+    using NodeChangedCallback =
+        std::function<void(std::string_view /* path */,
+                           std::span<const char> /* contents */)>;
     void SetNodeChangedCallback(NodeChangedCallback cb);
 
-    typedef std::function<void(std::string_view /* path */)>
-            NodeDeletedCallback;
+    using NodeDeletedCallback = std::function<void(std::string_view /* path */)>;
     void SetNodeDeletedCallback(NodeDeletedCallback cb);
 
     void Start();

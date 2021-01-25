@@ -8,7 +8,8 @@ namespace faas {
 namespace utils {
 
 namespace {
-typedef std::mt19937_64     RndGen;
+using RndGen = std::mt19937_64;
+
 static constexpr size_t     kNumRndGens = 64;
 static RndGen               rd_gens[kNumRndGens];
 static std::atomic<size_t>  next_rd_gen{0};

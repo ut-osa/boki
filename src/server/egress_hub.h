@@ -17,8 +17,7 @@ public:
     void Start(IOWorker* io_worker) override;
     void ScheduleClose() override;
 
-    typedef std::function<void(std::string* /* handshake */)>
-            HandshakeMessageCallback;
+    using HandshakeMessageCallback = std::function<void(std::string* /* handshake */)>;
     void SetHandshakeMessageCallback(HandshakeMessageCallback cb);
 
     void SendMessage(std::span<const char> message);

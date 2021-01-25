@@ -24,8 +24,7 @@ public:
         kTotalNodeType = 4
     };
 
-    typedef std::function<void(NodeType /* node_type */, uint16_t node_id)>
-            NodeEventCallback;
+    using NodeEventCallback = std::function<void(NodeType /* node_type */, uint16_t node_id)>;
     void SetNodeOnlineCallback(NodeEventCallback cb);
     void SetNodeOfflineCallback(NodeEventCallback cb);
 

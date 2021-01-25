@@ -24,7 +24,7 @@ public:
     size_t num_sequencer_nodes() const { return sequencer_node_ids_.size(); }
     size_t num_storage_nodes() const { return storage_node_ids_.size(); }
 
-    typedef absl::FixedArray<uint16_t> NodeIdVec;
+    using NodeIdVec = absl::FixedArray<uint16_t>;
     const NodeIdVec& GetEngineNodes() const { return engine_node_ids_; }
     const NodeIdVec& GetSequencerNodes() const { return sequencer_node_ids_; }
     const NodeIdVec& GetStorageNodes() const { return storage_node_ids_; }

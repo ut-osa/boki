@@ -18,11 +18,11 @@ public:
 
     void StartWatching(zk::ZKSession* session);
 
-    typedef std::function<void(const View*)> ViewCallback;
+    using ViewCallback = std::function<void(const View*)>;
     void SetViewCreatedCallback(ViewCallback cb);
     void SetViewFrozenCallback(ViewCallback cb);
 
-    typedef std::function<void(const FinalizedView*)> ViewFinalizedCallback;
+    using ViewFinalizedCallback = std::function<void(const FinalizedView*)>;
     void SetViewFinalizedCallback(ViewFinalizedCallback cb);
 
 private:
@@ -66,7 +66,7 @@ public:
         return final_metalog_positions_.at(logspace_id);
     }
 
-    typedef std::vector<MetaLogProto> MetaLogVec;
+    using MetaLogVec = std::vector<MetaLogProto>;
     const MetaLogVec& tail_metalogs(uint32_t logspace_id) const {
         DCHECK(tail_metalogs_.contains(logspace_id));
         return tail_metalogs_.at(logspace_id);

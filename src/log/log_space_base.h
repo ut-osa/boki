@@ -44,7 +44,7 @@ protected:
     LogSpaceBase(Mode mode, const View* view, uint16_t sequencer_id);
     void AddInterestedShard(uint16_t engine_id);
 
-    typedef absl::FixedArray<uint32_t> OffsetVec;
+    using OffsetVec = absl::FixedArray<uint32_t>;
     virtual void OnNewLogs(uint32_t metalog_seqnum,
                            uint64_t start_seqnum, uint64_t start_localid,
                            uint32_t delta) {}
@@ -94,7 +94,7 @@ public:
     // Only finalized LogSpace can be removed
     bool RemoveLogSpace(uint32_t identifier);
 
-    typedef std::function<void(/* identifier */ uint32_t, LockablePtr<T>)> IterCallback;
+    using IterCallback = std::function<void(/* identifier */ uint32_t, LockablePtr<T>)>;
     void ForEachActiveLogSpace(const View* view, IterCallback cb) const;
     void ForEachActiveLogSpace(IterCallback cb) const;
     void ForEachFinalizedLogSpace(IterCallback cb) const;
