@@ -9,7 +9,9 @@
 #include "utils/object_pool.h"
 #include "utils/appendable_buffer.h"
 
+__BEGIN_THIRD_PARTY_HEADERS
 #include <zookeeper/zookeeper.h>
+__END_THIRD_PARTY_HEADERS
 
 namespace faas {
 namespace zk {

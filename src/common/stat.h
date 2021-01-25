@@ -22,7 +22,8 @@ public:
     ~ReportTimer() {}
 
     void set_report_interval_in_ms(uint32_t value) {
-        report_interval_in_ms_ = gsl::narrow_cast<uint32_t>(value * utils::GetRandomFloat(0.9, 1.1));
+        float tmp = gsl::narrow_cast<float>(value) * utils::GetRandomFloat(0.9f, 1.1f);
+        report_interval_in_ms_ = gsl::narrow_cast<uint32_t>(tmp);
     }
 
     bool Check() {
@@ -139,12 +140,12 @@ private:
     }
 
     inline T percentile(double p) {
+        DCHECK(!samples_.empty());
         size_t idx = gsl::narrow_cast<size_t>(samples_.size() * p + 0.5);
-        if (idx < 0) idx = 0;
         if (idx >= samples_.size()) {
             idx = samples_.size() - 1;
         }
-        return samples_[idx];
+        return samples_.at(idx);
     }
 
     DISALLOW_COPY_AND_ASSIGN(StatisticsCollector);

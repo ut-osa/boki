@@ -3,8 +3,6 @@
 #include "ipc/base.h"
 #include "launcher/launcher.h"
 
-#include <absl/flags/flag.h>
-
 ABSL_FLAG(std::string, root_path_for_ipc, "/dev/shm/faas_ipc",
           "Root directory for IPCs used by FaaS");
 ABSL_FLAG(int, func_id, -1, "Function ID of this launcher process");

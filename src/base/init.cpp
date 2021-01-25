@@ -1,3 +1,4 @@
+#include "base/diagnostic.h"
 #include "base/init.h"
 #include "base/logging.h"
 #include "base/thread.h"
@@ -6,10 +7,14 @@
 #include <string.h>
 #include <signal.h>
 
+__BEGIN_THIRD_PARTY_HEADERS
+
 #include <absl/flags/flag.h>
 #include <absl/flags/parse.h>
 #include <absl/debugging/symbolize.h>
 #include <absl/debugging/failure_signal_handler.h>
+
+__END_THIRD_PARTY_HEADERS
 
 ABSL_FLAG(int, v, 0, "Show all VLOG(m) messages for m <= this.");
 

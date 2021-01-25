@@ -74,7 +74,12 @@
 // Will not include common absl headers in source files
 // with __FAAS_USED_IN_BINDING defined
 
+#ifdef __END_THIRD_PARTY_HEADERS
+__BEGIN_THIRD_PARTY_HEADERS
+#endif
+
 #include <absl/base/call_once.h>
+#include <absl/flags/flag.h>
 #include <absl/time/time.h>
 #include <absl/time/clock.h>
 #include <absl/strings/str_cat.h>
@@ -94,8 +99,13 @@
 #include <absl/functional/bind_front.h>
 #include <absl/algorithm/container.h>
 
+#ifdef __END_THIRD_PARTY_HEADERS
+__END_THIRD_PARTY_HEADERS
+#endif
+
 #endif  // defined(__FAAS_HAVE_ABSL) && !defined(__FAAS_USED_IN_BINDING)
 
 #include "base/macro.h"
 #include "base/logging.h"
 #include "base/std_span.h"
+#include "base/diagnostic.h"

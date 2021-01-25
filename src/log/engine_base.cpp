@@ -212,7 +212,7 @@ void EngineBase::ReplicateLogEntry(const View* view, const LogMetaData& log_meta
     SharedLogMessage message = SharedLogMessageHelper::NewReplicateMessage();
     log_utils::PopulateMetaDataToMessage(log_metadata, &message);
     message.origin_node_id = node_id_;
-    message.payload_size = log_data.size();
+    message.payload_size = gsl::narrow_cast<uint32_t>(log_data.size());
     const View::Engine* engine_node = view->GetEngineNode(node_id_);
     for (uint16_t storage_id : engine_node->GetStorageNodes()) {
         engine_->SendSharedLogMessage(protocol::ConnType::ENGINE_TO_STORAGE,
@@ -306,7 +306,7 @@ void EngineBase::SendReadResponse(const IndexQuery& query,
     response->origin_node_id = node_id_;
     response->hop_times = query.hop_times + 1;
     response->client_data = query.client_data;
-    response->payload_size = payload.size();
+    response->payload_size = gsl::narrow_cast<uint32_t>(payload.size());
     uint16_t engine_id = query.origin_node_id;
     bool success = engine_->SendSharedLogMessage(
         protocol::ConnType::SLOG_ENGINE_TO_ENGINE,
@@ -329,7 +329,7 @@ bool EngineBase::SendSequencerMessage(uint16_t sequencer_id,
                                       SharedLogMessage* message,
                                       std::span<const char> payload) {
     message->origin_node_id = node_id_;
-    message->payload_size = payload.size();
+    message->payload_size = gsl::narrow_cast<uint32_t>(payload.size());
     return engine_->SendSharedLogMessage(
         protocol::ConnType::ENGINE_TO_SEQUENCER,
         sequencer_id, *message, payload);

@@ -4,8 +4,6 @@
 #include "utils/fs.h"
 #include "utils/bench.h"
 
-#include <absl/flags/flag.h>
-
 #include <sys/types.h>
 #include <sys/shm.h>
 #include <fcntl.h>

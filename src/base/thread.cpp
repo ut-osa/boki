@@ -9,6 +9,12 @@
 namespace faas {
 namespace base {
 
+namespace {
+static int __gettid() {
+    return gsl::narrow_cast<int>(syscall(SYS_gettid));
+}
+}  // namespace
+
 thread_local Thread* Thread::current_{nullptr};
 
 Thread::Thread(std::string_view name, std::function<void()> fn)
@@ -50,7 +56,7 @@ void Thread::Join() {
 }
 
 void Thread::Run() {
-    tid_ = syscall(SYS_gettid);
+    tid_ = __gettid();
     state_.store(kRunning);
     started_.Notify();
     LOG(INFO) << fmt::format("Start thread: {} (tid={})", name_, tid_);
@@ -114,7 +120,7 @@ static Thread main_thread{Thread::kMainThreadName, nullptr};
 void Thread::RegisterMainThread() {
     Thread* thread = &main_thread;
     thread->state_.store(kRunning);
-    thread->tid_ = syscall(SYS_gettid);
+    thread->tid_ = __gettid();
     thread->pthread_ = pthread_self();
     current_ = thread;
     LOG(INFO) << "Register main thread: tid=" << thread->tid_;

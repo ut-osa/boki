@@ -7,8 +7,6 @@
 #include "utils/env_variables.h"
 #include "engine/engine.h"
 
-#include <absl/flags/flag.h>
-
 ABSL_FLAG(int, engine_tcp_port, -1,
           "If set, Launcher and FuncWorker will communicate with engine via localhost TCP socket");
 ABSL_FLAG(int, node_id, -1,
@@ -31,12 +29,12 @@ static void StopServerHandler() {
 
 static uint16_t GenerateNodeId() {
     std::string hostname = procfs_utils::ReadHostname();
-    uint16_t result = 0;
+    int result = 0;
     for (const char ch : hostname) {
         // Let overflow happens freely here
         result = result * 177 + ch;
     }
-    return result;
+    return gsl::narrow_cast<uint16_t>(result);
 }
 
 void EngineMain(int argc, char* argv[]) {

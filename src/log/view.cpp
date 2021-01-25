@@ -8,23 +8,23 @@ View::View(const ViewProto& view_proto)
       metalog_replicas_(view_proto.metalog_replicas()),
       userlog_replicas_(view_proto.userlog_replicas()),
       index_replicas_(view_proto.index_replicas()),
-      engine_node_ids_(view_proto.engine_nodes_size()),
-      sequencer_node_ids_(view_proto.sequencer_nodes_size()),
-      storage_node_ids_(view_proto.storage_nodes_size()),
+      engine_node_ids_(static_cast<size_t>(view_proto.engine_nodes_size())),
+      sequencer_node_ids_(static_cast<size_t>(view_proto.sequencer_nodes_size())),
+      storage_node_ids_(static_cast<size_t>(view_proto.storage_nodes_size())),
       log_space_hash_seed_(view_proto.log_space_hash_seed()),
-      log_space_hash_tokens_(view_proto.log_space_hash_tokens_size()) {
+      log_space_hash_tokens_(static_cast<size_t>(view_proto.log_space_hash_tokens_size())) {
 
     for (size_t i = 0; i < engine_node_ids_.size(); i++) {
         engine_node_ids_[i] = gsl::narrow_cast<uint16_t>(
-            view_proto.engine_nodes(i));
+            view_proto.engine_nodes(static_cast<int>(i)));
     }
     for (size_t i = 0; i < sequencer_node_ids_.size(); i++) {
         sequencer_node_ids_[i] = gsl::narrow_cast<uint16_t>(
-            view_proto.sequencer_nodes(i));
+            view_proto.sequencer_nodes(static_cast<int>(i)));
     }
     for (size_t i = 0; i < storage_node_ids_.size(); i++) {
         storage_node_ids_[i] = gsl::narrow_cast<uint16_t>(
-            view_proto.storage_nodes(i));
+            view_proto.storage_nodes(static_cast<int>(i)));
     }
 
     size_t num_engine_nodes = engine_node_ids_.size();
@@ -51,7 +51,7 @@ View::View(const ViewProto& view_proto)
         uint16_t sequencer_node_id = sequencer_node_ids_[i];
         for (size_t j = 0; j < index_replicas_; j++) {
             uint16_t engine_node_id = gsl::narrow_cast<uint16_t>(
-                view_proto.index_plan(i * index_replicas_ + j));
+                view_proto.index_plan(static_cast<int>(i * index_replicas_ + j)));
             DCHECK(engine_node_id_set.contains(engine_node_id));
             index_engine_nodes[sequencer_node_id].push_back(engine_node_id);
             index_sequencer_nodes[engine_node_id].push_back(sequencer_node_id);
@@ -66,7 +66,7 @@ View::View(const ViewProto& view_proto)
         uint16_t engine_node_id = engine_node_ids_[i];
         for (size_t j = 0; j < userlog_replicas_; j++) {
             uint16_t storage_node_id = gsl::narrow_cast<uint16_t>(
-                view_proto.storage_plan(i * userlog_replicas_ + j));
+                view_proto.storage_plan(static_cast<int>(i * userlog_replicas_ + j)));
             DCHECK(storage_node_id_set.contains(storage_node_id));
             storage_nodes[engine_node_id].push_back(storage_node_id);
             source_engine_nodes[storage_node_id].push_back(engine_node_id);
@@ -117,7 +117,7 @@ View::View(const ViewProto& view_proto)
 
     for (size_t i = 0; i < log_space_hash_tokens_.size(); i++) {
         uint16_t node_id = gsl::narrow_cast<uint16_t>(
-            view_proto.log_space_hash_tokens(i));
+            view_proto.log_space_hash_tokens(static_cast<int>(i)));
         DCHECK(sequencer_node_id_set.contains(node_id));
         log_space_hash_tokens_[i] = node_id;
     }

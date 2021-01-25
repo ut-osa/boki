@@ -2,8 +2,6 @@
 #include "base/common.h"
 #include "gateway/server.h"
 
-#include <absl/flags/flag.h>
-
 ABSL_FLAG(int, http_port, 8080, "Port for HTTP connections");
 ABSL_FLAG(int, grpc_port, 50051, "Port for gRPC connections");
 ABSL_FLAG(std::string, func_config_file, "", "Path to function config file");

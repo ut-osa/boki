@@ -1,3 +1,4 @@
+#define __FAAS_NOWARN_SIGN_CONVERSION
 #include "common/subprocess.h"
 
 #define log_header_ "Subprocess: "
@@ -87,7 +88,7 @@ bool Subprocess::Start(uv_loop_t* uv_loop, utils::BufferPool* read_buffer_pool,
     if (!working_dir_.empty()) {
         options.cwd = working_dir_.c_str();
     }
-    int num_pipes = pipe_types_.size();
+    int num_pipes = gsl::narrow_cast<int>(pipe_types_.size());
     DCHECK_GE(num_pipes, 3);
     std::vector<uv_stdio_container_t> stdio(num_pipes);
     uv_pipe_handles_.resize(num_pipes);
@@ -183,7 +184,7 @@ UV_READ_CB_FOR_CLASS(Subprocess, ReadStdout) {
     if (nread < 0) {
         if (nread != UV_EOF) {
             HLOG(WARNING) << "Read error on stdout, will kill the process: "
-                          << uv_strerror(nread);
+                          << uv_strerror(static_cast<int>(nread));
             Kill();
         } else {
             ClosePipe(kStdout);
@@ -198,7 +199,7 @@ UV_READ_CB_FOR_CLASS(Subprocess, ReadStdout) {
         HLOG(WARNING) << "Exceed stdout size limit, will kill the process";
         Kill();
     } else {
-        stdout_.AppendData(buf->base, nread);
+        stdout_.AppendData(buf->base, static_cast<size_t>(nread));
     }
 }
 
@@ -211,7 +212,7 @@ UV_READ_CB_FOR_CLASS(Subprocess, ReadStderr) {
     if (nread < 0) {
         if (nread != UV_EOF) {
             HLOG(WARNING) << "Read error on stderr, will kill the process: "
-                          << uv_strerror(nread);
+                          << uv_strerror(static_cast<int>(nread));
             Kill();
         } else {
             ClosePipe(kStderr);
@@ -226,14 +227,14 @@ UV_READ_CB_FOR_CLASS(Subprocess, ReadStderr) {
         HLOG(WARNING) << "Exceed stderr size limit, will kill the process";
         Kill();
     } else {
-        stderr_.AppendData(buf->base, nread);
+        stderr_.AppendData(buf->base, static_cast<size_t>(nread));
     }
 }
 
 UV_EXIT_CB_FOR_CLASS(Subprocess, ProcessExit) {
     exit_status_ = exit_status;
     for (size_t i = 0; i < uv_pipe_handles_.size(); i++) {
-        ClosePipe(i);
+        ClosePipe(static_cast<int>(i));
     }
     handle_scope_.CloseHandle(&uv_process_handle_);
     state_ = kExited;

@@ -5,8 +5,6 @@
 #include "ipc/base.h"
 #include "launcher/launcher.h"
 
-#include <absl/flags/flag.h>
-
 ABSL_FLAG(bool, hostname_in_output_fname, false, "");
 
 namespace faas {

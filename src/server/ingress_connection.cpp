@@ -115,7 +115,6 @@ size_t IngressConnection::GatewayMessageFullSizeCallback(std::span<const char> h
     DCHECK_EQ(header.size(), sizeof(GatewayMessage));
     const GatewayMessage* message = reinterpret_cast<const GatewayMessage*>(
         header.data());
-    DCHECK_GE(message->payload_size, 0);
     return sizeof(GatewayMessage) + message->payload_size;
 }
 

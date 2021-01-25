@@ -132,9 +132,9 @@ void Controller::StartCommandHandler() {
     }
     ViewProto view_proto;
     view_proto.set_view_id(0);
-    view_proto.set_metalog_replicas(metalog_replicas_);
-    view_proto.set_userlog_replicas(userlog_replicas_);
-    view_proto.set_index_replicas(index_replicas_);
+    view_proto.set_metalog_replicas(gsl::narrow_cast<uint32_t>(metalog_replicas_));
+    view_proto.set_userlog_replicas(gsl::narrow_cast<uint32_t>(userlog_replicas_));
+    view_proto.set_index_replicas(gsl::narrow_cast<uint32_t>(index_replicas_));
     for (uint16_t node_id : sequencer_nodes_) {
         view_proto.add_sequencer_nodes(node_id);
     }
@@ -154,7 +154,8 @@ void Controller::StartCommandHandler() {
     view_proto.set_log_space_hash_seed(hash::xxHash64(rnd_gen_()));
     std::vector<uint32_t> tokens(absl::GetFlag(FLAGS_slog_log_space_hash_tokens));
     for (size_t i = 0; i < tokens.size(); i++) {
-        tokens[i] = view_proto.sequencer_nodes(i % sequencer_nodes_.size());
+        tokens[i] = view_proto.sequencer_nodes(
+            static_cast<int>(i % sequencer_nodes_.size()));
     }
     std::shuffle(tokens.begin(), tokens.end(), rnd_gen_);
     for (size_t i = 0; i < tokens.size(); i++) {
@@ -163,11 +164,11 @@ void Controller::StartCommandHandler() {
 
     for (size_t i = 0; i < engine_nodes_.size() * userlog_replicas_; i++) {
         view_proto.add_storage_plan(
-            view_proto.storage_nodes(i % storage_nodes_.size()));
+            view_proto.storage_nodes(static_cast<int>(i % storage_nodes_.size())));
     }
     for (size_t i = 0; i < sequencer_nodes_.size() * index_replicas_; i++) {
         view_proto.add_index_plan(
-            view_proto.engine_nodes(i % engine_nodes_.size()));
+            view_proto.engine_nodes(static_cast<int>(i % engine_nodes_.size())));
     }
 
     InstallNewView(view_proto);

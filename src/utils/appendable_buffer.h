@@ -8,10 +8,10 @@ namespace utils {
 // AppendableBuffer is NOT thread-safe
 class AppendableBuffer {
 public:
-    static constexpr int kInlineBufferSize = 48;
-    static constexpr int kDefaultInitialSize = kInlineBufferSize;
+    static constexpr size_t kInlineBufferSize = 48;
+    static constexpr size_t kDefaultInitialSize = kInlineBufferSize;
 
-    explicit AppendableBuffer(int initial_size = kDefaultInitialSize)
+    explicit AppendableBuffer(size_t initial_size = kDefaultInitialSize)
         : buf_size_(initial_size), pos_(0) {
         if (initial_size <= kInlineBufferSize) {
             buf_ = inline_buf_;
@@ -27,11 +27,11 @@ public:
         }
     }
 
-    void AppendData(const char* data, int length) {
+    void AppendData(const char* data, size_t length) {
         if (length == 0) {
             return;
         }
-        int new_size = buf_size_;
+        size_t new_size = buf_size_;
         while (pos_ + length > new_size) {
             new_size *= 2;
         }
@@ -53,7 +53,7 @@ public:
     }
 
     void Reset() { pos_ = 0; }
-    void ConsumeFront(int size) {
+    void ConsumeFront(size_t size) {
         DCHECK_LE(size, pos_);
         if (size < pos_) {
             memmove(buf_, buf_ + size, pos_ - size);
@@ -112,8 +112,8 @@ public:
     }
 
 private:
-    int buf_size_;
-    int pos_;
+    size_t buf_size_;
+    size_t pos_;
     char* buf_;
     char inline_buf_[kInlineBufferSize];
 

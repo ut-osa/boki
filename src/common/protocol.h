@@ -208,7 +208,7 @@ struct GatewayMessage {
         int32_t  status_code;     // Used in FUNC_CALL_FAILED
         uint32_t logspace;        // Used in DISPATCH_FUNC_CALL
     };
-    int32_t payload_size;        // Used in DISPATCH_FUNC_CALL, FUNC_CALL_COMPLETE
+    uint32_t payload_size;        // Used in DISPATCH_FUNC_CALL, FUNC_CALL_COMPLETE
 } __attribute__ ((packed));
 
 static_assert(sizeof(GatewayMessage) == 16, "Unexpected GatewayMessage size");
@@ -372,7 +372,7 @@ public:
     static Message NewHandshakeResponse(uint32_t payload_size) {
         NEW_EMPTY_MESSAGE(message);
         message.message_type = static_cast<uint16_t>(MessageType::HANDSHAKE_RESPONSE);
-        message.payload_size = payload_size;
+        message.payload_size = gsl::narrow_cast<int32_t>(payload_size);
         return message;
     }
 

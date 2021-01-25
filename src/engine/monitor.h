@@ -11,7 +11,7 @@ class MessageConnection;
 
 class Monitor {
 public:
-    static constexpr float kDefaultFrequencyHz = 0.3;
+    static constexpr float kDefaultFrequencyHz = 0.3f;
 
     explicit Monitor(Engine* engine);
     ~Monitor();

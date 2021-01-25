@@ -346,7 +346,8 @@ void Engine::OnRecvNewIndexData(const SharedLogMessage& message,
                                 std::span<const char> payload) {
     DCHECK(SharedLogMessageHelper::GetOpType(message) == SharedLogOpType::INDEX_DATA);
     IndexDataProto index_data_proto;
-    if (!index_data_proto.ParseFromArray(payload.data(), payload.size())) {
+    if (!index_data_proto.ParseFromArray(payload.data(),
+                                         static_cast<int>(payload.size()))) {
         LOG(FATAL) << "Failed to parse IndexDataProto";
     }
     Index::QueryResultVec query_results;

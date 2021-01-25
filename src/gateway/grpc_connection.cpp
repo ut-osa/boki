@@ -167,12 +167,14 @@ bool GrpcConnection::OnRecvData(int status, std::span<const char> data) {
             break;
         case NGHTTP2_ERR_BAD_CLIENT_MAGIC:
         case NGHTTP2_ERR_FLOODED:
-            HLOG(WARNING) << "nghttp2 failed with error: " << nghttp2_strerror(ret)
-                            << ", will close the connection";
+            HLOG(WARNING) << "nghttp2 failed with error: "
+                          << nghttp2_strerror(static_cast<int>(ret))
+                          << ", will close the connection";
             ScheduleClose();
             return false;
         default:
-            HLOG(FATAL) << "nghttp2 call returns with error: " << nghttp2_strerror(ret);
+            HLOG(FATAL) << "nghttp2 call returns with error: "
+                        << nghttp2_strerror(static_cast<int>(ret));
         }
     }
     return true;
@@ -233,7 +235,7 @@ void GrpcConnection::H2SendPendingDataIfNecessary() {
     }
     if (ret < 0) {
         HLOG(FATAL) << "nghttp2_session_mem_send failed with error: "
-                    << nghttp2_strerror(ret);
+                    << nghttp2_strerror(static_cast<int>(ret));
     }
     std::span<const char> data(reinterpret_cast<const char*>(ptr),
                                gsl::narrow_cast<size_t>(ret));
@@ -556,7 +558,7 @@ ssize_t GrpcConnection::H2DataSourceRead(H2StreamContext* stream_context, uint8_
         return 0;
     }
     *data_flags |= NGHTTP2_DATA_FLAG_NO_COPY;
-    return std::min(remaining_size, length);
+    return static_cast<ssize_t>(std::min(remaining_size, length));
 }
 
 int GrpcConnection::H2SendData(H2StreamContext* stream_context, nghttp2_frame* frame,
@@ -584,7 +586,8 @@ int GrpcConnection::H2SendData(H2StreamContext* stream_context, nghttp2_frame* f
     if (stream_context->first_response_frame) {
         char* buf = hd_buf.data() + kH2FrameHeaderByteSize;
         buf[0] = '\0';  // Compressed-Flag of '0'
-        uint32_t msg_size = stream_context->response_body_buffer.length();
+        uint32_t msg_size = gsl::narrow_cast<uint32_t>(
+            stream_context->response_body_buffer.length());
         STORE(uint32_t, buf + 1, htonl(msg_size));
         hd_len += kGrpcLPMPrefixByteSize;
         stream_context->first_response_frame = false;

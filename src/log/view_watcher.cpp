@@ -58,7 +58,8 @@ void ViewWatcher::FinalizeCurrentView(const FinalizedViewProto& finalized_view_p
 void ViewWatcher::OnZNodeCreated(std::string_view path, std::span<const char> contents) {
     if (absl::StartsWith(path, "new")) {
         ViewProto view_proto;
-        if (!view_proto.ParseFromArray(contents.data(), contents.size())) {
+        if (!view_proto.ParseFromArray(contents.data(),
+                                       static_cast<int>(contents.size()))) {
             HLOG(FATAL) << "Failed to parse ViewProto";
         }
         InstallNextView(view_proto);
@@ -76,7 +77,8 @@ void ViewWatcher::OnZNodeCreated(std::string_view path, std::span<const char> co
         }
     } else if (absl::StartsWith(path, "finalize")) {
         FinalizedViewProto finalized_view_proto;
-        if (!finalized_view_proto.ParseFromArray(contents.data(), contents.size())) {
+        if (!finalized_view_proto.ParseFromArray(contents.data(),
+                                                 static_cast<int>(contents.size()))) {
             HLOG(FATAL) << "Failed to parse FinalizedViewProto";
         }
         FinalizeCurrentView(finalized_view_proto);
@@ -95,9 +97,11 @@ FinalizedView::FinalizedView(const View* view,
               sequencer_node_ids.size());
     for (size_t i = 0; i < sequencer_node_ids.size(); i++) {
         uint32_t logspace_id = bits::JoinTwo16(view_->id(), sequencer_node_ids[i]);
-        final_metalog_positions_[logspace_id] = finalized_view_proto.metalog_positions(i);
+        final_metalog_positions_[logspace_id] = finalized_view_proto.metalog_positions(
+            static_cast<int>(i));
         std::vector<MetaLogProto> metalogs;
-        const auto& tail_metalog_proto = finalized_view_proto.tail_metalogs(i);
+        const auto& tail_metalog_proto = finalized_view_proto.tail_metalogs(
+            static_cast<int>(i));
         for (const MetaLogProto& metalog : tail_metalog_proto.metalogs()) {
             metalogs.push_back(metalog);
         }

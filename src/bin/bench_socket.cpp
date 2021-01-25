@@ -1,3 +1,4 @@
+#define __FAAS_NOWARN_CONVERSION
 #include "base/init.h"
 #include "base/common.h"
 #include "common/time.h"
@@ -10,8 +11,6 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <netinet/in.h> 
-
-#include <absl/flags/flag.h>
 
 ABSL_FLAG(std::string, socket_type, "unix", "tcp, tcp6, unix, or pipe");
 ABSL_FLAG(size_t, payload_bytesize, 16, "Byte size of each payload");

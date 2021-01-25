@@ -18,7 +18,7 @@ public:
     Dispatcher(Engine* engine, uint16_t func_id);
     ~Dispatcher();
 
-    int16_t func_id() const { return func_id_; }
+    uint16_t func_id() const { return func_id_; }
 
     // All must be thread-safe
     bool OnFuncWorkerConnected(std::shared_ptr<FuncWorker> func_worker);

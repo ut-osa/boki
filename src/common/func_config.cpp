@@ -118,7 +118,7 @@ bool FuncConfig::Load(std::string_view json_contents) {
                     return false;
                 }
                 for (const auto& method : grpc_methods) {
-                    int method_id = entry->grpc_methods.size();
+                    int method_id = static_cast<int>(entry->grpc_methods.size());
                     if (method_id > kMaxMethodId) {
                         LOG(ERROR) << "More than " << kMaxMethodId << " methods for gRPC service "
                                    << service_name;

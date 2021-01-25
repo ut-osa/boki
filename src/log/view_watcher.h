@@ -3,8 +3,11 @@
 #include "base/common.h"
 #include "common/zk.h"
 #include "common/zk_utils.h"
-#include "proto/shared_log.pb.h"
 #include "log/view.h"
+
+__BEGIN_THIRD_PARTY_HEADERS
+#include "proto/shared_log.pb.h"
+__END_THIRD_PARTY_HEADERS
 
 namespace faas {
 namespace log {

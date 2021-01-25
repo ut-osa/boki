@@ -1,7 +1,15 @@
 #pragma once
 
-#include <absl/flags/declare.h>
+#ifndef __FAAS_SRC
+#error common/flags.h cannot be included outside
+#endif
+
+#include "base/common.h"
+
+__BEGIN_THIRD_PARTY_HEADERS
 #include <absl/flags/flag.h>
+#include <absl/flags/declare.h>
+__END_THIRD_PARTY_HEADERS
 
 ABSL_DECLARE_FLAG(std::string, listen_addr);
 ABSL_DECLARE_FLAG(std::string, listen_iface);

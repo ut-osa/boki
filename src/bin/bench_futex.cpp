@@ -10,8 +10,6 @@
 #include <sys/time.h>
 #include <linux/futex.h>
 
-#include <absl/flags/flag.h>
-
 ABSL_FLAG(int, server_cpu, -1, "Pin server process to this CPU");
 ABSL_FLAG(int, client_cpu, -1, "Pin client process to this CPU");
 ABSL_FLAG(absl::Duration, duration, absl::Seconds(30), "Duration to run");
@@ -19,7 +17,7 @@ ABSL_FLAG(std::string, shm_base_path, "/dev/shm/faas", "Base path for shared mem
 
 static int futex(int* uaddr, int futex_op, int val,
                  const struct timespec* timeout, int* uaddr2, int val3) {
-    return syscall(SYS_futex, uaddr, futex_op, val, timeout, uaddr2, val3);
+    return static_cast<int>(syscall(SYS_futex, uaddr, futex_op, val, timeout, uaddr2, val3));
 }
 
 static void futex_wait(int* futex_ptr) {

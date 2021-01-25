@@ -107,7 +107,7 @@ void Engine::SetupLocalIpc() {
         std::string address = absl::GetFlag(FLAGS_listen_addr);
         CHECK(!address.empty());
         ipc_sockfd_ = utils::TcpSocketBindAndListen(
-            address, engine_tcp_port_, listen_backlog);
+            address, gsl::narrow_cast<uint16_t>(engine_tcp_port_), listen_backlog);
         CHECK(ipc_sockfd_ != -1)
             << fmt::format("Failed to listen on {}:{}", address, engine_tcp_port_);
         HLOG(INFO) << fmt::format("Listen on {}:{} for IPC connections",
@@ -207,7 +207,8 @@ bool Engine::OnNewHandshake(MessageConnection* connection,
         return false;
     }
     if (MessageHelper::IsLauncherHandshake(handshake_message)) {
-        *response = MessageHelper::NewHandshakeResponse(func_config_json_.size());
+        *response = MessageHelper::NewHandshakeResponse(
+            gsl::narrow_cast<uint32_t>(func_config_json_.size()));
         if (func_worker_use_engine_socket_) {
             response->flags |= protocol::kFuncWorkerUseEngineSocketFlag;
         }
@@ -324,10 +325,10 @@ void Engine::HandleFuncCallCompleteMessage(const Message& message) {
         if (message_delay >= 0) {
             message_delay_stat_.AddSample(message_delay);
         }
-        if ((func_call.client_id == 0 && message.payload_size < 0)
-                || (func_call.client_id > 0 && message.payload_size + sizeof(int32_t) > PIPE_BUF)) {
-            output_use_shm_stat_.Tick();
-        }
+        // if ((func_call.client_id == 0 && message.payload_size < 0)
+        //         || (func_call.client_id > 0 && message.payload_size + sizeof(int32_t) > PIPE_BUF)) {
+        //     output_use_shm_stat_.Tick();
+        // }
         if (func_call.client_id == 0) {
             GrabFromMap(external_func_call_shm_inputs_, func_call, &input_region);
         }
@@ -440,8 +441,8 @@ void Engine::OnExternalFuncCall(const FuncCall& func_call, uint32_t logspace,
             current_timestamp = last_external_request_timestamp_ + 1;
         }
         if (last_external_request_timestamp_ != -1) {
-            external_requests_instant_rps_stat_.AddSample(gsl::narrow_cast<float>(
-                1e6 / (current_timestamp - last_external_request_timestamp_)));
+            int64_t delta = current_timestamp - last_external_request_timestamp_;
+            external_requests_instant_rps_stat_.AddSample(1e6f / gsl::narrow_cast<float>(delta));
         }
         last_external_request_timestamp_ = current_timestamp;
         inflight_external_requests_stat_.AddSample(
@@ -534,7 +535,7 @@ void Engine::ExternalFuncCallCompleted(const FuncCall& func_call,
                                        std::span<const char> output, int32_t processing_time) {
     inflight_external_requests_.fetch_add(-1, std::memory_order_relaxed);
     GatewayMessage message = GatewayMessageHelper::NewFuncCallComplete(func_call, processing_time);
-    message.payload_size = output.size();
+    message.payload_size = gsl::narrow_cast<uint32_t>(output.size());
     SendGatewayMessage(message, output);
 }
 

@@ -8,8 +8,6 @@
 
 #define log_header_ "ZKSession: "
 
-#include <absl/flags/flag.h>
-
 ABSL_FLAG(int, zk_recv_timeout_ms, 2000, "");
 ABSL_FLAG(std::string, zk_logfile, "", "");
 
@@ -204,7 +202,8 @@ void ZKSession::DoOp(Op* op) {
     case kCreate:
         ret = zoo_acreate(
             handle_, /* path= */ op->path.c_str(),
-            /* value= */ op->value.data(), /* valuelen= */ op->value.length(),
+            /* value= */ op->value.data(),
+            /* valuelen= */ gsl::narrow_cast<int>(op->value.length()),
             /* acl= */ &ZOO_OPEN_ACL_UNSAFE, /* mode= */ op->create_mode,
             &ZKSession::StringCompletionCallback, /* data= */ op);
         break;
@@ -242,7 +241,8 @@ void ZKSession::DoOp(Op* op) {
     case kSet:
         ret = zoo_aset(
             handle_, /* path= */ op->path.c_str(),
-            /* buffer= */ op->value.data(), /* buflen= */ op->value.length(),
+            /* buffer= */ op->value.data(),
+            /* buflen= */ gsl::narrow_cast<int>(op->value.length()),
             /* version= */ op->data_version,
             &ZKSession::StatCompletionCallback, /* data= */ op);
         break;
@@ -422,8 +422,9 @@ ZKResult ZKSession::StringResult(const char* string) {
 
 ZKResult ZKSession::StringsResult(const struct String_vector* strings) {
     ZKResult result = EmptyResult();
-    result.paths.resize(strings->count);
-    for (int i = 0; i < strings->count; i++) {
+    size_t count = static_cast<size_t>(strings->count);
+    result.paths.resize(count);
+    for (size_t i = 0; i < count; i++) {
         result.paths[i] = std::string_view(strings->data[i]);
     }
     return result;
@@ -432,7 +433,8 @@ ZKResult ZKSession::StringsResult(const struct String_vector* strings) {
 ZKResult ZKSession::DataResult(const char* data, int data_len, const struct Stat* stat) {
     ZKResult result = EmptyResult();
     if (data != nullptr) {
-        result.data = std::span<const char>(data, data_len);
+        DCHECK_GE(data_len, 0);
+        result.data = std::span<const char>(data, static_cast<size_t>(data_len));
     }
     result.stat = stat;
     return result;

@@ -34,7 +34,7 @@ Tracer::~Tracer() {
 void Tracer::Init() {
     for (int i = 0; i < protocol::kMaxFuncId; i++) {
         if (engine_->func_config()->find_by_func_id(i) != nullptr) {
-            per_func_stats_[i] = new PerFuncStatistics(i);
+            per_func_stats_[i] = new PerFuncStatistics(gsl::narrow_cast<uint16_t>(i));
         }
     }
 }

@@ -3,14 +3,12 @@
 #include "base/init.h"
 #include "common/time.h"
 
-#include <absl/flags/flag.h>
-
 ABSL_FLAG(size_t, io_uring_entries, 2048, "");
 ABSL_FLAG(size_t, io_uring_fd_slots, 1024, "");
 ABSL_FLAG(bool, io_uring_sqpoll, false, "");
-ABSL_FLAG(int, io_uring_sq_thread_idle_ms, 1, "");
-ABSL_FLAG(int, io_uring_cq_nr_wait, 1, "");
-ABSL_FLAG(int, io_uring_cq_wait_timeout_us, 0, "");
+ABSL_FLAG(uint32_t, io_uring_sq_thread_idle_ms, 1, "");
+ABSL_FLAG(uint32_t, io_uring_cq_nr_wait, 1, "");
+ABSL_FLAG(uint32_t, io_uring_cq_wait_timeout_us, 0, "");
 
 #define ERRNO_LOGSTR(errno) fmt::format("{} [{}]", strerror(errno), errno)
 
@@ -45,26 +43,27 @@ IOUring::IOUring()
         params.sq_thread_idle = absl::GetFlag(FLAGS_io_uring_sq_thread_idle_ms);
     }
     int ret = io_uring_queue_init_params(
-        absl::GetFlag(FLAGS_io_uring_entries), &ring_, &params);
+        gsl::narrow_cast<uint32_t>(absl::GetFlag(FLAGS_io_uring_entries)),
+        &ring_, &params);
     if (ret != 0) {
         LOG(FATAL) << "io_uring init failed: " << ERRNO_LOGSTR(-ret);
     }
     CHECK((params.features & IORING_FEAT_FAST_POLL) != 0)
         << "IORING_FEAT_FAST_POLL not supported";
     memset(&cqe_wait_timeout_, 0, sizeof(cqe_wait_timeout_));
-    int wait_timeout_us = absl::GetFlag(FLAGS_io_uring_cq_wait_timeout_us);
+    uint32_t wait_timeout_us = absl::GetFlag(FLAGS_io_uring_cq_wait_timeout_us);
     if (wait_timeout_us != 0) {
         cqe_wait_timeout_.tv_sec = wait_timeout_us / 1000000;
         cqe_wait_timeout_.tv_nsec = int64_t{wait_timeout_us % 1000000} * 1000;
     } else {
-        CHECK_EQ(absl::GetFlag(FLAGS_io_uring_cq_nr_wait), 1)
+        CHECK_EQ(absl::GetFlag(FLAGS_io_uring_cq_nr_wait), 1U)
             << "io_uring_cq_nr_wait should be set to 1 if timeout is 0";
     }
     size_t n_fd_slots = absl::GetFlag(FLAGS_io_uring_fd_slots);
     CHECK_GT(n_fd_slots, 0U);
     std::vector<int> tmp;
     tmp.resize(n_fd_slots, -1);
-    ret = io_uring_register_files(&ring_, tmp.data(), n_fd_slots);
+    ret = io_uring_register_files(&ring_, tmp.data(), gsl::narrow_cast<uint32_t>(n_fd_slots));
     if (ret != 0) {
         LOG(FATAL) << "io_uring_register_files failed: " << ERRNO_LOGSTR(-ret);
     }
@@ -115,7 +114,8 @@ bool IOUring::RegisterFd(int fd) {
     }
     size_t index = free_fd_slots_.back();
     free_fd_slots_.pop_back();
-    int ret = io_uring_register_files_update(&ring_, index, &fd, 1);
+    int ret = io_uring_register_files_update(
+        &ring_, gsl::narrow_cast<uint32_t>(index), &fd, 1);
     if (ret < 0) {
         LOG(FATAL) << "io_uring_register_files_update failed: " << ERRNO_LOGSTR(-ret);
     }
@@ -277,9 +277,9 @@ bool IOUring::Close(int fd, CloseCallback cb) {
 
 #undef GET_AND_CHECK_DESC
 
-void IOUring::EventLoopRunOnce(int* inflight_ops) {
+void IOUring::EventLoopRunOnce(size_t* inflight_ops) {
     struct io_uring_cqe* cqe = nullptr;
-    int nr_wait = absl::GetFlag(FLAGS_io_uring_cq_nr_wait);
+    uint32_t nr_wait = absl::GetFlag(FLAGS_io_uring_cq_nr_wait);
     if (absl::GetFlag(FLAGS_io_uring_cq_wait_timeout_us) == 0) {
         int64_t start_timestamp = GetMonotonicNanoTimestamp();
         int ret = io_uring_submit_and_wait(&ring_, nr_wait);
@@ -418,7 +418,8 @@ void IOUring::UnregisterFd(Descriptor* desc) {
     DCHECK_EQ(fd_indices_[fd], index);
     DCHECK_EQ(&fds_[index], desc);
     int value = -1;
-    int ret = io_uring_register_files_update(&ring_, index, &value, 1);
+    int ret = io_uring_register_files_update(
+        &ring_, gsl::narrow_cast<uint32_t>(index), &value, 1);
     if (ret < 0) {
         LOG(FATAL) << "io_uring_register_files_update failed: " << ERRNO_LOGSTR(-ret);
     }
@@ -428,6 +429,9 @@ void IOUring::UnregisterFd(Descriptor* desc) {
     HLOG(INFO) << fmt::format("unregister fd {}, {} registered fds in total",
                               fd, fd_indices_.size());
 }
+
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wshorten-64-to-32"
 
 void IOUring::EnqueueOp(Op* op) {
     VLOG(2) << fmt::format("EnqueueOp: id={}, type={}, fd={}",
@@ -468,6 +472,8 @@ void IOUring::EnqueueOp(Op* op) {
     }
     io_uring_sqe_set_data(sqe, reinterpret_cast<void*>(op->id));
 }
+
+#pragma clang diagnostic pop
 
 void IOUring::OnOpComplete(Op* op, struct io_uring_cqe* cqe) {
     int res = cqe->res;
@@ -534,7 +540,8 @@ void IOUring::HandleReadOpComplete(Op* op, int res, Op** next_op) {
     DCHECK_NOTNULL(op->desc)->active_read_op = nullptr;
     bool repeat = false;
     if (res >= 0) {
-        repeat = read_cbs_[op->id](0, std::span<const char>(op->buf, res));
+        std::span<const char> data(op->buf, static_cast<size_t>(res));
+        repeat = read_cbs_[op->id](0, data);
     } else if (res == -EAGAIN || res == -EINTR) {
         repeat = true;
     } else if (res == -ECANCELED) {
@@ -563,7 +570,7 @@ void IOUring::HandleWriteOpComplete(Op* op, int res) {
     DCHECK_EQ(op_type(op), kWrite);
     DCHECK(write_cbs_.contains(op->id));
     if (res >= 0) {
-        write_cbs_[op->id](0, res);
+        write_cbs_[op->id](0, gsl::narrow_cast<size_t>(res));
     } else {
         errno = -res;
         write_cbs_[op->id](-1, 0);

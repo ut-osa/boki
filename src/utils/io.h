@@ -24,7 +24,7 @@ bool SendMessage(int fd, const T& message) {
             }
             return false;
         }
-        pos += nwrite;
+        pos += static_cast<size_t>(nwrite);
     }
     return true;
 }
@@ -50,7 +50,7 @@ bool RecvMessage(int fd, T* message, bool* eof) {
             }
             return false;
         }
-        pos += nread;
+        pos += static_cast<size_t>(nread);
     }
     return true;
 }
@@ -66,7 +66,7 @@ inline bool SendData(int fd, const char* data, size_t size) {
             }
             return false;
         }
-        pos += nwrite;
+        pos += static_cast<size_t>(nwrite);
     }
     return true;
 }
@@ -98,7 +98,7 @@ inline bool RecvData(int fd, char* buffer, size_t size, bool* eof) {
             }
             return false;
         }
-        pos += nread;
+        pos += static_cast<size_t>(nread);
     }
     return true;
 }

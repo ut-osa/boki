@@ -3,8 +3,6 @@
 #include "utils/env_variables.h"
 #include "log/storage.h"
 
-#include <absl/flags/flag.h>
-
 ABSL_FLAG(int, node_id, -1,
           "My node ID. Also settable through environment variable FAAS_NODE_ID.");
 ABSL_FLAG(std::string, db_path, "", "Path for RocksDB database storage.");

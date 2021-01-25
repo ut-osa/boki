@@ -1,3 +1,4 @@
+#define __FAAS_NOWARN_CONVERSION
 #include "utils/bench.h"
 
 #include "common/time.h"

@@ -40,7 +40,7 @@ bool WriteOutputToFifo(const FuncCall& func_call,
             PLOG(ERROR) << "close failed";
         }
     });
-    int32_t header = success ? output.size() : -1;
+    int32_t header = success ? gsl::narrow_cast<int32_t>(output.size()) : -1;
     size_t write_size = sizeof(int32_t);
     memcpy(pipe_buf, &header, sizeof(int32_t));
     if (success) {

@@ -1,3 +1,4 @@
+#define __FAAS_NOWARN_CONVERSION
 #include "utils/perf_event.h"
 
 #include <sys/ioctl.h>

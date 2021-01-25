@@ -3,8 +3,6 @@
 #include "utils/env_variables.h"
 #include "log/sequencer.h"
 
-#include <absl/flags/flag.h>
-
 ABSL_FLAG(int, node_id, -1,
           "My node ID. Also settable through environment variable FAAS_NODE_ID.");
 

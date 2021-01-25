@@ -60,7 +60,9 @@ void EngineConnection::ScheduleClose() {
 void EngineConnection::RecvHandshakeResponse() {
     UV_DCHECK_OK(uv_read_stop(engine_conn_));
     Message* response = reinterpret_cast<Message*>(message_buffer_.data());
-    std::span<const char> payload(message_buffer_.data() + sizeof(Message), response->payload_size);
+    DCHECK_GE(response->payload_size, 0);
+    std::span<const char> payload(message_buffer_.data() + sizeof(Message),
+                                  static_cast<size_t>(response->payload_size));
     if (launcher_->OnRecvHandshakeResponse(*response, payload)) {
         HLOG(INFO) << "Handshake done";
         UV_DCHECK_OK(uv_read_start(engine_conn_,
@@ -111,7 +113,7 @@ UV_READ_CB_FOR_CLASS(EngineConnection, ReadHandshakeResponse) {
     });
     if (nread < 0) {
         HLOG(WARNING) << "Read error on handshake, will close the connection: "
-                      << uv_strerror(nread);
+                      << uv_strerror(static_cast<int>(nread));
         ScheduleClose();
         return;
     }
@@ -119,10 +121,12 @@ UV_READ_CB_FOR_CLASS(EngineConnection, ReadHandshakeResponse) {
         HLOG(WARNING) << "nread=0, will do nothing";
         return;
     }
-    message_buffer_.AppendData(buf->base, nread);
+    DCHECK_GT(nread, 0);
+    message_buffer_.AppendData(buf->base, static_cast<size_t>(nread));
     if (message_buffer_.length() >= sizeof(Message)) {
         Message* response = reinterpret_cast<Message*>(message_buffer_.data());
-        size_t expected_size = sizeof(Message) + response->payload_size;
+        DCHECK_GE(response->payload_size, 0);
+        size_t expected_size = sizeof(Message) + static_cast<size_t>(response->payload_size);
         if (message_buffer_.length() >= expected_size) {
             RecvHandshakeResponse();
             message_buffer_.ConsumeFront(expected_size);
@@ -158,7 +162,7 @@ UV_READ_CB_FOR_CLASS(EngineConnection, ReadMessage) {
     });
     if (nread < 0) {
         HLOG(WARNING) << "Read error, will close the connection: "
-                      << uv_strerror(nread);
+                      << uv_strerror(static_cast<int>(nread));
         ScheduleClose();
         return;
     }
@@ -166,8 +170,9 @@ UV_READ_CB_FOR_CLASS(EngineConnection, ReadMessage) {
         HLOG(WARNING) << "nread=0, will do nothing";
         return;
     }
+    DCHECK_GT(nread, 0);
     utils::ReadMessages<Message>(
-        &message_buffer_, buf->base, nread,
+        &message_buffer_, buf->base, static_cast<size_t>(nread),
         [this] (Message* message) {
             launcher_->OnRecvMessage(*message);
         });

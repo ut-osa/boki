@@ -45,7 +45,8 @@ void Launcher::Start() {
     CHECK(func_id_ != -1);
     CHECK(!fprocess_.empty());
     // Connect to engine via IPC path
-    Message handshake_message = MessageHelper::NewLauncherHandshake(func_id_);
+    Message handshake_message = MessageHelper::NewLauncherHandshake(
+        gsl::narrow_cast<uint16_t>(func_id_));
     std::string self_container_id = docker_utils::GetSelfContainerId();
     DCHECK_EQ(self_container_id.size(), docker_utils::kContainerIdLength);
     MessageHelper::SetInlineData(&handshake_message, STRING_AS_SPAN(self_container_id));
@@ -80,9 +81,10 @@ void Launcher::OnFuncProcessExit(FuncProcess* func_process) {
     int id = func_process->id();
     HLOG(WARNING) << "Function process " << id << " terminated";
     DCHECK_GE(id, 0);
-    DCHECK_LT(id, gsl::narrow_cast<int>(func_processes_.size()));
-    DCHECK(func_processes_[id].get() == func_process);
-    func_processes_[id].reset(nullptr);
+    DCHECK_LT(id, static_cast<int>(func_processes_.size()));
+    size_t index = static_cast<size_t>(id);
+    DCHECK(func_processes_[index].get() == func_process);
+    func_processes_[index].reset(nullptr);
 }
 
 void Launcher::EventLoopThreadMain() {

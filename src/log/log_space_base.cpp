@@ -20,7 +20,8 @@ LogSpaceBase::~LogSpaceBase() {}
 void LogSpaceBase::AddInterestedShard(uint16_t engine_id) {
     DCHECK(state_ == kCreated);
     const View::NodeIdVec& engine_node_ids = view_->GetEngineNodes();
-    size_t idx = absl::c_find(engine_node_ids, engine_id) - engine_node_ids.begin();
+    size_t idx = static_cast<size_t>(
+        absl::c_find(engine_node_ids, engine_id) - engine_node_ids.begin());
     DCHECK_LT(idx, engine_node_ids.size());
     interested_shards_.insert(idx);
 }
@@ -121,7 +122,8 @@ bool LogSpaceBase::CanApplyMetaLog(const MetaLogProto& meta_log) {
         switch (meta_log.type()) {
         case MetaLogProto::NEW_LOGS:
             for (size_t shard_idx : interested_shards_) {
-                uint32_t shard_start = meta_log.new_logs_proto().shard_starts(shard_idx);
+                uint32_t shard_start = meta_log.new_logs_proto().shard_starts(
+                    static_cast<int>(shard_idx));
                 DCHECK_GE(shard_start, shard_progrsses_[shard_idx]);
                 if (shard_start > shard_progrsses_[shard_idx]) {
                     return false;
@@ -151,15 +153,15 @@ void LogSpaceBase::ApplyMetaLog(const MetaLogProto& meta_log) {
                                     "metalog_seqnum={}, start_seqnum={}",
                                     meta_log.metalog_seqnum(), start_seqnum);
             for (size_t i = 0; i < engine_node_ids.size(); i++) {
-                uint64_t start_localid = bits::JoinTwo32(
-                    engine_node_ids[i], new_logs.shard_starts(i));
-                uint32_t delta = new_logs.shard_deltas(i);
+                uint32_t shard_start = new_logs.shard_starts(static_cast<int>(i));
+                uint32_t delta = new_logs.shard_deltas(static_cast<int>(i));
+                uint64_t start_localid = bits::JoinTwo32(engine_node_ids[i], shard_start);
                 if (mode_ == kFullMode || interested_shards_.contains(i)) {
                     OnNewLogs(meta_log.metalog_seqnum(),
                               bits::JoinTwo32(identifier(), start_seqnum),
                               start_localid, delta);
                 }
-                shard_progrsses_[i] = new_logs.shard_starts(i) + delta;
+                shard_progrsses_[i] = shard_start + delta;
                 start_seqnum += delta;
             }
             DCHECK_GT(start_seqnum, seqnum_position_);

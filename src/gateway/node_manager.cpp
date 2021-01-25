@@ -28,9 +28,13 @@ bool NodeManager::PickNodeForNewFuncCall(const protocol::FuncCall& func_call, ui
     if (absl::GetFlag(FLAGS_lb_per_fn_round_robin)) {
         idx = (next_dispatch_node_idx_[func_call.func_id]++) % connected_node_list_.size();
     } else if (absl::GetFlag(FLAGS_lb_pick_least_load)) {
-        idx = absl::c_min_element(connected_node_list_, [] (const Node* lhs, const Node* rhs) {
-            return lhs->inflight_requests < rhs->inflight_requests;
-        }) - connected_node_list_.begin();
+        auto iter = absl::c_min_element(
+            connected_node_list_,
+            [] (const Node* lhs, const Node* rhs) {
+                return lhs->inflight_requests < rhs->inflight_requests;
+            }
+        );
+        idx = static_cast<size_t>(iter - connected_node_list_.begin());
     } else {
         idx = absl::Uniform<size_t>(random_bit_gen_, 0, connected_node_list_.size());
     }

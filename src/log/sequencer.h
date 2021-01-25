@@ -60,7 +60,7 @@ template<class T>
 void Sequencer::FinalizedLogSpace(LockablePtr<T> logspace_ptr,
                                   const FinalizedView* finalized_view) {
     auto locked_logspace = logspace_ptr.Lock();
-    uint16_t logspace_id = locked_logspace->identifier();
+    uint32_t logspace_id = locked_logspace->identifier();
     bool success = locked_logspace->Finalize(
         finalized_view->final_metalog_position(logspace_id),
         finalized_view->tail_metalogs(logspace_id));

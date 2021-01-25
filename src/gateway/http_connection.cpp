@@ -292,9 +292,9 @@ void HttpConnection::OnNewHttpRequest(std::string_view method, std::string_view 
         return;
     }
 
-    int logspace = func_entry->default_logspace;
+    uint32_t logspace = func_entry->default_logspace;
     if (headers_.contains("x-faas-log-space")) {
-        int tmp;
+        uint32_t tmp;
         if (absl::SimpleAtoi(headers_.at("x-faas-log-space"), &tmp)) {
             logspace = tmp;
         } else {

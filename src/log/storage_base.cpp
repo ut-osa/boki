@@ -138,7 +138,7 @@ void StorageBase::SendIndexData(const View* view,
     SharedLogMessage message = SharedLogMessageHelper::NewIndexDataMessage(
         logspace_id);
     message.origin_node_id = node_id_;
-    message.payload_size = serialized_data.size();
+    message.payload_size = gsl::narrow_cast<uint32_t>(serialized_data.size());
     for (uint16_t engine_id : sequencer_node->GetIndexEngineNodes()) {
         SendSharedLogMessage(protocol::ConnType::STORAGE_TO_ENGINE,
                              engine_id, message, STRING_AS_SPAN(serialized_data));
@@ -149,7 +149,7 @@ bool StorageBase::SendSequencerMessage(uint16_t sequencer_id,
                                        SharedLogMessage* message,
                                        std::span<const char> payload) {
     message->origin_node_id = node_id_;
-    message->payload_size = payload.size();
+    message->payload_size = gsl::narrow_cast<uint32_t>(payload.size());
     return SendSharedLogMessage(protocol::ConnType::STORAGE_TO_SEQUENCER,
                                 sequencer_id, *message, payload);
 }
@@ -159,7 +159,7 @@ bool StorageBase::SendEngineResponse(const SharedLogMessage& request,
                                      std::span<const char> payload) {
     response->origin_node_id = node_id_;
     response->hop_times = request.hop_times + 1;
-    response->payload_size = payload.size();
+    response->payload_size = gsl::narrow_cast<uint32_t>(payload.size());
     response->client_data = request.client_data;
     return SendSharedLogMessage(protocol::ConnType::STORAGE_TO_ENGINE,
                                 request.origin_node_id, *response, payload);

@@ -1,10 +1,9 @@
+#define __FAAS_NOWARN_SIGN_CONVERSION
 #include "base/init.h"
 #include "base/common.h"
 #include "common/time.h"
 #include "utils/fs.h"
 #include "utils/bench.h"
-
-#include <absl/flags/flag.h>
 
 #include <sys/types.h>
 #include <sys/stat.h>

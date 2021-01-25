@@ -3,7 +3,9 @@
 #include "base/common.h"
 
 #ifdef __FAAS_HAVE_ABSL
+__BEGIN_THIRD_PARTY_HEADERS
 #include <absl/strings/numbers.h>
+__END_THIRD_PARTY_HEADERS
 #endif
 
 namespace faas {

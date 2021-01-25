@@ -1,3 +1,4 @@
+#define __FAAS_NOWARN_SIGN_CONVERSION
 #include "base/init.h"
 #include "base/common.h"
 #include "common/time.h"
@@ -6,8 +7,6 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/eventfd.h>
-
-#include <absl/flags/flag.h>
 
 ABSL_FLAG(int, server_cpu, -1, "Pin server process to this CPU");
 ABSL_FLAG(int, client_cpu, -1, "Pin client process to this CPU");

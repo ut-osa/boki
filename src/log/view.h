@@ -1,9 +1,12 @@
 #pragma once
 
 #include "base/common.h"
-#include "proto/shared_log.pb.h"
 #include "utils/hash.h"
 #include "utils/bits.h"
+
+__BEGIN_THIRD_PARTY_HEADERS
+#include "proto/shared_log.pb.h"
+__END_THIRD_PARTY_HEADERS
 
 namespace faas {
 namespace log {

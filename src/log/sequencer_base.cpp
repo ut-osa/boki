@@ -96,7 +96,7 @@ void SequencerBase::ReplicateMetaLog(const View* view, const MetaLogProto& metal
     SharedLogMessage message = SharedLogMessageHelper::NewMetaLogsMessage(logspace_id);
     std::string payload = SerializedMetaLogs(metalog);
     message.origin_node_id = node_id_;
-    message.payload_size = payload.size();
+    message.payload_size = gsl::narrow_cast<uint32_t>(payload.size());
     const View::Sequencer* sequencer_node = view->GetSequencerNode(my_node_id());
     for (uint16_t sequencer_id : sequencer_node->GetReplicaSequencerNodes()) {
         bool success = SendSharedLogMessage(
@@ -119,7 +119,9 @@ void SequencerBase::PropagateMetaLog(const View* view, const MetaLogProto& metal
         for (size_t i = 0; i < view->num_engine_nodes(); i++) {
             uint16_t engine_id = view->GetEngineNodes().at(i);
             const View::Engine* engine_node = view->GetEngineNode(engine_id);
-            if (metalog.new_logs_proto().shard_deltas(i) > 0) {
+            uint32_t shard_delta = metalog.new_logs_proto().shard_deltas(
+                static_cast<int>(i));
+            if (shard_delta > 0) {
                 engine_nodes.insert(engine_id);
                 for (uint16_t storage_id : engine_node->GetStorageNodes()) {
                     storage_nodes.insert(storage_id);
@@ -138,7 +140,7 @@ void SequencerBase::PropagateMetaLog(const View* view, const MetaLogProto& metal
     SharedLogMessage message = SharedLogMessageHelper::NewMetaLogsMessage(metalog.logspace_id());
     std::string payload = SerializedMetaLogs(metalog);
     message.origin_node_id = node_id_;
-    message.payload_size = payload.size();
+    message.payload_size = gsl::narrow_cast<uint32_t>(payload.size());
     for (uint16_t engine_id : engine_nodes) {
         bool success = SendSharedLogMessage(
             protocol::ConnType::SEQUENCER_TO_ENGINE, engine_id,
@@ -163,7 +165,7 @@ bool SequencerBase::SendSequencerMessage(uint16_t sequencer_id,
                                          SharedLogMessage* message,
                                          std::span<const char> payload) {
     message->origin_node_id = node_id_;
-    message->payload_size = payload.size();
+    message->payload_size = gsl::narrow_cast<uint32_t>(payload.size());
     return SendSharedLogMessage(protocol::ConnType::SEQUENCER_TO_SEQUENCER,
                                 sequencer_id, *message, payload);
 }
@@ -173,7 +175,7 @@ bool SequencerBase::SendEngineResponse(const SharedLogMessage& request,
                                        std::span<const char> payload) {
     response->origin_node_id = node_id_;
     response->hop_times = request.hop_times + 1;
-    response->payload_size = payload.size();
+    response->payload_size = gsl::narrow_cast<uint32_t>(payload.size());
     response->client_data = request.client_data;
     return SendSharedLogMessage(protocol::ConnType::SEQUENCER_TO_ENGINE,
                                 request.origin_node_id, *response, payload);

@@ -2,10 +2,15 @@
 #include "utils/socket.h"
 
 #ifdef __FAAS_HAVE_ABSL
+__BEGIN_THIRD_PARTY_HEADERS
 #include <absl/strings/numbers.h>
+__END_THIRD_PARTY_HEADERS
 #endif
 
+#ifdef __FAAS_SRC
 #include "common/flags.h"
+#endif
+
 #include "utils/random.h"
 
 #include <arpa/inet.h>
@@ -167,9 +172,11 @@ int TcpSocketBindAndListen(std::string_view ip, uint16_t port, int backlog) {
         PLOG(ERROR) << "Failed to create AF_INET socket";
         return -1;
     }
+#ifdef __FAAS_SRC
     if (absl::GetFlag(FLAGS_tcp_enable_reuseport)) {
         CHECK(SetSocketOption(fd, SO_REUSEPORT, 1));
     }
+#endif
     if (bind(fd, (struct sockaddr*)&sockaddr, sizeof(sockaddr)) != 0) {
         PLOG(ERROR) << fmt::format("Failed to bind to {}:{}", ip, port);
         close(fd);
@@ -235,9 +242,11 @@ int Tcp6SocketConnect(std::string_view ip, uint16_t port) {
         PLOG(ERROR) << "Failed to create AF_INET6 socket";
         return -1;
     }
+#ifdef __FAAS_SRC
     if (absl::GetFlag(FLAGS_tcp_enable_reuseport)) {
         CHECK(SetSocketOption(fd, SO_REUSEPORT, 1));
     }
+#endif
     if (connect(fd, (struct sockaddr*)&sockaddr, sizeof(sockaddr)) != 0) {
         PLOG(ERROR) << fmt::format("Failed to connect to {}:{}", ip, port);
         close(fd);
@@ -347,7 +356,7 @@ bool NetworkOpWithRetry(int max_retry, int sleep_sec, std::function<bool()> fn) 
             return true;
         }
         if (sleep_sec > 0) {
-            sleep(sleep_sec);
+            sleep(static_cast<unsigned>(sleep_sec));
         }
     }
     return false;

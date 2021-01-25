@@ -1,4 +1,5 @@
 #define __FAAS_USED_IN_BINDING
+#include "base/diagnostic.h"
 #include "base/logging.h"
 
 #include <errno.h>
@@ -18,9 +19,10 @@
 #include <fmt/core.h>
 
 #ifdef __FAAS_SRC
-
+__BEGIN_THIRD_PARTY_HEADERS
 #include <absl/synchronization/mutex.h>
 #include <absl/synchronization/notification.h>
+__END_THIRD_PARTY_HEADERS
 #include "base/thread.h"
 
 #else  // __FAAS_SRC

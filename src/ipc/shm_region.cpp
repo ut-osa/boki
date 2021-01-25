@@ -21,7 +21,7 @@ std::unique_ptr<ShmRegion> ShmCreate(std::string_view name, size_t size) {
         PLOG(ERROR) << "open " << full_path << " failed";
         return nullptr;
     }
-    PCHECK(ftruncate(fd, size) == 0) << "ftruncate failed";
+    PCHECK(ftruncate(fd, static_cast<long>(size)) == 0) << "ftruncate failed";
     void* ptr = nullptr;
     if (size > 0) {
         ptr = mmap(0, size, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);

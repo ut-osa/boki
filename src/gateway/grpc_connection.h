@@ -6,7 +6,9 @@
 #include "server/io_worker.h"
 #include "gateway/func_call_context.h"
 
+__BEGIN_THIRD_PARTY_HEADERS
 #include <nghttp2/nghttp2.h>
+__END_THIRD_PARTY_HEADERS
 
 namespace faas {
 namespace gateway {

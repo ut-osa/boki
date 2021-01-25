@@ -165,7 +165,7 @@ ConnectionBase* IOWorker::PickConnection(int type) {
 void IOWorker::EventLoopThreadMain() {
     current_ = this;
     HLOG(INFO) << "Event loop starts";
-    int inflight_ops;
+    size_t inflight_ops;
     do {
         io_uring_.EventLoopRunOnce(&inflight_ops);
         RunIdleFunctions();

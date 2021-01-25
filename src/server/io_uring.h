@@ -5,7 +5,9 @@
 #include "utils/object_pool.h"
 #include "utils/buffer_pool.h"
 
+__BEGIN_THIRD_PARTY_HEADERS
 #include <liburing.h>
+__END_THIRD_PARTY_HEADERS
 
 namespace faas {
 namespace server {
@@ -40,7 +42,7 @@ public:
     using CloseCallback = std::function<void()>;
     bool Close(int fd, CloseCallback cb);
 
-    void EventLoopRunOnce(int* inflight_ops);
+    void EventLoopRunOnce(size_t* inflight_ops);
 
 private:
     int uring_id_;

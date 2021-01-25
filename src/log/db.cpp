@@ -2,6 +2,8 @@
 
 #include "utils/bits.h"
 
+__BEGIN_THIRD_PARTY_HEADERS
+
 #include <rocksdb/db.h>
 
 #include <tkrzw_dbm.h>
@@ -9,10 +11,10 @@
 #include <tkrzw_dbm_tree.h>
 #include <tkrzw_dbm_skip.h>
 
-#include <absl/flags/flag.h>
+__END_THIRD_PARTY_HEADERS
 
 ABSL_FLAG(int, rocksdb_max_background_jobs, 2, "");
-ABSL_FLAG(int, rocksdb_block_cache_size_mb, 1024, "");
+ABSL_FLAG(size_t, rocksdb_block_cache_size_mb, 1024, "");
 ABSL_FLAG(bool, rocksdb_enable_compression, false, "");
 
 #define ROCKSDB_CHECK_OK(STATUS_VAR, OP_NAME)               \

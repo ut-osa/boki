@@ -2,7 +2,9 @@
 
 #include "utils/bits.h"
 
+__BEGIN_THIRD_PARTY_HEADERS
 #include <tkrzw_dbm_cache.h>
+__END_THIRD_PARTY_HEADERS
 
 namespace faas {
 namespace log {

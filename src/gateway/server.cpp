@@ -108,7 +108,8 @@ void Server::SetupHttpServer() {
     CHECK(!address.empty());
     CHECK_NE(http_port_, -1);
     http_sockfd_ = utils::TcpSocketBindAndListen(
-        address, http_port_, absl::GetFlag(FLAGS_socket_listen_backlog));
+        address, gsl::narrow_cast<uint16_t>(http_port_),
+        absl::GetFlag(FLAGS_socket_listen_backlog));
     CHECK(http_sockfd_ != -1)
         << fmt::format("Failed to listen on {}:{}", address, http_port_);
     HLOG(INFO) << fmt::format("Listen on {}:{} for HTTP requests", address, http_port_);
@@ -122,7 +123,8 @@ void Server::SetupGrpcServer() {
     CHECK(!address.empty());
     CHECK_NE(grpc_port_, -1);
     grpc_sockfd_ = utils::TcpSocketBindAndListen(
-        address, grpc_port_, absl::GetFlag(FLAGS_socket_listen_backlog));
+        address, gsl::narrow_cast<uint16_t>(grpc_port_),
+        absl::GetFlag(FLAGS_socket_listen_backlog));
     CHECK(grpc_sockfd_ != -1)
         << fmt::format("Failed to listen on {}:{}", address, grpc_port_);
     HLOG(INFO) << fmt::format("Listen on {}:{} for gRPC requests", address, grpc_port_);
@@ -374,8 +376,8 @@ void Server::OnNewFuncCallCommon(std::shared_ptr<server::ConnectionBase> parent_
             current_timestamp = last_request_timestamp_ + 1;
         }
         if (last_request_timestamp_ != -1) {
-            requests_instant_rps_stat_.AddSample(gsl::narrow_cast<float>(
-                1e6 / (current_timestamp - last_request_timestamp_)));
+            requests_instant_rps_stat_.AddSample(
+                1e6f / gsl::narrow_cast<float>(current_timestamp - last_request_timestamp_));
             request_interval_stat_.AddSample(gsl::narrow_cast<int32_t>(
                 current_timestamp - last_request_timestamp_));
         }
@@ -421,7 +423,7 @@ bool Server::DispatchFuncCall(std::shared_ptr<server::ConnectionBase> parent_con
     FuncCall func_call = func_call_context->func_call();
     GatewayMessage dispatch_message = GatewayMessageHelper::NewDispatchFuncCall(
         func_call, func_call_context->logspace());
-    dispatch_message.payload_size = func_call_context->input().size();
+    dispatch_message.payload_size = gsl::narrow_cast<uint32_t>(func_call_context->input().size());
     bool success = SendMessageToEngine(node_id, dispatch_message, func_call_context->input());
     if (!success) {
         node_manager_.FuncCallFinished(func_call, node_id);
@@ -435,7 +437,7 @@ bool Server::DispatchAsyncFuncCall(const FuncCall& func_call, uint32_t logspace,
                                    std::span<const char> input, uint16_t node_id) {
     GatewayMessage dispatch_message = GatewayMessageHelper::NewDispatchFuncCall(
         func_call, logspace);
-    dispatch_message.payload_size = input.size();
+    dispatch_message.payload_size = gsl::narrow_cast<uint32_t>(input.size());
     bool success = SendMessageToEngine(node_id, dispatch_message, input);
     if (!success) {
         node_manager_.FuncCallFinished(func_call, node_id);
