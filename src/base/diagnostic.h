@@ -1,6 +1,6 @@
 #pragma once
 
-#ifdef __clang__
+#if defined(__clang__) && defined(__FAAS_SRC)
 
 #ifndef __FAAS_NOWARN_CONVERSION
 
@@ -19,9 +19,9 @@
 #define __END_THIRD_PARTY_HEADERS                         \
     _Pragma("clang diagnostic pop")
 
-#else  // __clang__
+#else  // defined(__clang__) && defined(__FAAS_SRC)
 
 #define __BEGIN_THIRD_PARTY_HEADERS
 #define __END_THIRD_PARTY_HEADERS
 
-#endif  // __clang__
+#endif  // defined(__clang__) && defined(__FAAS_SRC)

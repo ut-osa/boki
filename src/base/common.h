@@ -65,6 +65,8 @@
 // Guidelines Support Library (GSL)
 #include <gsl/gsl>
 
+#include "base/diagnostic.h"
+
 #ifdef __FAAS_SRC
 #define __FAAS_HAVE_ABSL
 #endif
@@ -74,9 +76,7 @@
 // Will not include common absl headers in source files
 // with __FAAS_USED_IN_BINDING defined
 
-#ifdef __END_THIRD_PARTY_HEADERS
 __BEGIN_THIRD_PARTY_HEADERS
-#endif
 
 #include <absl/base/call_once.h>
 #include <absl/flags/flag.h>
@@ -99,13 +99,10 @@ __BEGIN_THIRD_PARTY_HEADERS
 #include <absl/functional/bind_front.h>
 #include <absl/algorithm/container.h>
 
-#ifdef __END_THIRD_PARTY_HEADERS
 __END_THIRD_PARTY_HEADERS
-#endif
 
 #endif  // defined(__FAAS_HAVE_ABSL) && !defined(__FAAS_USED_IN_BINDING)
 
 #include "base/macro.h"
 #include "base/logging.h"
 #include "base/std_span.h"
-#include "base/diagnostic.h"

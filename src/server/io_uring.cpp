@@ -430,8 +430,10 @@ void IOUring::UnregisterFd(Descriptor* desc) {
                               fd, fd_indices_.size());
 }
 
+#ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wshorten-64-to-32"
+#endif
 
 void IOUring::EnqueueOp(Op* op) {
     VLOG(2) << fmt::format("EnqueueOp: id={}, type={}, fd={}",
@@ -473,7 +475,9 @@ void IOUring::EnqueueOp(Op* op) {
     io_uring_sqe_set_data(sqe, reinterpret_cast<void*>(op->id));
 }
 
+#ifdef __clang__
 #pragma clang diagnostic pop
+#endif
 
 void IOUring::OnOpComplete(Op* op, struct io_uring_cqe* cqe) {
     int res = cqe->res;
