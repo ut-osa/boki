@@ -270,7 +270,7 @@ void Server::HandleFuncCallCompleteOrFailedMessage(uint16_t node_id,
             async_result.func_id = state.func_call.func_id;
             async_result.logspace = state.logspace;
             async_result.recv_timestamp = state.recv_timestamp;
-            async_result.dispatch_timestamp = state.recv_timestamp;
+            async_result.dispatch_timestamp = state.dispatch_timestamp;
             async_result.finished_timestamp = current_timestamp;
         }
         if (!async_call && !discarded_func_calls_.contains(func_call.full_call_id)) {

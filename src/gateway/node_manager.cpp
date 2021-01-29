@@ -70,6 +70,9 @@ void NodeManager::OnNodeOnline(NodeWatcher::NodeType node_type, uint16_t node_id
             << fmt::format("Engine node {} already exists", node_id);
         connected_node_list_.push_back(node.get());
         connected_nodes_[node_id] = std::move(node);
+        max_running_requests_ = absl::GetFlag(FLAGS_max_running_requests)
+                              * connected_nodes_.size();
+        HLOG(INFO) << fmt::format("{} nodes connected", connected_nodes_.size());
     }
     server_->OnEngineNodeOnline(node_id);
 }
@@ -86,6 +89,9 @@ void NodeManager::OnNodeOffline(NodeWatcher::NodeType node_type, uint16_t node_i
         for (auto& entry : connected_nodes_) {
             connected_node_list_.push_back(entry.second.get());
         }
+        max_running_requests_ = absl::GetFlag(FLAGS_max_running_requests)
+                              * connected_nodes_.size();
+        HLOG(INFO) << fmt::format("{} nodes connected", connected_nodes_.size());
     }
     server_->OnEngineNodeOffline(node_id);
 }
