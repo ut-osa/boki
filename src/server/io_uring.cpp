@@ -430,7 +430,7 @@ void IOUring::UnregisterFd(Descriptor* desc) {
                               fd, fd_indices_.size());
 }
 
-#ifdef __clang__
+#ifdef __CLANG_CONVERSION_DIAGNOSTIC_ENABLED
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wshorten-64-to-32"
 #endif
@@ -475,7 +475,7 @@ void IOUring::EnqueueOp(Op* op) {
     io_uring_sqe_set_data(sqe, reinterpret_cast<void*>(op->id));
 }
 
-#ifdef __clang__
+#ifdef __CLANG_CONVERSION_DIAGNOSTIC_ENABLED
 #pragma clang diagnostic pop
 #endif
 
