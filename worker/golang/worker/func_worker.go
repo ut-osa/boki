@@ -364,13 +364,6 @@ func (w *FuncWorker) newFuncCallCommon(funcCall protocol.FuncCall, input []byte,
 		protocol.FillInlineDataInMessage(message, input)
 	}
 
-	if async {
-		w.mux.Lock()
-		_, err = w.outputPipe.Write(message)
-		w.mux.Unlock()
-		return nil, nil
-	}
-
 	if w.useFifoForNestedCall {
 		outputFifoName := ipc.GetFuncCallOutputFifoName(funcCall.FullCallId())
 		err = ipc.FifoCreate(outputFifoName)
@@ -432,6 +425,9 @@ func (w *FuncWorker) newFuncCallCommon(funcCall protocol.FuncCall, input []byte,
 		}
 	} else {
 		message := <-outputChan
+		if async {
+			return nil, nil
+		}
 		if protocol.IsFuncCallFailedMessage(message) {
 			return nil, fmt.Errorf("FuncCall failed")
 		}

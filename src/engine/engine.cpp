@@ -18,6 +18,7 @@ namespace faas {
 namespace engine {
 
 using protocol::FuncCall;
+using protocol::FuncCallHelper;
 using protocol::Message;
 using protocol::MessageHelper;
 using protocol::GatewayMessage;
@@ -309,6 +310,11 @@ void Engine::HandleInvokeFuncMessage(const Message& message) {
             async_func_calls_.erase(func_call.full_call_id);
         }
     }
+    if (is_async) {
+        Message response = MessageHelper::NewFuncCallComplete(
+            func_call, /* processing_time= */ 0);
+        SendFuncWorkerMessage(func_call.client_id, &response);
+    }
 }
 
 void Engine::HandleFuncCallCompleteMessage(const Message& message) {
@@ -325,12 +331,23 @@ void Engine::HandleFuncCallCompleteMessage(const Message& message) {
         if (message_delay >= 0) {
             message_delay_stat_.AddSample(message_delay);
         }
-        // if ((func_call.client_id == 0 && message.payload_size < 0)
-        //         || (func_call.client_id > 0 && message.payload_size + sizeof(int32_t) > PIPE_BUF)) {
-        //     output_use_shm_stat_.Tick();
-        // }
         if (func_call.client_id == 0) {
+            // External FuncCall
+            if (message.payload_size < 0) {
+                output_use_shm_stat_.Tick();
+            }
             GrabFromMap(external_func_call_shm_inputs_, func_call, &input_region);
+        } else {
+            // Internal FuncCall
+            if (use_fifo_for_nested_call_) {
+                DCHECK_GE(message.payload_size, 0);
+                size_t msg_size = static_cast<size_t>(message.payload_size) + sizeof(int32_t);
+                if (msg_size > size_t{PIPE_BUF}) {
+                    output_use_shm_stat_.Tick();
+                }
+            } else if (message.payload_size < 0) {
+                output_use_shm_stat_.Tick();
+            }
         }
         dispatcher = GetOrCreateDispatcherLocked(func_call.func_id);
         is_async_call = GrabFromMap(async_func_calls_, func_call, &async_call);
@@ -363,6 +380,8 @@ void Engine::HandleFuncCallCompleteMessage(const Message& message) {
         }
     } else if (is_async_call) {
         if (message.payload_size < 0) {
+            HLOG(WARNING) << "Async function call has a large output, that uses shm: "
+                          << FuncCallHelper::DebugString(func_call);
             auto output_region = ipc::ShmOpen(
                 ipc::GetFuncCallOutputShmName(func_call.full_call_id));
             if (output_region != nullptr) {
