@@ -151,17 +151,13 @@ void Engine::OnConnectionClose(ConnectionBase* connection) {
         }
         break;
     case kSequencerIngressTypeId:
-        ABSL_FALLTHROUGH_INTENDED;
     case kEngineIngressTypeId:
-        ABSL_FALLTHROUGH_INTENDED;
     case kStorageIngressTypeId:
         DCHECK(ingress_conns_.contains(connection->id()));
         ingress_conns_.erase(connection->id());
         break;
     case kSequencerEgressHubTypeId:
-        ABSL_FALLTHROUGH_INTENDED;
     case kEngineEgressHubTypeId:
-        ABSL_FALLTHROUGH_INTENDED;
     case kStorageEgressHubTypeId:
         {
             absl::MutexLock lk(&conn_mu_);
@@ -667,9 +663,7 @@ void Engine::OnRemoteMessageConn(const protocol::HandshakeMessage& handshake,
         CreateGatewayIngressConn(sockfd);
         break;
     case protocol::ConnType::SEQUENCER_TO_ENGINE:
-        ABSL_FALLTHROUGH_INTENDED;
     case protocol::ConnType::STORAGE_TO_ENGINE:
-        ABSL_FALLTHROUGH_INTENDED;
     case protocol::ConnType::SLOG_ENGINE_TO_ENGINE:
         if (enable_shared_log_) {
             CreateSharedLogIngressConn(sockfd, type, handshake.src_node_id);

@@ -110,7 +110,6 @@ void EngineBase::LocalOpHandler(LocalOp* op) {
         HandleLocalAppend(op);
         break;
     case SharedLogOpType::READ_NEXT:
-        ABSL_FALLTHROUGH_INTENDED;
     case SharedLogOpType::READ_PREV:
         HandleLocalRead(op);
         break;
@@ -126,7 +125,6 @@ void EngineBase::MessageHandler(const SharedLogMessage& message,
                                 std::span<const char> payload) {
     switch (SharedLogMessageHelper::GetOpType(message)) {
     case SharedLogOpType::READ_NEXT:
-        ABSL_FALLTHROUGH_INTENDED;
     case SharedLogOpType::READ_PREV:
         HandleRemoteRead(message);
         break;
@@ -176,7 +174,6 @@ void EngineBase::OnMessageFromFuncWorker(const Message& message) {
         op->data.AppendData(MessageHelper::GetInlineData(message));
         break;
     case SharedLogOpType::READ_NEXT:
-        ABSL_FALLTHROUGH_INTENDED;
     case SharedLogOpType::READ_PREV:
         op->user_tag = message.log_tag;
         op->seqnum = message.log_seqnum;

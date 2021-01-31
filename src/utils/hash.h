@@ -1,7 +1,9 @@
 #pragma once
 
 #define XXH_INLINE_ALL
+__BEGIN_THIRD_PARTY_HEADERS
 #include <xxhash.h>
+__END_THIRD_PARTY_HEADERS
 
 namespace faas {
 namespace hash {

@@ -248,17 +248,13 @@ void SequencerBase::OnConnectionClose(ConnectionBase* connection) {
     DCHECK(WithinMyEventLoopThread());
     switch (connection->type() & kConnectionTypeMask) {
     case kSequencerIngressTypeId:
-        ABSL_FALLTHROUGH_INTENDED;
     case kEngineIngressTypeId:
-        ABSL_FALLTHROUGH_INTENDED;
     case kStorageIngressTypeId:
         DCHECK(ingress_conns_.contains(connection->id()));
         ingress_conns_.erase(connection->id());
         break;
     case kSequencerEgressHubTypeId:
-        ABSL_FALLTHROUGH_INTENDED;
     case kEngineEgressHubTypeId:
-        ABSL_FALLTHROUGH_INTENDED;
     case kStorageEgressHubTypeId:
         {
             absl::MutexLock lk(&conn_mu_);

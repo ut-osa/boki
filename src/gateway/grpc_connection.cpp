@@ -450,6 +450,7 @@ int GrpcConnection::H2OnFrameRecv(const nghttp2_frame* frame) {
             context->state = H2StreamContext::kProcessing;
             OnNewGrpcCall(context);
         }
+        ABSL_FALLTHROUGH_INTENDED;
     default:
         break;
     }
