@@ -255,6 +255,8 @@ void LogStorage::ReadAt(const protocol::SharedLogMessage& request) {
         result.log_entry = live_log_entries_[seqnum];
     } else if (seqnum < persisted_seqnum_position_) {
         result.status = ReadResult::kLookupDB;
+    } else {
+        HLOG(WARNING) << fmt::format("Failed to locate seqnum {}", bits::HexStr0x(seqnum));
     }
     pending_read_results_.push_back(std::move(result));
 }
@@ -316,6 +318,8 @@ void LogStorage::OnNewLogs(uint32_t metalog_seqnum,
                            uint32_t delta) {
     auto iter = pending_read_requests_.begin();
     while (iter != pending_read_requests_.end() && iter->first < start_seqnum) {
+        HLOG(WARNING) << fmt::format("Read request for seqnum {} has past",
+                                     bits::HexStr0x(iter->first));
         pending_read_results_.push_back(ReadResult {
             .status = ReadResult::kFailed,
             .log_entry = nullptr,

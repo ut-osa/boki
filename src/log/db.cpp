@@ -75,6 +75,7 @@ void RocksDBBackend::InstallLogSpace(uint32_t logspace_id) {
 bool RocksDBBackend::Get(uint32_t logspace_id, uint32_t key, std::string* data) {
     rocksdb::ColumnFamilyHandle* cf_handle = GetCFHandle(logspace_id);
     if (cf_handle == nullptr) {
+        LOG(WARNING) << fmt::format("Log space {} not created", bits::HexStr0x(logspace_id));
         return false;
     }
     std::string key_str = bits::HexStr(key);
@@ -164,6 +165,7 @@ void TkrzwDBMBackend::InstallLogSpace(uint32_t logspace_id) {
 bool TkrzwDBMBackend::Get(uint32_t logspace_id, uint32_t key, std::string* data) {
     tkrzw::DBM* dbm = GetDBM(logspace_id);
     if (dbm == nullptr) {
+        LOG(WARNING) << fmt::format("Log space {} not created", bits::HexStr0x(logspace_id));
         return false;
     }
     std::string key_str = bits::HexStr(key);

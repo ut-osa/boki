@@ -403,6 +403,9 @@ void Engine::OnRecvResponse(const SharedLogMessage& message,
             FinishLocalOpWithFailure(
                 op, SharedLogResultType::EMPTY, message.user_metalog_progress);
         } else if (result == SharedLogResultType::DATA_LOST) {
+            HLOG(WARNING) << fmt::format("Receive DATA_LOST response for read request "
+                                         "seqnum={}, tag={}",
+                                         bits::HexStr0x(op->seqnum), op->user_tag);
             FinishLocalOpWithFailure(op, SharedLogResultType::DATA_LOST);
         } else {
             UNREACHABLE();
@@ -458,6 +461,8 @@ void Engine::ProcessIndexFoundResult(const IndexQueryResult& query_result) {
         send_success = SendStorageReadRequest(query_result);
     }
     if (!cache_hit && !send_success) {
+        HLOG(WARNING) << fmt::format("Failed to send read request for seqnum {} ",
+                                     bits::HexStr0x(seqnum));
         if (local_request) {
             LocalOp* op = onging_reads_.PollChecked(query.client_data);
             FinishLocalOpWithFailure(op, SharedLogResultType::DATA_LOST);
