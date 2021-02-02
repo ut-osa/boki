@@ -511,7 +511,7 @@ func (w *FuncWorker) SharedLogAppend(ctx context.Context, tag uint64, data []byt
 		return 0, fmt.Errorf("Data cannot be empty")
 	}
 	if len(data) > protocol.MessageInlineDataSize {
-		return 0, fmt.Errorf("Data cannot be more than %d bytes", protocol.MessageInlineDataSize)
+		return 0, fmt.Errorf("Data too larger: %d, expect no more than %d bytes", len(data), protocol.MessageInlineDataSize)
 	}
 
 	id := atomic.AddUint64(&w.nextLogOpId, 1)

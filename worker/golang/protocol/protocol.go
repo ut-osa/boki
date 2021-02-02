@@ -78,7 +78,7 @@ const MessageTypeBits = 4
 const MessageHeaderByteSize = 64
 
 // Matches __FAAS_MESSAGE_SIZE in base/macro.h
-const MessageFullByteSize = 1024
+const MessageFullByteSize = 2048
 const MessageInlineDataSize = MessageFullByteSize - MessageHeaderByteSize
 
 const (
