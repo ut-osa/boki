@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"fmt"
@@ -30,9 +31,9 @@ type FuncWorker struct {
 	engineConn           net.Conn
 	newFuncCallChan      chan []byte
 	inputPipe            *os.File
-	outputPipe           *os.File                  // protected by mux
-	outgoingFuncCalls    map[uint64](chan []byte)  // protected by mux
-	outgoingLogOps       map[uint64](chan []byte)  // protected by mux
+	outputPipe           *os.File                 // protected by mux
+	outgoingFuncCalls    map[uint64](chan []byte) // protected by mux
+	outgoingLogOps       map[uint64](chan []byte) // protected by mux
 	handler              types.FuncHandler
 	grpcHandler          types.GrpcFuncHandler
 	nextCallId           uint32
@@ -467,7 +468,7 @@ func (w *FuncWorker) InvokeFunc(ctx context.Context, funcName string, input []by
 		ClientId: w.clientId,
 		CallId:   atomic.AddUint32(&w.nextCallId, 1) - 1,
 	}
-	return w.newFuncCallCommon(funcCall, input, /* async= */ false)
+	return w.newFuncCallCommon(funcCall, input, false /* async */)
 }
 
 // Implement types.Environment
@@ -482,7 +483,7 @@ func (w *FuncWorker) InvokeFuncAsync(ctx context.Context, funcName string, input
 		ClientId: w.clientId,
 		CallId:   atomic.AddUint32(&w.nextCallId, 1) - 1,
 	}
-	_, err := w.newFuncCallCommon(funcCall, input, /* async= */ true)
+	_, err := w.newFuncCallCommon(funcCall, input, true /* async */)
 	return err
 }
 
@@ -502,22 +503,27 @@ func (w *FuncWorker) GrpcCall(ctx context.Context, service string, method string
 		ClientId: w.clientId,
 		CallId:   atomic.AddUint32(&w.nextCallId, 1) - 1,
 	}
-	return w.newFuncCallCommon(funcCall, request, /* async= */ false)
+	return w.newFuncCallCommon(funcCall, request, false /* async */)
 }
 
 // Implement types.Environment
-func (w *FuncWorker) SharedLogAppend(ctx context.Context, tag uint64, data []byte) (uint64, error) {
+func (w *FuncWorker) SharedLogAppend(ctx context.Context, tags []uint64, data []byte) (uint64, error) {
 	if len(data) == 0 {
 		return 0, fmt.Errorf("Data cannot be empty")
 	}
-	if len(data) > protocol.MessageInlineDataSize {
-		return 0, fmt.Errorf("Data too larger: %d, expect no more than %d bytes", len(data), protocol.MessageInlineDataSize)
+	if len(data)+len(tags)*protocol.SharedLogTagByteSize > protocol.MessageInlineDataSize {
+		return 0, fmt.Errorf("Data too larger (size=%d, num_tags=%d), expect no more than %d bytes", len(data), len(tags), protocol.MessageInlineDataSize)
 	}
 
 	id := atomic.AddUint64(&w.nextLogOpId, 1)
 	currentCallId := atomic.LoadUint64(&w.currentCall)
-	message := protocol.NewSharedLogAppendMessage(currentCallId, w.clientId, tag, id)
-	protocol.FillInlineDataInMessage(message, data)
+	message := protocol.NewSharedLogAppendMessage(currentCallId, w.clientId, uint16(len(tags)), id)
+	if len(tags) == 0 {
+		protocol.FillInlineDataInMessage(message, data)
+	} else {
+		tagBuffer := protocol.BuildLogTagsBuffer(tags)
+		protocol.FillInlineDataInMessage(message, bytes.Join([][]byte{tagBuffer, data}, nil /* sep */))
+	}
 
 	w.mux.Lock()
 	outputChan := make(chan []byte)
@@ -537,6 +543,28 @@ func (w *FuncWorker) SharedLogAppend(ctx context.Context, tag uint64, data []byt
 	}
 }
 
+func buildLogEntryFromReadResponse(response []byte) *types.LogEntry {
+	seqNum := protocol.GetLogSeqNumFromMessage(response)
+	numTags := protocol.GetLogNumTagsFromMessage(response)
+	auxDataSize := protocol.GetLogAuxDataSizeFromMessage(response)
+	responseData := protocol.GetInlineDataFromMessage(response)
+	if numTags*protocol.SharedLogTagByteSize+auxDataSize <= len(responseData) {
+		log.Fatalf("[FATAL] Size of inline data too smaler: size=%d, num_tags=%d, aux_data=%d", len(responseData), numTags, auxDataSize)
+	}
+	tags := make([]uint64, numTags)
+	for i := 0; i < numTags; i++ {
+		tags[i] = protocol.GetLogTagFromMessage(response, i)
+	}
+	auxDataStart := numTags * protocol.SharedLogTagByteSize
+	dataStart := auxDataStart + auxDataSize
+	return &types.LogEntry{
+		SeqNum:  seqNum,
+		Tags:    tags,
+		Data:    responseData[dataStart:],
+		AuxData: responseData[auxDataStart : auxDataStart+auxDataSize],
+	}
+}
+
 func (w *FuncWorker) sharedLogReadCommon(message []byte, opId uint64) (*types.LogEntry, error) {
 	w.mux.Lock()
 	outputChan := make(chan []byte)
@@ -550,12 +578,7 @@ func (w *FuncWorker) sharedLogReadCommon(message []byte, opId uint64) (*types.Lo
 	response := <-outputChan
 	result := protocol.GetSharedLogResultTypeFromMessage(response)
 	if result == protocol.SharedLogResultType_READ_OK {
-		logEntry := types.LogEntry{
-			SeqNum: protocol.GetLogSeqNumFromMessage(response),
-			Tag:    protocol.GetLogTagFromMessage(response),
-			Data:   protocol.GetInlineDataFromMessage(response),
-		}
-		return &logEntry, nil
+		return buildLogEntryFromReadResponse(response), nil
 	} else if result == protocol.SharedLogResultType_EMPTY {
 		return nil, nil
 	} else {
@@ -567,7 +590,7 @@ func (w *FuncWorker) sharedLogReadCommon(message []byte, opId uint64) (*types.Lo
 func (w *FuncWorker) SharedLogReadNext(ctx context.Context, tag uint64, seqNum uint64) (*types.LogEntry, error) {
 	id := atomic.AddUint64(&w.nextLogOpId, 1)
 	currentCallId := atomic.LoadUint64(&w.currentCall)
-	message := protocol.NewSharedLogReadMessage(currentCallId, w.clientId, tag, seqNum, /* direction= */ 1, id)
+	message := protocol.NewSharedLogReadMessage(currentCallId, w.clientId, tag, seqNum, 1 /* direction */, id)
 	return w.sharedLogReadCommon(message, id)
 }
 
@@ -575,11 +598,16 @@ func (w *FuncWorker) SharedLogReadNext(ctx context.Context, tag uint64, seqNum u
 func (w *FuncWorker) SharedLogReadPrev(ctx context.Context, tag uint64, seqNum uint64) (*types.LogEntry, error) {
 	id := atomic.AddUint64(&w.nextLogOpId, 1)
 	currentCallId := atomic.LoadUint64(&w.currentCall)
-	message := protocol.NewSharedLogReadMessage(currentCallId, w.clientId, tag, seqNum, /* direction= */ -1, id)
+	message := protocol.NewSharedLogReadMessage(currentCallId, w.clientId, tag, seqNum, -1 /* direction */, id)
 	return w.sharedLogReadCommon(message, id)
 }
 
 // Implement types.Environment
 func (w *FuncWorker) SharedLogCheckTail(ctx context.Context, tag uint64) (*types.LogEntry, error) {
 	return w.SharedLogReadPrev(ctx, tag, protocol.MaxLogSeqnum)
+}
+
+// Implement types.Environment
+func (w *FuncWorker) SharedLogSetAuxData(ctx context.Context, seqNum uint64, auxData []byte) error {
+	return fmt.Errorf("Not implemented")
 }

@@ -48,11 +48,11 @@ const (
 
 // SharedLogOpType enum
 const (
-	SharedLogOpType_INVALID    uint16 = 0x00
-	SharedLogOpType_APPEND     uint16 = 0x01
-	SharedLogOpType_READ_NEXT  uint16 = 0x02
-	SharedLogOpType_READ_PREV  uint16 = 0x03
-	SharedLogOpType_TRIM       uint16 = 0x04
+	SharedLogOpType_INVALID   uint16 = 0x00
+	SharedLogOpType_APPEND    uint16 = 0x01
+	SharedLogOpType_READ_NEXT uint16 = 0x02
+	SharedLogOpType_READ_PREV uint16 = 0x03
+	SharedLogOpType_TRIM      uint16 = 0x04
 )
 
 // SharedLogResultType enum
@@ -81,6 +81,8 @@ const MessageHeaderByteSize = 64
 const MessageFullByteSize = 2048
 const MessageInlineDataSize = MessageFullByteSize - MessageHeaderByteSize
 
+const SharedLogTagByteSize = 8
+
 const (
 	FLAG_FuncWorkerUseEngineSocket uint32 = (1 << 0)
 	FLAG_UseFifoForNestedCall      uint32 = (1 << 1)
@@ -108,8 +110,17 @@ func GetLogSeqNumFromMessage(buffer []byte) uint64 {
 	return binary.LittleEndian.Uint64(buffer[8:16])
 }
 
-func GetLogTagFromMessage(buffer []byte) uint64 {
-	return binary.LittleEndian.Uint64(buffer[40:48])
+func GetLogNumTagsFromMessage(buffer []byte) int {
+	return int(binary.LittleEndian.Uint16(buffer[36:38]))
+}
+
+func GetLogTagFromMessage(buffer []byte, tagIndex int) uint64 {
+	bufIndex := MessageHeaderByteSize + tagIndex*SharedLogTagByteSize
+	return binary.LittleEndian.Uint64(buffer[bufIndex : bufIndex+SharedLogTagByteSize])
+}
+
+func GetLogAuxDataSizeFromMessage(buffer []byte) int {
+	return int(binary.LittleEndian.Uint16(buffer[38:40]))
 }
 
 func GetLogClientDataFromMessage(buffer []byte) uint64 {
@@ -184,13 +195,13 @@ func NewFuncCallFailedMessage(funcCall FuncCall) []byte {
 	return buffer
 }
 
-func NewSharedLogAppendMessage(currentCallId uint64, myClientId uint16, tag uint64, clientData uint64) []byte {
+func NewSharedLogAppendMessage(currentCallId uint64, myClientId uint16, numTags uint16, clientData uint64) []byte {
 	buffer := NewEmptyMessage()
 	tmp := (currentCallId << MessageTypeBits) + uint64(MessageType_SHARED_LOG_OP)
 	binary.LittleEndian.PutUint64(buffer[0:8], tmp)
 	binary.LittleEndian.PutUint16(buffer[32:34], SharedLogOpType_APPEND)
 	binary.LittleEndian.PutUint16(buffer[34:36], myClientId)
-	binary.LittleEndian.PutUint64(buffer[40:48], tag)
+	binary.LittleEndian.PutUint16(buffer[36:38], numTags)
 	binary.LittleEndian.PutUint64(buffer[48:56], clientData)
 	return buffer
 }
@@ -247,4 +258,13 @@ func GetInlineDataFromMessage(buffer []byte) []byte {
 
 func SetDispatchDelayInMessage(buffer []byte, dispatchDelay int32) {
 	binary.LittleEndian.PutUint32(buffer[8:12], uint32(dispatchDelay))
+}
+
+func BuildLogTagsBuffer(tags []uint64) []byte {
+	buffer := make([]byte, len(tags)*SharedLogTagByteSize)
+	for i := 0; i < len(tags); i++ {
+		bufIndex := i * SharedLogTagByteSize
+		binary.LittleEndian.PutUint64(buffer[bufIndex:bufIndex+SharedLogTagByteSize], tags[i])
+	}
+	return buffer
 }

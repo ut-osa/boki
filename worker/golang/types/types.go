@@ -5,9 +5,10 @@ import (
 )
 
 type LogEntry struct {
-	SeqNum uint64
-	Tag    uint64
-	Data   []byte
+	SeqNum  uint64
+	Tags    []uint64
+	Data    []byte
+	AuxData []byte
 }
 
 type Environment interface {
@@ -16,8 +17,8 @@ type Environment interface {
 	GrpcCall(ctx context.Context, service string, method string, request []byte) ( /* reply */ []byte, error)
 
 	// Shared log operations
-	// Append a new log with `tag` (`tag`==0 means empty tag)
-	SharedLogAppend(ctx context.Context, tag uint64, data []byte) ( /* seqnum */ uint64, error)
+	// Append a new log entry, tags must be non-zero
+	SharedLogAppend(ctx context.Context, tags []uint64, data []byte) ( /* seqnum */ uint64, error)
 	// Read the first log with `tag` whose seqnum >= given `seqNum`
 	// `tag`==0 means considering log with any tag, including empty tag
 	SharedLogReadNext(ctx context.Context, tag uint64, seqNum uint64) (*LogEntry, error)
@@ -26,6 +27,8 @@ type Environment interface {
 	SharedLogReadPrev(ctx context.Context, tag uint64, seqNum uint64) (*LogEntry, error)
 	// Alias for ReadPrev(tag, MaxSeqNum)
 	SharedLogCheckTail(ctx context.Context, tag uint64) (*LogEntry, error)
+	// Set auxiliary data for log entry of given `seqNum`
+	SharedLogSetAuxData(ctx context.Context, seqNum uint64, auxData []byte) error
 }
 
 type FuncHandler interface {
