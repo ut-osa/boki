@@ -29,19 +29,19 @@ void FifoRemove(std::string_view name) {
     }
 }
 
-int FifoOpenForRead(std::string_view name, bool nonblocking) {
+std::optional<int> FifoOpenForRead(std::string_view name, bool nonblocking) {
     return fs_utils::Open(
         fs_utils::JoinPath(GetRootPathForFifo(), name),
         /* flags= */ O_RDONLY | (nonblocking ? O_NONBLOCK : 0));
 }
 
-int FifoOpenForWrite(std::string_view name, bool nonblocking) {
+std::optional<int> FifoOpenForWrite(std::string_view name, bool nonblocking) {
     return fs_utils::Open(
         fs_utils::JoinPath(GetRootPathForFifo(), name),
         /* flags= */ O_WRONLY | (nonblocking ? O_NONBLOCK : 0));
 }
 
-int FifoOpenForReadWrite(std::string_view name, bool nonblocking) {
+std::optional<int> FifoOpenForReadWrite(std::string_view name, bool nonblocking) {
     return fs_utils::Open(
         fs_utils::JoinPath(GetRootPathForFifo(), name),
         /* flags= */ O_RDWR | (nonblocking ? O_NONBLOCK : 0));

@@ -167,7 +167,8 @@ EventDrivenWorker::FuncWorkerState* EventDrivenWorker::GetAssociatedFuncWorkerSt
 void EventDrivenWorker::NewFuncWorker(uint16_t client_id) {
     int engine_sock_fd = utils::UnixSocketConnect(ipc::GetEngineUnixSocketPath());
     CHECK(engine_sock_fd != -1) << "Failed to connect to engine socket";
-    int input_pipe_fd = ipc::FifoOpenForRead(ipc::GetFuncWorkerInputFifoName(client_id));
+    int input_pipe_fd = ipc::FifoOpenForRead(
+        ipc::GetFuncWorkerInputFifoName(client_id)).value_or(-1);
     Message message = MessageHelper::NewFuncWorkerHandshake(
         gsl::narrow_cast<uint16_t>(config_entry_->func_id), client_id);
     PCHECK(io_utils::SendMessage(engine_sock_fd, message));
@@ -182,7 +183,8 @@ void EventDrivenWorker::NewFuncWorker(uint16_t client_id) {
             use_fifo_for_nested_call_ = true;
         }
     }
-    int output_pipe_fd = ipc::FifoOpenForWrite(ipc::GetFuncWorkerOutputFifoName(client_id));
+    int output_pipe_fd = ipc::FifoOpenForWrite(
+        ipc::GetFuncWorkerOutputFifoName(client_id)).value_or(-1);
     LOG(INFO) << "Handshake done: client_id=" << client_id;
 
     FuncWorkerState* worker_state = new FuncWorkerState;
@@ -249,7 +251,8 @@ bool EventDrivenWorker::NewOutgoingFuncCallCommon(const protocol::FuncCall& pare
             return false;
         }
         output_fifo = ipc::FifoOpenForReadWrite(
-            ipc::GetFuncCallOutputFifoName(func_call.full_call_id), /* nonblocking= */ true);
+            ipc::GetFuncCallOutputFifoName(func_call.full_call_id),
+            /* nonblocking= */ true).value_or(-1);
         if (output_fifo == -1) {
             LOG(ERROR) << "FifoOpenForReadWrite failed";
             ipc::FifoRemove(ipc::GetFuncCallOutputFifoName(func_call.full_call_id));

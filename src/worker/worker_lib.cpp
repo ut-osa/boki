@@ -30,7 +30,8 @@ bool WriteOutputToFifo(const FuncCall& func_call,
                        char* pipe_buf) {
     VLOG(1) << "Start writing output to FIFO";
     int output_fifo = ipc::FifoOpenForWrite(
-        ipc::GetFuncCallOutputFifoName(func_call.full_call_id), /* nonblocking= */ true);
+        ipc::GetFuncCallOutputFifoName(func_call.full_call_id),
+        /* nonblocking= */ true).value_or(-1);
     if (output_fifo == -1) {
         LOG(ERROR) << "FifoOpenForWrite failed";
         return false;

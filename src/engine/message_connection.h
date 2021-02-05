@@ -41,9 +41,9 @@ private:
     uint16_t client_id_;
     bool handshake_done_;
 
-    int sockfd_;
-    int in_fifo_fd_;
-    int out_fifo_fd_;
+    std::optional<int> sockfd_;
+    std::optional<int> in_fifo_fd_;
+    std::optional<int> out_fifo_fd_;
     std::atomic<int> pipe_for_write_fd_;
 
     std::string log_header_;

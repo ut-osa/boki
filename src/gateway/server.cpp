@@ -474,11 +474,16 @@ std::string Server::EncodeAsyncCallResult(const Server::AsyncCallResult& result)
 }
 
 void Server::BackgroundThreadMain() {
-    int fd = -1;
+    std::optional<int> fd;
+    auto close_file = gsl::finally([&fd] {
+        if (fd.has_value()) {
+            close(*fd);
+        }
+    });
     std::string file_path(absl::GetFlag(FLAGS_async_call_result_path));
     if (!file_path.empty()) {
         fd = fs_utils::Create(file_path);
-        if (fd == -1) {
+        if (!fd.has_value()) {
             HLOG(FATAL) << "Failed to create file for async call results";
         }
     }
@@ -487,16 +492,13 @@ void Server::BackgroundThreadMain() {
         if (!async_call_results_.Pop(&result)) {
             break;
         }
-        if (fd != -1) {
+        if (fd.has_value()) {
             std::string data = EncodeAsyncCallResult(result);
             data.push_back('\n');
-            if (!io_utils::WriteData(fd, STRING_AS_SPAN(data))) {
+            if (!io_utils::WriteData(*fd, STRING_AS_SPAN(data))) {
                 HPLOG(ERROR) << "Failed to write data to FIFO";
             }
         }
-    }
-    if (fd != -1) {
-        close(fd);
     }
     HLOG(INFO) << "Background thread stopped";
 }

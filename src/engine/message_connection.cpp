@@ -18,7 +18,7 @@ MessageConnection::MessageConnection(Engine* engine, int sockfd)
     : server::ConnectionBase(kMessageConnectionTypeId),
       engine_(engine), io_worker_(nullptr), state_(kCreated),
       func_id_(0), client_id_(0), handshake_done_(false),
-      sockfd_(sockfd), in_fifo_fd_(-1), out_fifo_fd_(-1), pipe_for_write_fd_(-1),
+      sockfd_(sockfd), pipe_for_write_fd_(-1),
       log_header_("MessageConnection[Handshaking]: ") {
 }
 
@@ -31,9 +31,9 @@ void MessageConnection::Start(server::IOWorker* io_worker) {
     DCHECK(io_worker->WithinMyEventLoopThread());
     io_worker_ = io_worker;
     current_io_uring()->PrepareBuffers(kMessageConnectionBufGroup, kBufSize);
-    URING_DCHECK_OK(current_io_uring()->RegisterFd(sockfd_));
+    URING_DCHECK_OK(current_io_uring()->RegisterFd(*sockfd_));
     URING_DCHECK_OK(current_io_uring()->StartRecv(
-        sockfd_, kMessageConnectionBufGroup,
+        *sockfd_, kMessageConnectionBufGroup,
         [this] (int status, std::span<const char> data) -> bool {
             if (status != 0) {
                 HPLOG(ERROR) << "Read error on handshake, will close this connection";
@@ -68,19 +68,20 @@ void MessageConnection::ScheduleClose() {
     }
     DCHECK(state_ == kHandshake || state_ == kRunning);
     HLOG(INFO) << "Start closing";
-    URING_DCHECK_OK(current_io_uring()->Close(sockfd_, [this] () {
-        sockfd_ = -1;
+    DCHECK(sockfd_.has_value());
+    URING_DCHECK_OK(current_io_uring()->Close(*sockfd_, [this] () {
+        sockfd_ = std::nullopt;
         OnFdClosed();
     }));
-    if (in_fifo_fd_ != -1) {
-        URING_DCHECK_OK(current_io_uring()->Close(in_fifo_fd_, [this] () {
-            in_fifo_fd_ = -1;
+    if (in_fifo_fd_.has_value()) {
+        URING_DCHECK_OK(current_io_uring()->Close(*in_fifo_fd_, [this] () {
+            in_fifo_fd_ = std::nullopt;
             OnFdClosed();
         }));
     }
-    if (out_fifo_fd_ != -1) {
-        URING_DCHECK_OK(current_io_uring()->Close(out_fifo_fd_, [this] () {
-            out_fifo_fd_ = -1;
+    if (out_fifo_fd_.has_value()) {
+        URING_DCHECK_OK(current_io_uring()->Close(*out_fifo_fd_, [this] () {
+            out_fifo_fd_ = std::nullopt;
             pipe_for_write_fd_.store(-1);
             OnFdClosed();
         }));
@@ -116,7 +117,7 @@ void MessageConnection::SendPendingMessages() {
     size_t n_msg = write_size / sizeof(Message);
     for (size_t i = 0; i < n_msg; i++) {
         const char* ptr = write_message_buffer_.data() + i * sizeof(Message);
-        if (out_fifo_fd_ != -1) {
+        if (out_fifo_fd_.has_value()) {
             const Message* message = reinterpret_cast<const Message*>(ptr);
             if (!WriteMessageWithFifo(*message)) {
                 HLOG(FATAL) << "WriteMessageWithFifo failed";
@@ -127,7 +128,7 @@ void MessageConnection::SendPendingMessages() {
             CHECK_GE(buf.size(), sizeof(Message));
             memcpy(buf.data(), ptr, sizeof(Message));
             URING_DCHECK_OK(current_io_uring()->SendAll(
-                sockfd_, std::span<const char>(buf.data(), sizeof(Message)),
+                *sockfd_, std::span<const char>(buf.data(), sizeof(Message)),
                 [this, buf] (int status) {
                     io_worker_->ReturnWriteBuffer(buf);
                     if (status != 0) {
@@ -142,7 +143,9 @@ void MessageConnection::SendPendingMessages() {
 
 void MessageConnection::OnFdClosed() {
     DCHECK(state_ == kClosing);
-    if (sockfd_ == -1 && in_fifo_fd_ == -1 && out_fifo_fd_ == -1) {
+    if (    !sockfd_.has_value()
+         && !in_fifo_fd_.has_value()
+         && !out_fifo_fd_.has_value()) {
         state_ = kClosed;
         io_worker_->OnConnectionClose(this);
     }
@@ -169,22 +172,22 @@ void MessageConnection::RecvHandshakeMessage() {
     if (MessageHelper::IsFuncWorkerHandshake(*message)
             && !engine_->func_worker_use_engine_socket()) {
         out_fifo_fd_ = ipc::FifoOpenForWrite(ipc::GetFuncWorkerInputFifoName(client_id_));
-        if (out_fifo_fd_ == -1) {
+        if (!out_fifo_fd_.has_value()) {
             HLOG(ERROR) << "FifoOpenForWrite failed";
             ScheduleClose();
             return;
         }
-        URING_DCHECK_OK(current_io_uring()->RegisterFd(out_fifo_fd_));
+        URING_DCHECK_OK(current_io_uring()->RegisterFd(*out_fifo_fd_));
         in_fifo_fd_ = ipc::FifoOpenForRead(ipc::GetFuncWorkerOutputFifoName(client_id_));
-        if (in_fifo_fd_ == -1) {
+        if (!in_fifo_fd_.has_value()) {
             HLOG(ERROR) << "FifoOpenForRead failed";
             ScheduleClose();
             return;
         }
-        URING_DCHECK_OK(current_io_uring()->RegisterFd(in_fifo_fd_));
-        io_utils::FdUnsetNonblocking(in_fifo_fd_);
-        io_utils::FdUnsetNonblocking(out_fifo_fd_);
-        pipe_for_write_fd_.store(out_fifo_fd_);
+        URING_DCHECK_OK(current_io_uring()->RegisterFd(*in_fifo_fd_));
+        io_utils::FdUnsetNonblocking(*in_fifo_fd_);
+        io_utils::FdUnsetNonblocking(*out_fifo_fd_);
+        pipe_for_write_fd_.store(*out_fifo_fd_);
     }
     char* buf = reinterpret_cast<char*>(malloc(sizeof(Message) + payload.size()));
     memcpy(buf, &handshake_response_, sizeof(Message));
@@ -192,7 +195,7 @@ void MessageConnection::RecvHandshakeMessage() {
         memcpy(buf + sizeof(Message), payload.data(), payload.size());
     }
     URING_DCHECK_OK(current_io_uring()->SendAll(
-        sockfd_, std::span<const char>(buf, sizeof(Message) + payload.size()),
+        *sockfd_, std::span<const char>(buf, sizeof(Message) + payload.size()),
         [this, buf] (int status) {
             free(buf);
             if (status != 0) {
@@ -203,16 +206,16 @@ void MessageConnection::RecvHandshakeMessage() {
             handshake_done_ = true;
             state_ = kRunning;
             message_buffer_.Reset();
-            if (in_fifo_fd_ != -1) {
+            if (in_fifo_fd_.has_value()) {
                 URING_DCHECK_OK(current_io_uring()->StartRead(
-                    in_fifo_fd_, kMessageConnectionBufGroup,
+                    *in_fifo_fd_, kMessageConnectionBufGroup,
                     absl::bind_front(&MessageConnection::OnRecvData, this)));
                 URING_DCHECK_OK(current_io_uring()->StartRecv(
-                    sockfd_, kMessageConnectionBufGroup,
+                    *sockfd_, kMessageConnectionBufGroup,
                     absl::bind_front(&MessageConnection::OnRecvSockData, this)));
             } else {
                 URING_DCHECK_OK(current_io_uring()->StartRecv(
-                    sockfd_, kMessageConnectionBufGroup,
+                    *sockfd_, kMessageConnectionBufGroup,
                     absl::bind_front(&MessageConnection::OnRecvData, this)));
             }
             SendPendingMessages();
@@ -256,7 +259,7 @@ bool MessageConnection::OnRecvData(int status, std::span<const char> data) {
         return false;
     }
     if (data.size() == 0) {
-        if (in_fifo_fd_ == -1) {
+        if (in_fifo_fd_.has_value()) {
             HLOG(INFO) << "Connection closed remotely";
             ScheduleClose();
             return false;

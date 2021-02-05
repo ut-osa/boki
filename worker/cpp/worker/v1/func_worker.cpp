@@ -136,7 +136,8 @@ void FuncWorker::HandshakeWithEngine() {
         input_pipe_fd_ = engine_sock_fd_;
     } else {
         LOG(INFO) << "Use extra pipes for messages";
-        input_pipe_fd_ = ipc::FifoOpenForRead(ipc::GetFuncWorkerInputFifoName(client_id_));
+        input_pipe_fd_ = ipc::FifoOpenForRead(
+            ipc::GetFuncWorkerInputFifoName(client_id_)).value_or(-1);
     }
     Message message = MessageHelper::NewFuncWorkerHandshake(func_id_, client_id_);
     PCHECK(io_utils::SendMessage(engine_sock_fd_, message));
@@ -148,7 +149,8 @@ void FuncWorker::HandshakeWithEngine() {
     if (use_engine_socket_) {
         output_pipe_fd_ = engine_sock_fd_;
     } else {
-        output_pipe_fd_ = ipc::FifoOpenForWrite(ipc::GetFuncWorkerOutputFifoName(client_id_));
+        output_pipe_fd_ = ipc::FifoOpenForWrite(
+            ipc::GetFuncWorkerOutputFifoName(client_id_)).value_or(-1);
         CHECK(engine_sock_fd_ != -1) << "Failed to open output pipe";
     }
     if (response.flags & protocol::kUseFifoForNestedCallFlag) {
@@ -297,7 +299,8 @@ bool FuncWorker::FifoWaitInvokeFunc(Message* invoke_func_message,
         ipc::FifoRemove(ipc::GetFuncCallOutputFifoName(func_call.full_call_id));
     });
     int output_fifo = ipc::FifoOpenForReadWrite(
-        ipc::GetFuncCallOutputFifoName(func_call.full_call_id), /* nonblocking= */ true);
+        ipc::GetFuncCallOutputFifoName(func_call.full_call_id),
+        /* nonblocking= */ true).value_or(-1);
     if (output_fifo == -1) {
         LOG(ERROR) << "FifoOpenForReadWrite failed";
         return false;

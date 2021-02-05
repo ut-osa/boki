@@ -14,9 +14,9 @@ bool Remove(std::string_view path);
 bool RemoveDirectoryRecursively(std::string_view path);
 bool ReadContents(std::string_view path, std::string* contents);
 
-// Return fd on success, and -1 on failure
-int Open(std::string_view full_path, int flags);
-int Create(std::string_view full_path);
+// Return fd on success
+std::optional<int> Open(std::string_view full_path, int flags);
+std::optional<int> Create(std::string_view full_path);
 
 std::string JoinPath(std::string_view path1, std::string_view path2);
 std::string JoinPath(std::string_view path1, std::string_view path2, std::string_view path3);
