@@ -98,11 +98,11 @@ message FinalizedViewProto {
 }
 
 message LogEntryProto {
-    uint32 user_logspace = 2;
-    uint64 user_tag      = 3;
-    uint64 seqnum        = 4;
-    uint64 localid       = 5;
-    bytes  data          = 6;
+    uint32 user_logspace      = 1;
+    uint64 seqnum             = 2;
+    uint64 localid            = 3;
+    repeated uint64 user_tags = 4;
+    bytes data                = 5;
 }
 
 message IndexDataProto {
@@ -111,5 +111,6 @@ message IndexDataProto {
     repeated uint32 seqnum_halves  = 2;
     repeated uint32 engine_ids     = 3;
     repeated uint32 user_logspaces = 4;
-    repeated uint64 user_tags      = 5;
+    repeated uint32 user_tag_sizes = 5;
+    repeated uint64 user_tags      = 6;
 }

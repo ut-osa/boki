@@ -155,6 +155,10 @@ void Storage::HandleReplicateRequest(const SharedLogMessage& message,
                                      std::span<const char> payload) {
     DCHECK(SharedLogMessageHelper::GetOpType(message) == SharedLogOpType::REPLICATE);
     LogMetaData metadata = log_utils::GetMetaDataFromMessage(message);
+    std::span<const uint64_t> user_tags;
+    std::span<const char> log_data;
+    log_utils::SplitPayloadForMessage(message, payload, &user_tags, &log_data,
+                                      /* aux_data= */ nullptr);
     {
         absl::ReaderMutexLock view_lk(&view_mu_);
         ONHOLD_IF_FROM_FUTURE_VIEW(message, payload);
@@ -163,7 +167,7 @@ void Storage::HandleReplicateRequest(const SharedLogMessage& message,
         {
             auto locked_storage = storage_ptr.Lock();
             RETURN_IF_LOGSPACE_FINALIZED(locked_storage);
-            if (!locked_storage->Store(metadata, payload)) {
+            if (!locked_storage->Store(metadata, user_tags, log_data)) {
                 HLOG(ERROR) << "Failed to store log entry";
             }
         }
@@ -216,6 +220,7 @@ void Storage::ProcessReadResults(const LogStorage::ReadResultVec& results) {
             DCHECK_EQ(response.seqnum_lowhalf, request.seqnum_lowhalf);
             response.user_metalog_progress = request.user_metalog_progress;
             SendEngineResponse(request, &response,
+                               VECTOR_AS_CHAR_SPAN(result.log_entry->user_tags),
                                STRING_AS_SPAN(result.log_entry->data));
             break;
         case LogStorage::ReadResult::kLookupDB:
@@ -250,7 +255,11 @@ void Storage::ProcessReadFromDB(const SharedLogMessage& request) {
     DCHECK_EQ(response.logspace_id, request.logspace_id);
     DCHECK_EQ(response.seqnum_lowhalf, request.seqnum_lowhalf);
     response.user_metalog_progress = request.user_metalog_progress;
-    SendEngineResponse(request, &response, STRING_AS_SPAN(log_entry.data()));
+    std::span<const char> user_tags_data(
+        reinterpret_cast<const char*>(log_entry.user_tags().data()),
+        static_cast<size_t>(log_entry.user_tags().size()) * sizeof(uint64_t));
+    SendEngineResponse(request, &response,
+                       user_tags_data, STRING_AS_SPAN(log_entry.data()));
 }
 
 void Storage::ProcessRequests(const std::vector<SharedLogRequest>& requests) {

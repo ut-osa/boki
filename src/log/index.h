@@ -58,9 +58,9 @@ private:
     uint32_t indexed_metalog_position_;
 
     struct IndexData {
-        uint16_t engine_id;
-        uint32_t user_logspace;
-        uint64_t user_tag;
+        uint16_t   engine_id;
+        uint32_t   user_logspace;
+        UserTagVec user_tags;
     };
     std::map</* seqnum */ uint32_t, IndexData> received_data_;
     uint32_t data_received_seqnum_position_;

@@ -20,8 +20,9 @@ public:
     using HandshakeMessageCallback = std::function<void(std::string* /* handshake */)>;
     void SetHandshakeMessageCallback(HandshakeMessageCallback cb);
 
-    void SendMessage(std::span<const char> message);
-    void SendMessage(std::span<const char> part1, std::span<const char> part2);
+    void SendMessage(std::span<const char> part1,
+                     std::span<const char> part2 = EMPTY_CHAR_SPAN,
+                     std::span<const char> part3 = EMPTY_CHAR_SPAN);
 
 private:
     enum State { kCreated, kRunning, kClosing, kClosed };

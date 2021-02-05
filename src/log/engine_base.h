@@ -61,10 +61,11 @@ protected:
         uint64_t id;
         uint64_t client_data;
         uint64_t metalog_progress;
-        uint64_t user_tag;
+        uint64_t query_tag;
         uint64_t seqnum;
         uint64_t func_call_id;
         int64_t start_timestamp;
+        UserTagVec user_tags;
         utils::AppendableBuffer data;
     };
 
@@ -75,6 +76,7 @@ protected:
     void LocalOpHandler(LocalOp* op);
 
     void ReplicateLogEntry(const View* view, const LogMetaData& log_metadata,
+                           std::span<const uint64_t> user_tags,
                            std::span<const char> log_data);
 
     void FinishLocalOpWithResponse(LocalOp* op, protocol::Message* response,
@@ -82,7 +84,8 @@ protected:
     void FinishLocalOpWithFailure(LocalOp* op, protocol::SharedLogResultType result,
                                   uint64_t metalog_progress = 0);
 
-    void LogCachePut(const LogMetaData& log_metadata, std::span<const char> log_data);
+    void LogCachePut(const LogMetaData& log_metadata, std::span<const uint64_t> user_tags,
+                     std::span<const char> log_data);
     bool LogCacheGet(uint64_t seqnum, LogEntry* log_entry);
 
     bool SendIndexReadRequest(const View::Sequencer* sequencer_node,
@@ -90,7 +93,8 @@ protected:
     bool SendStorageReadRequest(const IndexQueryResult& result);
     void SendReadResponse(const IndexQuery& query,
                           protocol::SharedLogMessage* response,
-                          std::span<const char> payload = EMPTY_CHAR_SPAN);
+                          std::span<const char> payload1 = EMPTY_CHAR_SPAN,
+                          std::span<const char> payload2 = EMPTY_CHAR_SPAN);
     void SendReadFailureResponse(const IndexQuery& query,
                                  protocol::SharedLogResultType result_type,
                                  uint64_t metalog_progress = 0);
@@ -123,6 +127,8 @@ private:
 
     void SetupZKWatchers();
     void SetupTimers();
+
+    void PopulateLogTagsAndData(const protocol::Message& message, LocalOp* op);
 
     DISALLOW_COPY_AND_ASSIGN(EngineBase);
 };

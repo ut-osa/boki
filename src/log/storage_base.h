@@ -45,7 +45,8 @@ protected:
                               std::span<const char> payload);
     bool SendEngineResponse(const protocol::SharedLogMessage& request,
                             protocol::SharedLogMessage* response,
-                            std::span<const char> payload = EMPTY_CHAR_SPAN);
+                            std::span<const char> payload1 = EMPTY_CHAR_SPAN,
+                            std::span<const char> payload2 = EMPTY_CHAR_SPAN);
 
 private:
     const uint16_t node_id_;
@@ -79,7 +80,8 @@ private:
                                 std::span<const char> payload);
     bool SendSharedLogMessage(protocol::ConnType conn_type, uint16_t dst_node_id,
                               const protocol::SharedLogMessage& message,
-                              std::span<const char> payload);
+                              std::span<const char> payload1,
+                              std::span<const char> payload2 = EMPTY_CHAR_SPAN);
 
     server::EgressHub* CreateEgressHub(protocol::ConnType conn_type,
                                        uint16_t dst_node_id,

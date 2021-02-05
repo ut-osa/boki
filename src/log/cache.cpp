@@ -21,36 +21,54 @@ LRUCache::~LRUCache() {}
 
 namespace {
 static inline std::string EncodeLogEntry(const LogMetaData& log_metadata,
+                                         std::span<const uint64_t> user_tags,
                                          std::span<const char> log_data) {
+    DCHECK_EQ(log_metadata.num_tags, user_tags.size());
+    DCHECK_EQ(log_metadata.data_size, log_data.size());
+    size_t total_size = log_data.size()
+                      + user_tags.size() * sizeof(uint64_t)
+                      + sizeof(LogMetaData);
     std::string encoded;
-    DCHECK_EQ(size_t{log_metadata.data_size}, log_data.size());
-    encoded.resize(log_data.size() + sizeof(LogMetaData));
-    if (log_data.size() > 0) {
-        memcpy(encoded.data(), log_data.data(), log_data.size());
+    encoded.resize(total_size);
+    char* ptr = encoded.data();
+    DCHECK_GT(log_data.size(), 0U);
+    memcpy(ptr, log_data.data(), log_data.size());
+    ptr += log_data.size();
+    if (user_tags.size() > 0) {
+        memcpy(ptr, user_tags.data(), user_tags.size() * sizeof(uint64_t));
+        ptr += user_tags.size() * sizeof(uint64_t);
     }
-    memcpy(encoded.data() + log_data.size(), &log_metadata, sizeof(LogMetaData));
+    memcpy(ptr, &log_metadata, sizeof(LogMetaData));
     return encoded;
 }
 
 static inline void DecodeLogEntry(std::string encoded, LogEntry* log_entry) {
-    DCHECK_GE(encoded.size(), sizeof(LogMetaData));
-    size_t data_size = encoded.size() - sizeof(LogMetaData);
-    memcpy(&log_entry->metadata, encoded.data() + data_size, sizeof(LogMetaData));
-    DCHECK_EQ(size_t{log_entry->metadata.data_size}, data_size);
-    if (data_size > 0) {
-        log_entry->data = std::move(encoded);
-        DCHECK_GT(log_entry->data.size(), data_size);
-        log_entry->data.resize(data_size);
+    DCHECK_GT(encoded.size(), sizeof(LogMetaData));
+    LogMetaData& metadata = log_entry->metadata;
+    memcpy(&metadata,
+           encoded.data() + encoded.size() - sizeof(LogMetaData),
+           sizeof(LogMetaData));
+    size_t total_size = metadata.data_size
+                      + metadata.num_tags * sizeof(uint64_t)
+                      + sizeof(LogMetaData);
+    DCHECK_EQ(total_size, encoded.size());
+    if (metadata.num_tags > 0) {
+        std::span<const uint64_t> user_tags(
+            reinterpret_cast<const uint64_t*>(encoded.data() + metadata.data_size),
+            metadata.num_tags);
+        log_entry->user_tags.assign(user_tags.begin(), user_tags.end());
     } else {
-        log_entry->data.clear();
+        log_entry->user_tags.clear();
     }
+    encoded.resize(metadata.data_size);
+    log_entry->data = std::move(encoded);
 }
 }  // namespace
 
-void LRUCache::Put(const LogMetaData& log_metadata,
+void LRUCache::Put(const LogMetaData& log_metadata, std::span<const uint64_t> user_tags,
                    std::span<const char> log_data) {
     std::string key_str = bits::HexStr(log_metadata.seqnum);
-    std::string data = EncodeLogEntry(log_metadata, log_data);
+    std::string data = EncodeLogEntry(log_metadata, user_tags, log_data);
     dbm_->Set(key_str, data, /* overwrite= */ false);
 }
 
@@ -65,6 +83,14 @@ bool LRUCache::Get(uint64_t seqnum, LogEntry* log_entry) {
     } else {
         return false;
     }
+}
+
+void LRUCache::PutAuxData(uint64_t seqnum, std::span<const char> data) {
+    NOT_IMPLEMENTED();
+}
+
+bool GetAuxData(uint64_t seqnum, std::string* data) {
+    NOT_IMPLEMENTED();
 }
 
 }  // namespace log

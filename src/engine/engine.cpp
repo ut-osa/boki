@@ -686,8 +686,9 @@ void Engine::OnNewLocalIpcConn(int sockfd) {
 
 bool Engine::SendSharedLogMessage(protocol::ConnType conn_type, uint16_t dst_node_id,
                                   const SharedLogMessage& message,
-                                  std::span<const char> payload) {
-    DCHECK_EQ(size_t{message.payload_size}, payload.size());
+                                  std::span<const char> payload1,
+                                  std::span<const char> payload2) {
+    DCHECK_EQ(size_t{message.payload_size}, payload1.size() + payload2.size());
     EgressHub* hub = CurrentIOWorkerChecked()->PickOrCreateConnection<EgressHub>(
         ServerBase::GetEgressHubTypeId(conn_type, dst_node_id),
         absl::bind_front(&Engine::CreateEgressHub, this, conn_type, dst_node_id));
@@ -696,7 +697,7 @@ bool Engine::SendSharedLogMessage(protocol::ConnType conn_type, uint16_t dst_nod
     }
     std::span<const char> data(reinterpret_cast<const char*>(&message),
                                sizeof(SharedLogMessage));
-    hub->SendMessage(data, payload);
+    hub->SendMessage(data, payload1, payload2);
     return true;
 }
 

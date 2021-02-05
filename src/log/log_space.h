@@ -87,7 +87,8 @@ public:
     LogStorage(uint16_t storage_id, const View* view, uint16_t sequencer_id);
     ~LogStorage();
 
-    bool Store(const LogMetaData& log_metadata, std::span<const char> log_data);
+    bool Store(const LogMetaData& log_metadata, std::span<const uint64_t> user_tags,
+               std::span<const char> log_data);
     void ReadAt(const protocol::SharedLogMessage& request);
 
     bool GrabLogEntriesForPersistence(

@@ -99,9 +99,10 @@ namespace {
 static inline std::string SerializedLogEntry(const LogEntry& log_entry) {
     LogEntryProto log_entry_proto;
     log_entry_proto.set_user_logspace(log_entry.metadata.user_logspace);
-    log_entry_proto.set_user_tag(log_entry.metadata.user_tag);
     log_entry_proto.set_seqnum(log_entry.metadata.seqnum);
     log_entry_proto.set_localid(log_entry.metadata.localid);
+    log_entry_proto.mutable_user_tags()->Add(
+        log_entry.user_tags.begin(), log_entry.user_tags.end());
     log_entry_proto.set_data(log_entry.data);
     std::string data;
     CHECK(log_entry_proto.SerializeToString(&data));
@@ -156,13 +157,14 @@ bool StorageBase::SendSequencerMessage(uint16_t sequencer_id,
 
 bool StorageBase::SendEngineResponse(const SharedLogMessage& request,
                                      SharedLogMessage* response,
-                                     std::span<const char> payload) {
+                                     std::span<const char> payload1,
+                                     std::span<const char> payload2) {
     response->origin_node_id = node_id_;
     response->hop_times = request.hop_times + 1;
-    response->payload_size = gsl::narrow_cast<uint32_t>(payload.size());
+    response->payload_size = gsl::narrow_cast<uint32_t>(payload1.size() + payload2.size());
     response->client_data = request.client_data;
     return SendSharedLogMessage(protocol::ConnType::STORAGE_TO_ENGINE,
-                                request.origin_node_id, *response, payload);
+                                request.origin_node_id, *response, payload1, payload2);
 }
 
 void StorageBase::OnRecvSharedLogMessage(int conn_type, uint16_t src_node_id,
@@ -180,8 +182,9 @@ void StorageBase::OnRecvSharedLogMessage(int conn_type, uint16_t src_node_id,
 
 bool StorageBase::SendSharedLogMessage(protocol::ConnType conn_type, uint16_t dst_node_id,
                                        const SharedLogMessage& message,
-                                       std::span<const char> payload) {
-    DCHECK_EQ(size_t{message.payload_size}, payload.size());
+                                       std::span<const char> payload1,
+                                       std::span<const char> payload2) {
+    DCHECK_EQ(size_t{message.payload_size}, payload1.size() + payload2.size());
     EgressHub* hub = CurrentIOWorkerChecked()->PickOrCreateConnection<EgressHub>(
         ServerBase::GetEgressHubTypeId(conn_type, dst_node_id),
         absl::bind_front(&StorageBase::CreateEgressHub, this, conn_type, dst_node_id));
@@ -190,7 +193,7 @@ bool StorageBase::SendSharedLogMessage(protocol::ConnType conn_type, uint16_t ds
     }
     std::span<const char> data(reinterpret_cast<const char*>(&message),
                                sizeof(SharedLogMessage));
-    hub->SendMessage(data, payload);
+    hub->SendMessage(data, payload1, payload2);
     return true;
 }
 

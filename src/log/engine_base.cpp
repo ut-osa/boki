@@ -142,6 +142,18 @@ void EngineBase::MessageHandler(const SharedLogMessage& message,
     }
 }
 
+void EngineBase::PopulateLogTagsAndData(const Message& message, LocalOp* op) {
+    DCHECK(op->type == SharedLogOpType::APPEND);
+    DCHECK_EQ(message.log_aux_data_size, 0U);
+    std::span<const char> data = MessageHelper::GetInlineData(message);
+    size_t num_tags = message.log_num_tags;
+    if (num_tags > 0) {
+        op->user_tags.resize(num_tags);
+        memcpy(op->user_tags.data(), data.data(), num_tags * sizeof(uint64_t));
+    }
+    op->data.AppendData(data.subspan(num_tags * sizeof(uint64_t)));
+}
+
 void EngineBase::OnMessageFromFuncWorker(const Message& message) {
     protocol::FuncCall func_call = MessageHelper::GetFuncCall(message);
     FnCallContext ctx;
@@ -165,21 +177,20 @@ void EngineBase::OnMessageFromFuncWorker(const Message& message) {
     op->metalog_progress = ctx.metalog_progress;
     op->type = MessageHelper::GetSharedLogOpType(message);
     op->seqnum = kInvalidLogSeqNum;
-    op->user_tag = kInvalidLogTag;
+    op->query_tag = kInvalidLogTag;
+    op->user_tags.clear();
     op->data.Reset();
 
     switch (op->type) {
     case SharedLogOpType::APPEND:
-        op->user_tag = message.log_tag;
-        op->data.AppendData(MessageHelper::GetInlineData(message));
+        PopulateLogTagsAndData(message, op);
         break;
     case SharedLogOpType::READ_NEXT:
     case SharedLogOpType::READ_PREV:
-        op->user_tag = message.log_tag;
+        op->query_tag = message.log_tag;
         op->seqnum = message.log_seqnum;
         break;
     case SharedLogOpType::TRIM:
-        op->user_tag = message.log_tag;
         op->seqnum = message.log_seqnum;
         break;
     default:
@@ -205,15 +216,18 @@ void EngineBase::OnRecvSharedLogMessage(int conn_type, uint16_t src_node_id,
 }
 
 void EngineBase::ReplicateLogEntry(const View* view, const LogMetaData& log_metadata,
+                                   std::span<const uint64_t> user_tags,
                                    std::span<const char> log_data) {
     SharedLogMessage message = SharedLogMessageHelper::NewReplicateMessage();
     log_utils::PopulateMetaDataToMessage(log_metadata, &message);
     message.origin_node_id = node_id_;
-    message.payload_size = gsl::narrow_cast<uint32_t>(log_data.size());
+    message.payload_size = gsl::narrow_cast<uint32_t>(
+        user_tags.size() * sizeof(uint64_t) + log_data.size());
     const View::Engine* engine_node = view->GetEngineNode(node_id_);
     for (uint16_t storage_id : engine_node->GetStorageNodes()) {
         engine_->SendSharedLogMessage(protocol::ConnType::ENGINE_TO_STORAGE,
-                                      storage_id, message, log_data);
+                                      storage_id, message,
+                                      VECTOR_AS_CHAR_SPAN(user_tags), log_data);
     }
 }
 
@@ -240,13 +254,14 @@ void EngineBase::FinishLocalOpWithFailure(LocalOp* op, SharedLogResultType resul
 }
 
 void EngineBase::LogCachePut(const LogMetaData& log_metadata,
+                             std::span<const uint64_t> user_tags,
                              std::span<const char> log_data) {
     if (log_cache_ == nullptr) {
         return;
     }
     HVLOG(1) << fmt::format("Store cache for log entry (seqnum {})",
                             bits::HexStr0x(log_metadata.seqnum));
-    log_cache_->Put(log_metadata, log_data);
+    log_cache_->Put(log_metadata, user_tags, log_data);
 }
 
 bool EngineBase::LogCacheGet(uint64_t seqnum, LogEntry* log_entry) {
@@ -299,15 +314,16 @@ bool EngineBase::SendStorageReadRequest(const IndexQueryResult& result) {
 
 void EngineBase::SendReadResponse(const IndexQuery& query,
                                   protocol::SharedLogMessage* response,
-                                  std::span<const char> payload) {
+                                  std::span<const char> payload1,
+                                  std::span<const char> payload2) {
     response->origin_node_id = node_id_;
     response->hop_times = query.hop_times + 1;
     response->client_data = query.client_data;
-    response->payload_size = gsl::narrow_cast<uint32_t>(payload.size());
+    response->payload_size = gsl::narrow_cast<uint32_t>(payload1.size() + payload2.size());
     uint16_t engine_id = query.origin_node_id;
     bool success = engine_->SendSharedLogMessage(
         protocol::ConnType::SLOG_ENGINE_TO_ENGINE,
-        engine_id, *response, payload);
+        engine_id, *response, payload1, payload2);
     if (!success) {
         HLOG(WARNING) << fmt::format("Failed to send read response to engine {}",
                                      engine_id);

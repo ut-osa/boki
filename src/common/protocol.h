@@ -151,7 +151,8 @@ struct Message {
         };
     } __attribute__ ((packed));
 
-    uint32_t _0_padding_0_;
+    uint16_t log_num_tags;        // [36:38]
+    uint16_t log_aux_data_size;   // [38:40]
 
     uint64_t log_tag;             // [40:48]
     uint64_t log_client_data;     // [48:56] will be preserved for response to clients
@@ -235,7 +236,15 @@ struct SharedLogMessage {
     };
 
     uint32_t seqnum_lowhalf;  // [20:24] (the high half is logspace_id)
-    uint64_t user_tag;        // [24:32]
+    union {
+        uint64_t query_tag;   // [24:32]
+        struct {
+            uint16_t num_tags;      // [24:26]
+            uint16_t aux_data_size; // [26:28]
+
+            uint32_t _5_padding_5_;
+        } __attribute__ ((packed));
+    };
 
     uint64_t user_metalog_progress;  // [32:40]
 
@@ -316,6 +325,18 @@ public:
         message->payload_size = gsl::narrow_cast<int32_t>(total_size);
         if (total_size > 0) {
             memcpy(message->inline_data, data.data(), total_size);
+        }
+    }
+
+    template<class T>
+    static void AppendInlineData(Message* message, std::span<const T> data) {
+        size_t total_size = data.size() * sizeof(T);
+        DCHECK_GE(message->payload_size, 0);
+        size_t tail = static_cast<size_t>(message->payload_size);
+        DCHECK(tail + total_size <= MESSAGE_INLINE_DATA_SIZE);
+        message->payload_size = gsl::narrow_cast<int32_t>(tail + total_size);
+        if (total_size > 0) {
+            memcpy(message->inline_data + tail, data.data(), total_size);
         }
     }
 

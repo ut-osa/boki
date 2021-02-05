@@ -19,7 +19,7 @@ public:
     PerSpaceIndex(uint32_t logspace_id, uint32_t user_logspace);
     ~PerSpaceIndex() {}
 
-    void Add(uint32_t seqnum_lowhalf, uint16_t engine_id, uint64_t user_tag);
+    void Add(uint32_t seqnum_lowhalf, uint16_t engine_id, const UserTagVec& user_tags);
 
     bool FindPrev(uint64_t query_seqnum, uint64_t user_tag,
                   uint64_t* seqnum, uint16_t* engine_id) const;
@@ -47,12 +47,13 @@ Index::PerSpaceIndex::PerSpaceIndex(uint32_t logspace_id, uint32_t user_logspace
       user_logspace_(user_logspace) {}
 
 void Index::PerSpaceIndex::Add(uint32_t seqnum_lowhalf, uint16_t engine_id,
-                               uint64_t user_tag) {
+                               const UserTagVec& user_tags) {
     DCHECK(!engine_ids_.contains(seqnum_lowhalf));
     engine_ids_[seqnum_lowhalf] = engine_id;
     DCHECK(seqnums_.empty() || seqnum_lowhalf > seqnums_.back());
     seqnums_.push_back(seqnum_lowhalf);
-    if (user_tag != kEmptyLogTag) {
+    for (uint64_t user_tag : user_tags) {
+        DCHECK_NE(user_tag, kEmptyLogTag);
         seqnums_by_tag_[user_tag].push_back(seqnum_lowhalf);
     }
 }
@@ -136,17 +137,22 @@ void Index::ProvideIndexData(const IndexDataProto& index_data) {
     int n = index_data.seqnum_halves_size();
     DCHECK_EQ(n, index_data.engine_ids_size());
     DCHECK_EQ(n, index_data.user_logspaces_size());
-    DCHECK_EQ(n, index_data.user_tags_size());
+    DCHECK_EQ(n, index_data.user_tag_sizes_size());
+    uint32_t total_tags = absl::c_accumulate(index_data.user_tag_sizes(), 0U);
+    DCHECK_EQ(static_cast<int>(total_tags), index_data.user_tags_size());
+    auto tag_iter = index_data.user_tags().begin();
     for (int i = 0; i < n; i++) {
+        size_t num_tags = index_data.user_tag_sizes(i);
         uint32_t seqnum = index_data.seqnum_halves(i);
         if (seqnum < indexed_seqnum_position_) {
+            tag_iter += num_tags;
             continue;
         }
         if (received_data_.count(seqnum) == 0) {
             received_data_[seqnum] = IndexData {
                 .engine_id     = gsl::narrow_cast<uint16_t>(index_data.engine_ids(i)),
                 .user_logspace = index_data.user_logspaces(i),
-                .user_tag      = index_data.user_tags(i)
+                .user_tags     = UserTagVec(tag_iter, tag_iter + num_tags)
             };
         } else {
 #if DCHECK_IS_ON()
@@ -154,9 +160,11 @@ void Index::ProvideIndexData(const IndexDataProto& index_data) {
             DCHECK_EQ(data.engine_id,
                       gsl::narrow_cast<uint16_t>(index_data.engine_ids(i)));
             DCHECK_EQ(data.user_logspace, index_data.user_logspaces(i));
-            DCHECK_EQ(data.user_tag, index_data.user_tags(i));
+            DCHECK_EQ(data.user_tags.size(),
+                      gsl::narrow_cast<size_t>(index_data.user_tag_sizes(i)));
 #endif
         }
+        tag_iter += num_tags;
     }
     while (received_data_.count(data_received_seqnum_position_) > 0) {
         data_received_seqnum_position_++;
@@ -215,7 +223,7 @@ void Index::AdvanceIndexProgress() {
             }
             const IndexData& index_data = iter->second;
             GetOrCreateIndex(index_data.user_logspace)->Add(
-                seqnum, index_data.engine_id, index_data.user_tag);
+                seqnum, index_data.engine_id, index_data.user_tags);
             iter = received_data_.erase(iter);
         }
         DCHECK_GT(end_seqnum, indexed_seqnum_position_);

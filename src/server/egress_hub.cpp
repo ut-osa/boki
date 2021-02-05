@@ -55,30 +55,19 @@ void EgressHub::SetHandshakeMessageCallback(HandshakeMessageCallback cb) {
     handshake_message_cb_ = cb;
 }
 
-void EgressHub::SendMessage(std::span<const char> message) {
+void EgressHub::SendMessage(std::span<const char> part1, std::span<const char> part2,
+                            std::span<const char> part3) {
     DCHECK(io_worker_->WithinMyEventLoopThread());
     if (state_ != kRunning) {
         HLOG(ERROR) << "Connection is closing or has closed, will not send this message";
         return;
     }
-    if (message.size() == 0) {
-        return;
-    }
-    write_buffer_.AppendData(message);
-    ScheduleSendFunction();
-}
-
-void EgressHub::SendMessage(std::span<const char> part1, std::span<const char> part2) {
-    DCHECK(io_worker_->WithinMyEventLoopThread());
-    if (state_ != kRunning) {
-        HLOG(ERROR) << "Connection is closing or has closed, will not send this message";
-        return;
-    }
-    if (part1.size() + part2.size() == 0) {
+    if (part1.size() + part2.size() + part3.size() == 0) {
         return;
     }
     write_buffer_.AppendData(part1);
     write_buffer_.AppendData(part2);
+    write_buffer_.AppendData(part3);
     ScheduleSendFunction();
 }
 

@@ -54,6 +54,12 @@ private:
 log::MetaLogsProto MetaLogsFromPayload(std::span<const char> payload);
 
 log::LogMetaData GetMetaDataFromMessage(const protocol::SharedLogMessage& message);
+void SplitPayloadForMessage(const protocol::SharedLogMessage& message,
+                            std::span<const char> payload,
+                            std::span<const uint64_t>* user_tags,
+                            std::span<const char>* log_data,
+                            std::span<const char>* aux_data);
+
 void PopulateMetaDataToMessage(const log::LogMetaData& metadata,
                                protocol::SharedLogMessage* message);
 void PopulateMetaDataToMessage(const log::LogEntryProto& log_entry,

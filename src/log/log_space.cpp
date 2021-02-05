@@ -218,7 +218,7 @@ LogStorage::LogStorage(uint16_t storage_id, const View* view, uint16_t sequencer
 
 LogStorage::~LogStorage() {}
 
-bool LogStorage::Store(const LogMetaData& log_metadata,
+bool LogStorage::Store(const LogMetaData& log_metadata, std::span<const uint64_t> user_tags,
                        std::span<const char> log_data) {
     uint64_t localid = log_metadata.localid;
     DCHECK_EQ(size_t{log_metadata.data_size}, log_data.size());
@@ -232,6 +232,7 @@ bool LogStorage::Store(const LogMetaData& log_metadata,
     }
     pending_log_entries_[localid].reset(new LogEntry {
         .metadata = log_metadata,
+        .user_tags = UserTagVec(user_tags.begin(), user_tags.end()),
         .data = std::string(log_data.data(), log_data.size()),
     });
     AdvanceShardProgress(engine_id);
@@ -344,7 +345,10 @@ void LogStorage::OnNewLogs(uint32_t metalog_seqnum,
         index_data_.add_seqnum_halves(bits::LowHalf64(seqnum));
         index_data_.add_engine_ids(bits::HighHalf64(localid));
         index_data_.add_user_logspaces(log_entry->metadata.user_logspace);
-        index_data_.add_user_tags(log_entry->metadata.user_tag);
+        index_data_.add_user_tag_sizes(
+            gsl::narrow_cast<uint32_t>(log_entry->user_tags.size()));
+        index_data_.mutable_user_tags()->Add(
+            log_entry->user_tags.begin(), log_entry->user_tags.end());
         // Update live_seqnums_ and live_log_entries_
         DCHECK(live_seqnums_.empty() || seqnum > live_seqnums_.back());
         live_seqnums_.push_back(seqnum);

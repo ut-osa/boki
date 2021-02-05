@@ -548,20 +548,20 @@ func buildLogEntryFromReadResponse(response []byte) *types.LogEntry {
 	numTags := protocol.GetLogNumTagsFromMessage(response)
 	auxDataSize := protocol.GetLogAuxDataSizeFromMessage(response)
 	responseData := protocol.GetInlineDataFromMessage(response)
-	if numTags*protocol.SharedLogTagByteSize+auxDataSize <= len(responseData) {
+	logDataSize := len(responseData) - numTags * protocol.SharedLogTagByteSize - auxDataSize
+	if logDataSize <= 0 {
 		log.Fatalf("[FATAL] Size of inline data too smaler: size=%d, num_tags=%d, aux_data=%d", len(responseData), numTags, auxDataSize)
 	}
 	tags := make([]uint64, numTags)
 	for i := 0; i < numTags; i++ {
 		tags[i] = protocol.GetLogTagFromMessage(response, i)
 	}
-	auxDataStart := numTags * protocol.SharedLogTagByteSize
-	dataStart := auxDataStart + auxDataSize
+	logDataStart := numTags * protocol.SharedLogTagByteSize
 	return &types.LogEntry{
 		SeqNum:  seqNum,
 		Tags:    tags,
-		Data:    responseData[dataStart:],
-		AuxData: responseData[auxDataStart : auxDataStart+auxDataSize],
+		Data:    responseData[logDataStart: logDataStart+logDataSize],
+		AuxData: responseData[logDataStart+logDataSize:],
 	}
 }
 

@@ -34,17 +34,19 @@ struct SharedLogRequest {
     }
 };
 
+using UserTagVec = absl::InlinedVector<uint64_t, 4>;
+
 struct LogMetaData {
     uint32_t user_logspace;
-    uint32_t data_size;
-    uint64_t user_tag;
     uint64_t seqnum;
     uint64_t localid;
+    size_t   num_tags;
+    size_t   data_size;
 };
-static_assert(sizeof(LogMetaData) == 32);
 
 struct LogEntry {
     LogMetaData metadata;
+    UserTagVec  user_tags;
     std::string data;
 };
 

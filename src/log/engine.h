@@ -63,16 +63,14 @@ private:
         DCHECK(op->type == protocol::SharedLogOpType::APPEND);
         return LogMetaData {
             .user_logspace = op->user_logspace,
-            .data_size = gsl::narrow_cast<uint32_t>(op->data.length()),
-            .user_tag = op->user_tag,
-            .seqnum = 0,
-            .localid = 0
+            .seqnum = kInvalidLogSeqNum,
+            .localid = 0,
+            .num_tags = op->user_tags.size(),
+            .data_size = op->data.length()
         };
     }
 
     protocol::SharedLogMessage BuildReadRequestMessage(LocalOp* op);
-    protocol::Message BuildLocalReadOKResponse(uint64_t seqnum, uint64_t user_tag,
-                                               std::span<const char> log_data);
 
     DISALLOW_COPY_AND_ASSIGN(Engine);
 };
