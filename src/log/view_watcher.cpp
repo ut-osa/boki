@@ -12,8 +12,7 @@ ViewWatcher::ViewWatcher() {}
 ViewWatcher::~ViewWatcher() {}
 
 void ViewWatcher::StartWatching(zk::ZKSession* session) {
-    watcher_.reset(new zk_utils::DirWatcher(
-        session, "view", /* sequential_znodes= */ true));
+    watcher_.emplace(session, "view", /* sequential_znodes= */ true);
     watcher_->SetNodeCreatedCallback(
         absl::bind_front(&ViewWatcher::OnZNodeCreated, this));
     watcher_->Start();

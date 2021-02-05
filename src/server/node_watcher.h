@@ -41,7 +41,7 @@ private:
         "StorageNode"
     };
 
-    std::unique_ptr<zk_utils::DirWatcher> watcher_;
+    std::optional<zk_utils::DirWatcher> watcher_;
 
     NodeEventCallback node_online_cb_;
     NodeEventCallback node_offline_cb_;

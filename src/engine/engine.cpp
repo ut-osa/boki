@@ -39,9 +39,8 @@ Engine::Engine(uint16_t node_id)
       func_worker_use_engine_socket_(absl::GetFlag(FLAGS_func_worker_use_engine_socket)),
       use_fifo_for_nested_call_(absl::GetFlag(FLAGS_use_fifo_for_nested_call)),
       ipc_sockfd_(-1),
-      worker_manager_(new WorkerManager(this)),
-      monitor_(absl::GetFlag(FLAGS_enable_monitor) ? new Monitor(this) : nullptr),
-      tracer_(new Tracer(this)),
+      worker_manager_(this),
+      tracer_(this),
       inflight_external_requests_(0),
       last_external_request_timestamp_(-1),
       incoming_external_requests_stat_(
@@ -74,8 +73,12 @@ void Engine::StartInternal() {
     // Setup callbacks for node watcher
     node_watcher()->SetNodeOnlineCallback(
         absl::bind_front(&Engine::OnNodeOnline, this));
-    // Initialize tracer
-    tracer_->Init();
+    // Initialize tracer and monitor
+    tracer_.Init();
+    if (absl::GetFlag(FLAGS_enable_monitor)) {
+        monitor_.emplace(this);
+        monitor_->Start();
+    }
 }
 
 void Engine::SetupGatewayEgress() {
@@ -192,12 +195,12 @@ bool Engine::OnNewHandshake(MessageConnection* connection,
             return false;
         }
         std::string container_id(payload.data(), payload.size());
-        if (monitor_ != nullptr && container_id != docker_utils::kInvalidContainerId) {
+        if (monitor_.has_value() && container_id != docker_utils::kInvalidContainerId) {
             monitor_->OnNewFuncContainer(func_id, container_id);
         }
-        success = worker_manager_->OnLauncherConnected(connection);
+        success = worker_manager_.OnLauncherConnected(connection);
     } else {
-        success = worker_manager_->OnFuncWorkerConnected(connection);
+        success = worker_manager_.OnFuncWorkerConnected(connection);
         ProcessDiscardedFuncCallIfNecessary();
     }
     if (!success) {
@@ -223,9 +226,9 @@ bool Engine::OnNewHandshake(MessageConnection* connection,
 void Engine::OnLocalIpcConnClosed(MessageConnection* conn) {
     if (conn->handshake_done()) {
         if (conn->is_launcher_connection()) {
-            worker_manager_->OnLauncherDisconnected(conn);
+            worker_manager_.OnLauncherDisconnected(conn);
         } else {
-            worker_manager_->OnFuncWorkerDisconnected(conn);
+            worker_manager_.OnFuncWorkerDisconnected(conn);
         }
     }
 }
@@ -538,7 +541,7 @@ void Engine::SendGatewayMessage(const GatewayMessage& message, std::span<const c
 }
 
 bool Engine::SendFuncWorkerMessage(uint16_t client_id, Message* message) {
-    auto func_worker = worker_manager_->GetFuncWorker(client_id);
+    auto func_worker = worker_manager_.GetFuncWorker(client_id);
     if (func_worker == nullptr) {
         return false;
     }

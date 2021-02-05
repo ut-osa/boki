@@ -35,9 +35,9 @@ public:
     const FuncConfig* func_config() { return &func_config_; }
     int engine_tcp_port() const { return engine_tcp_port_; }
     bool func_worker_use_engine_socket() const { return func_worker_use_engine_socket_; }
-    WorkerManager* worker_manager() { return worker_manager_.get(); }
-    Monitor* monitor() { return monitor_.get(); }
-    Tracer* tracer() { return tracer_.get(); }
+    WorkerManager* worker_manager() { return &worker_manager_; }
+    Monitor* monitor() { return &monitor_.value(); }
+    Tracer* tracer() { return &tracer_; }
 
     // Must be thread-safe
     bool OnNewHandshake(MessageConnection* connection,
@@ -75,9 +75,9 @@ private:
     absl::flat_hash_map</* id */ int,
                         std::shared_ptr<server::ConnectionBase>> message_connections_;
 
-    std::unique_ptr<WorkerManager> worker_manager_;
-    std::unique_ptr<Monitor> monitor_;
-    std::unique_ptr<Tracer> tracer_;
+    WorkerManager worker_manager_;
+    std::optional<Monitor> monitor_;
+    Tracer tracer_;
     std::unique_ptr<log::EngineBase> shared_log_engine_;
 
     std::atomic<int> inflight_external_requests_;

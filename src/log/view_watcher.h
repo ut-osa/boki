@@ -29,7 +29,7 @@ public:
     void SetViewFinalizedCallback(ViewFinalizedCallback cb);
 
 private:
-    std::unique_ptr<zk_utils::DirWatcher> watcher_;
+    std::optional<zk_utils::DirWatcher> watcher_;
 
     std::vector<std::unique_ptr<View>> views_;
     std::vector<std::unique_ptr<FinalizedView>> finalized_views_;

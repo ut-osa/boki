@@ -34,7 +34,7 @@ void Controller::Start() {
         absl::bind_front(&Controller::OnNodeOffline, this));
     node_watcher_.StartWatching(&zk_session_);
     // Setup command watcher
-    cmd_watcher_.reset(new zk_utils::DirWatcher(&zk_session_, "cmd"));
+    cmd_watcher_.emplace(&zk_session_, "cmd");
     cmd_watcher_->SetNodeCreatedCallback(
         absl::bind_front(&Controller::OnCmdZNodeCreated, this));
     cmd_watcher_->Start();

@@ -39,7 +39,7 @@ private:
 
     zk::ZKSession zk_session_;
     server::NodeWatcher node_watcher_;
-    std::unique_ptr<zk_utils::DirWatcher> cmd_watcher_;
+    std::optional<zk_utils::DirWatcher> cmd_watcher_;
 
     std::set</* node_id */ uint16_t> sequencer_nodes_;
     std::set</* node_id */ uint16_t> engine_nodes_;

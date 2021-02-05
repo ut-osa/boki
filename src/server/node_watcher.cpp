@@ -8,7 +8,7 @@ NodeWatcher::NodeWatcher() {}
 NodeWatcher::~NodeWatcher() {}
 
 void NodeWatcher::StartWatching(zk::ZKSession* session) {
-    watcher_.reset(new zk_utils::DirWatcher(session, "node"));
+    watcher_.emplace(session, "node");
     watcher_->SetNodeCreatedCallback(
         absl::bind_front(&NodeWatcher::OnZNodeCreated, this));
     watcher_->SetNodeChangedCallback(

@@ -37,8 +37,7 @@ void EngineBase::Start() {
     SetupTimers();
     // Setup cache
     if (absl::GetFlag(FLAGS_slog_engine_enable_cache)) {
-        log_cache_.reset(
-            new LRUCache(absl::GetFlag(FLAGS_slog_engine_cache_cap_mb)));
+        log_cache_.emplace(absl::GetFlag(FLAGS_slog_engine_cache_cap_mb));
     }
 }
 
@@ -263,7 +262,7 @@ void EngineBase::FinishLocalOpWithFailure(LocalOp* op, SharedLogResultType resul
 void EngineBase::LogCachePut(const LogMetaData& log_metadata,
                              std::span<const uint64_t> user_tags,
                              std::span<const char> log_data) {
-    if (log_cache_ == nullptr) {
+    if (!log_cache_.has_value()) {
         return;
     }
     HVLOG(1) << fmt::format("Store cache for log entry (seqnum {})",
@@ -272,20 +271,20 @@ void EngineBase::LogCachePut(const LogMetaData& log_metadata,
 }
 
 bool EngineBase::LogCacheGet(uint64_t seqnum, LogEntry* log_entry) {
-    if (log_cache_ == nullptr) {
+    if (!log_cache_.has_value()) {
         return false;
     }
     return log_cache_->Get(seqnum, log_entry);
 }
 
 void EngineBase::LogCachePutAuxData(uint64_t seqnum, std::span<const char> data) {
-    if (log_cache_ != nullptr) {
+    if (log_cache_.has_value()) {
         log_cache_->PutAuxData(seqnum, data);
     }
 }
 
 bool EngineBase::LogCacheGetAuxData(uint64_t seqnum, std::string* data) {
-    if (log_cache_ == nullptr) {
+    if (!log_cache_.has_value()) {
         return false;
     }
     return log_cache_->GetAuxData(seqnum, data);

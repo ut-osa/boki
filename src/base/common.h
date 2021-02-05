@@ -40,6 +40,7 @@
 #include <atomic>
 #include <memory>
 #include <utility>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <string_view>
