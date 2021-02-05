@@ -421,13 +421,20 @@ void Engine::OnRecvResponse(const SharedLogMessage& message,
                                     bits::HexStr0x(seqnum));
             std::span<const uint64_t> user_tags;
             std::span<const char> log_data;
-            log_utils::SplitPayloadForMessage(message, payload, &user_tags, &log_data,
-                                              /* aux_data= */ nullptr);
+            std::span<const char> aux_data;
+            log_utils::SplitPayloadForMessage(message, payload, &user_tags, &log_data, &aux_data);
             Message response = BuildLocalReadOKResponse(seqnum, user_tags, log_data);
+            if (aux_data.size() > 0) {
+                response.log_aux_data_size = gsl::narrow_cast<uint16_t>(aux_data.size());
+                MessageHelper::AppendInlineData(&response, aux_data);
+            }
             FinishLocalOpWithResponse(op, &response, message.user_metalog_progress);
             // Put the received log entry into log cache
             LogMetaData log_metadata = log_utils::GetMetaDataFromMessage(message);
             LogCachePut(log_metadata, user_tags, log_data);
+            if (aux_data.size() > 0) {
+                LogCachePutAuxData(seqnum, aux_data);
+            }
         } else if (result == SharedLogResultType::EMPTY) {
             FinishLocalOpWithFailure(
                 op, SharedLogResultType::EMPTY, message.user_metalog_progress);
@@ -469,9 +476,27 @@ void Engine::ProcessIndexFoundResult(const IndexQueryResult& query_result) {
     if (cache_hit) {
         HVLOG(1) << fmt::format("Cache hit for log entry (seqnum {})",
                                 bits::HexStr0x(seqnum));
+        std::string aux_data;
+        if (LogCacheGetAuxData(seqnum, &aux_data)) {
+            size_t full_size = log_entry.data.size()
+                             + log_entry.user_tags.size() * sizeof(uint64_t)
+                             + aux_data.size();
+            if (full_size > MESSAGE_INLINE_DATA_SIZE) {
+                HLOG(WARNING) << fmt::format("Inline buffer of message not large enough "
+                                             "for auxiliary data of log (seqnum {})",
+                                             bits::HexStr0x(seqnum));
+                aux_data.clear();
+            }
+        } else {
+            aux_data.clear();
+        }
         if (local_request) {
             LocalOp* op = onging_reads_.PollChecked(query.client_data);
             Message response = BuildLocalReadOKResponse(log_entry);
+            if (aux_data.size() > 0) {
+                response.log_aux_data_size = gsl::narrow_cast<uint16_t>(aux_data.size());
+                MessageHelper::AppendInlineData(&response, STRING_AS_SPAN(aux_data));
+            }
             FinishLocalOpWithResponse(op, &response, query_result.metalog_progress);
         } else {
             HVLOG(1) << fmt::format("Send read response for log (seqnum {})",
@@ -479,9 +504,11 @@ void Engine::ProcessIndexFoundResult(const IndexQueryResult& query_result) {
             SharedLogMessage response = SharedLogMessageHelper::NewReadOkResponse();
             log_utils::PopulateMetaDataToMessage(log_entry.metadata, &response);
             response.user_metalog_progress = query_result.metalog_progress;
+            response.aux_data_size = gsl::narrow_cast<uint16_t>(aux_data.size());
             SendReadResponse(query, &response,
                              VECTOR_AS_CHAR_SPAN(log_entry.user_tags),
-                             STRING_AS_SPAN(log_entry.data));
+                             STRING_AS_SPAN(log_entry.data),
+                             STRING_AS_SPAN(aux_data));
         }
     } else {
         send_success = SendStorageReadRequest(query_result);

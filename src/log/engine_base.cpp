@@ -116,6 +116,9 @@ void EngineBase::LocalOpHandler(LocalOp* op) {
     case SharedLogOpType::TRIM:
         HandleLocalTrim(op);
         break;
+    case SharedLogOpType::SET_AUXDATA:
+        HandleSetAuxData(op);
+        break;
     default:
         UNREACHABLE();
     }
@@ -192,6 +195,10 @@ void EngineBase::OnMessageFromFuncWorker(const Message& message) {
         break;
     case SharedLogOpType::TRIM:
         op->seqnum = message.log_seqnum;
+        break;
+    case SharedLogOpType::SET_AUXDATA:
+        op->seqnum = message.log_seqnum;
+        op->data.AppendData(MessageHelper::GetInlineData(message));
         break;
     default:
         HLOG(FATAL) << "Unknown shared log op type: " << message.log_op;
@@ -271,6 +278,26 @@ bool EngineBase::LogCacheGet(uint64_t seqnum, LogEntry* log_entry) {
     return log_cache_->Get(seqnum, log_entry);
 }
 
+void EngineBase::LogCachePutAuxData(uint64_t seqnum, std::span<const char> data) {
+    if (log_cache_ != nullptr) {
+        log_cache_->PutAuxData(seqnum, data);
+    }
+}
+
+bool EngineBase::LogCacheGetAuxData(uint64_t seqnum, std::string* data) {
+    if (log_cache_ == nullptr) {
+        return false;
+    }
+    return log_cache_->GetAuxData(seqnum, data);
+}
+
+void EngineBase::HandleSetAuxData(LocalOp* op) {
+    LogCachePutAuxData(op->seqnum, op->data.to_span());
+    Message response = MessageHelper::NewSharedLogOpSucceeded(
+        SharedLogResultType::AUXDATA_OK, op->seqnum);
+    FinishLocalOpWithResponse(op, &response, /* metalog_progress= */ 0);
+}
+
 bool EngineBase::SendIndexReadRequest(const View::Sequencer* sequencer_node,
                                       SharedLogMessage* request) {
     static constexpr int kMaxRetries = 3;
@@ -280,8 +307,7 @@ bool EngineBase::SendIndexReadRequest(const View::Sequencer* sequencer_node,
     for (int i = 0; i < kMaxRetries; i++) {
         uint16_t engine_id = sequencer_node->PickIndexEngineNode();
         bool success = engine_->SendSharedLogMessage(
-            protocol::ConnType::SLOG_ENGINE_TO_ENGINE, engine_id,
-            *request, /* payload= */ EMPTY_CHAR_SPAN);
+            protocol::ConnType::SLOG_ENGINE_TO_ENGINE, engine_id, *request);
         if (success) {
             return true;
         }
@@ -303,8 +329,7 @@ bool EngineBase::SendStorageReadRequest(const IndexQueryResult& result) {
     for (int i = 0; i < kMaxRetries; i++) {
         uint16_t storage_id = result.found_result.engine_node->PickStorageNode();
         bool success = engine_->SendSharedLogMessage(
-            protocol::ConnType::ENGINE_TO_STORAGE, storage_id,
-            request, /* payload= */ EMPTY_CHAR_SPAN);
+            protocol::ConnType::ENGINE_TO_STORAGE, storage_id, request);
         if (success) {
             return true;
         }
@@ -314,16 +339,18 @@ bool EngineBase::SendStorageReadRequest(const IndexQueryResult& result) {
 
 void EngineBase::SendReadResponse(const IndexQuery& query,
                                   protocol::SharedLogMessage* response,
-                                  std::span<const char> payload1,
-                                  std::span<const char> payload2) {
+                                  std::span<const char> user_tags_payload,
+                                  std::span<const char> data_payload,
+                                  std::span<const char> aux_data_payload) {
     response->origin_node_id = node_id_;
     response->hop_times = query.hop_times + 1;
     response->client_data = query.client_data;
-    response->payload_size = gsl::narrow_cast<uint32_t>(payload1.size() + payload2.size());
+    response->payload_size = gsl::narrow_cast<uint32_t>(
+        user_tags_payload.size() + data_payload.size() + aux_data_payload.size());
     uint16_t engine_id = query.origin_node_id;
     bool success = engine_->SendSharedLogMessage(
         protocol::ConnType::SLOG_ENGINE_TO_ENGINE,
-        engine_id, *response, payload1, payload2);
+        engine_id, *response, user_tags_payload, data_payload, aux_data_payload);
     if (!success) {
         HLOG(WARNING) << fmt::format("Failed to send read response to engine {}",
                                      engine_id);

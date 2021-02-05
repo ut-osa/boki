@@ -22,7 +22,8 @@ public:
 
     void SendMessage(std::span<const char> part1,
                      std::span<const char> part2 = EMPTY_CHAR_SPAN,
-                     std::span<const char> part3 = EMPTY_CHAR_SPAN);
+                     std::span<const char> part3 = EMPTY_CHAR_SPAN,
+                     std::span<const char> part4 = EMPTY_CHAR_SPAN);
 
 private:
     enum State { kCreated, kRunning, kClosing, kClosed };

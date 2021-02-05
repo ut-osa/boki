@@ -87,14 +87,17 @@ protected:
     void LogCachePut(const LogMetaData& log_metadata, std::span<const uint64_t> user_tags,
                      std::span<const char> log_data);
     bool LogCacheGet(uint64_t seqnum, LogEntry* log_entry);
+    void LogCachePutAuxData(uint64_t seqnum, std::span<const char> data);
+    bool LogCacheGetAuxData(uint64_t seqnum, std::string* data);
 
     bool SendIndexReadRequest(const View::Sequencer* sequencer_node,
                               protocol::SharedLogMessage* request);
     bool SendStorageReadRequest(const IndexQueryResult& result);
     void SendReadResponse(const IndexQuery& query,
                           protocol::SharedLogMessage* response,
-                          std::span<const char> payload1 = EMPTY_CHAR_SPAN,
-                          std::span<const char> payload2 = EMPTY_CHAR_SPAN);
+                          std::span<const char> user_tags_payload = EMPTY_CHAR_SPAN,
+                          std::span<const char> data_payload = EMPTY_CHAR_SPAN,
+                          std::span<const char> aux_data_payload = EMPTY_CHAR_SPAN);
     void SendReadFailureResponse(const IndexQuery& query,
                                  protocol::SharedLogResultType result_type,
                                  uint64_t metalog_progress = 0);
@@ -127,6 +130,8 @@ private:
 
     void SetupZKWatchers();
     void SetupTimers();
+
+    void HandleSetAuxData(LocalOp* op);
 
     void PopulateLogTagsAndData(const protocol::Message& message, LocalOp* op);
 

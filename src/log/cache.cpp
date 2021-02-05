@@ -1,7 +1,5 @@
 #include "log/cache.h"
 
-#include "utils/bits.h"
-
 __BEGIN_THIRD_PARTY_HEADERS
 #include <tkrzw_dbm_cache.h>
 __END_THIRD_PARTY_HEADERS
@@ -67,13 +65,13 @@ static inline void DecodeLogEntry(std::string encoded, LogEntry* log_entry) {
 
 void LRUCache::Put(const LogMetaData& log_metadata, std::span<const uint64_t> user_tags,
                    std::span<const char> log_data) {
-    std::string key_str = bits::HexStr(log_metadata.seqnum);
+    std::string key_str = fmt::format("0_{:016x}", log_metadata.seqnum);
     std::string data = EncodeLogEntry(log_metadata, user_tags, log_data);
     dbm_->Set(key_str, data, /* overwrite= */ false);
 }
 
 bool LRUCache::Get(uint64_t seqnum, LogEntry* log_entry) {
-    std::string key_str = bits::HexStr(seqnum);
+    std::string key_str = fmt::format("0_{:016x}", seqnum);
     std::string data;
     auto status = dbm_->Get(key_str, &data);
     if (status.IsOK()) {
@@ -86,11 +84,15 @@ bool LRUCache::Get(uint64_t seqnum, LogEntry* log_entry) {
 }
 
 void LRUCache::PutAuxData(uint64_t seqnum, std::span<const char> data) {
-    NOT_IMPLEMENTED();
+    std::string key_str = fmt::format("1_{:016x}", seqnum);
+    dbm_->Set(key_str, std::string_view(data.data(), data.size()),
+              /* overwrite= */ false);
 }
 
-bool GetAuxData(uint64_t seqnum, std::string* data) {
-    NOT_IMPLEMENTED();
+bool LRUCache::GetAuxData(uint64_t seqnum, std::string* data) {
+    std::string key_str = fmt::format("1_{:016x}", seqnum);
+    auto status = dbm_->Get(key_str, data);
+    return status.IsOK();
 }
 
 }  // namespace log

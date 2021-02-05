@@ -609,5 +609,32 @@ func (w *FuncWorker) SharedLogCheckTail(ctx context.Context, tag uint64) (*types
 
 // Implement types.Environment
 func (w *FuncWorker) SharedLogSetAuxData(ctx context.Context, seqNum uint64, auxData []byte) error {
-	return fmt.Errorf("Not implemented")
+	if len(auxData) == 0 {
+		return fmt.Errorf("Auxiliary data cannot be empty")
+	}
+	if len(auxData) > protocol.MessageInlineDataSize {
+		return fmt.Errorf("Auxiliary data too larger (size=%d), expect no more than %d bytes", len(auxData), protocol.MessageInlineDataSize)
+	}
+
+	id := atomic.AddUint64(&w.nextLogOpId, 1)
+	currentCallId := atomic.LoadUint64(&w.currentCall)
+	message := protocol.NewSharedLogSetAuxDataMessage(currentCallId, w.clientId, seqNum, id)
+	protocol.FillInlineDataInMessage(message, auxData)
+
+	w.mux.Lock()
+	outputChan := make(chan []byte)
+	w.outgoingLogOps[id] = outputChan
+	_, err := w.outputPipe.Write(message)
+	w.mux.Unlock()
+	if err != nil {
+		return err
+	}
+
+	response := <-outputChan
+	result := protocol.GetSharedLogResultTypeFromMessage(response)
+	if result == protocol.SharedLogResultType_AUXDATA_OK {
+		return nil
+	} else {
+		return fmt.Errorf("Failed to set auxiliary data for log (seqnum %#016x)", seqNum)
+	}
 }

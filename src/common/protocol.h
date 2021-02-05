@@ -89,6 +89,7 @@ enum class SharedLogOpType : uint16_t {
     READ_NEXT   = 0x02,  // FuncWorker to Engine, Engine to Index
     READ_PREV   = 0x03,  // FuncWorker to Engine, Engine to Index
     TRIM        = 0x04,  // FuncWorker to Engine, Engine to Sequencer
+    SET_AUXDATA = 0x05,  // FuncWorker to Engine
     READ_AT     = 0x10,  // Index to Storage
     REPLICATE   = 0x11,  // Engine to Storage
     INDEX_DATA  = 0x12,  // Engine to Index
@@ -105,6 +106,7 @@ enum class SharedLogResultType : uint16_t {
     READ_OK     = 0x21,
     TRIM_OK     = 0x22,
     LOCALID     = 0x23,
+    AUXDATA_OK  = 0x24,
     // Error results
     BAD_ARGS    = 0x30,
     DISCARDED   = 0x31,  // Log to append is discarded
