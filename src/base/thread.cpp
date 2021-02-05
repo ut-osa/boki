@@ -64,7 +64,7 @@ void Thread::Run() {
     state_.store(kFinished);
 }
 
-void Thread::MarkThreadCategory(absl::string_view category) {
+void Thread::MarkThreadCategory(std::string_view category) {
     CHECK(current_ == this);
     // Set cpuset
     std::string cpuset_var_name(fmt::format("FAAS_{}_THREAD_CPUSET", category));

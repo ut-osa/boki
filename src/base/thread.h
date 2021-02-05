@@ -20,7 +20,7 @@ public:
     void Start();
     void Join();
 
-    void MarkThreadCategory(absl::string_view category);
+    void MarkThreadCategory(std::string_view category);
 
     const char* name() const { return name_.c_str(); }
     int tid() const { return tid_; }
