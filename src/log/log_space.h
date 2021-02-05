@@ -21,7 +21,7 @@ public:
     void UpdateStorageProgress(uint16_t storage_id,
                                const std::vector<uint32_t>& progress);
     void UpdateReplicaProgress(uint16_t sequencer_id, uint32_t metalog_position);
-    bool MarkNextCut(MetaLogProto* meta_log_proto);
+    std::optional<MetaLogProto> MarkNextCut();
 
 private:
     absl::flat_hash_set</* engine_id */ uint16_t> dirty_shards_;
@@ -105,9 +105,8 @@ public:
     using ReadResultVec = absl::InlinedVector<ReadResult, 4>;
     void PollReadResults(ReadResultVec* results);
 
-    bool PollIndexData(IndexDataProto* index_data);
-
-    bool GrabShardProgressForSending(std::vector<uint32_t>* progress);
+    std::optional<IndexDataProto> PollIndexData();
+    std::optional<std::vector<uint32_t>> GrabShardProgressForSending();
 
 private:
     const View::Storage* storage_node_;

@@ -110,16 +110,16 @@ static inline std::string SerializedLogEntry(const LogEntry& log_entry) {
 }
 }  // namespace
 
-bool StorageBase::GetLogEntryFromDB(uint64_t seqnum, LogEntryProto* log_entry_proto) {
-    std::string data;
-    bool found = db_->Get(bits::HighHalf64(seqnum), bits::LowHalf64(seqnum), &data);
-    if (!found) {
-        return false;
+std::optional<LogEntryProto> StorageBase::GetLogEntryFromDB(uint64_t seqnum) {
+    auto data = db_->Get(bits::HighHalf64(seqnum), bits::LowHalf64(seqnum));
+    if (!data.has_value()) {
+        return std::nullopt;
     }
-    if (!log_entry_proto->ParseFromString(data)) {
+    LogEntryProto log_entry_proto;
+    if (!log_entry_proto.ParseFromString(*data)) {
         HLOG(FATAL) << "Failed to parse LogEntryProto";
     }
-    return true;
+    return std::move(log_entry_proto);
 }
 
 void StorageBase::PutLogEntryToDB(const LogEntry& log_entry) {

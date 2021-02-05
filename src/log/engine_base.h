@@ -86,9 +86,9 @@ protected:
 
     void LogCachePut(const LogMetaData& log_metadata, std::span<const uint64_t> user_tags,
                      std::span<const char> log_data);
-    bool LogCacheGet(uint64_t seqnum, LogEntry* log_entry);
+    std::optional<LogEntry> LogCacheGet(uint64_t seqnum);
     void LogCachePutAuxData(uint64_t seqnum, std::span<const char> data);
-    bool LogCacheGetAuxData(uint64_t seqnum, std::string* data);
+    std::optional<std::string> LogCacheGetAuxData(uint64_t seqnum);
 
     bool SendIndexReadRequest(const View::Sequencer* sequencer_node,
                               protocol::SharedLogMessage* request);

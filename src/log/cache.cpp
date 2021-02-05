@@ -70,16 +70,17 @@ void LRUCache::Put(const LogMetaData& log_metadata, std::span<const uint64_t> us
     dbm_->Set(key_str, data, /* overwrite= */ false);
 }
 
-bool LRUCache::Get(uint64_t seqnum, LogEntry* log_entry) {
+std::optional<LogEntry> LRUCache::Get(uint64_t seqnum) {
     std::string key_str = fmt::format("0_{:016x}", seqnum);
     std::string data;
     auto status = dbm_->Get(key_str, &data);
     if (status.IsOK()) {
-        DecodeLogEntry(std::move(data), log_entry);
-        DCHECK_EQ(seqnum, log_entry->metadata.seqnum);
-        return true;
+        LogEntry log_entry;
+        DecodeLogEntry(std::move(data), &log_entry);
+        DCHECK_EQ(seqnum, log_entry.metadata.seqnum);
+        return std::move(log_entry);
     } else {
-        return false;
+        return std::nullopt;
     }
 }
 
@@ -89,10 +90,15 @@ void LRUCache::PutAuxData(uint64_t seqnum, std::span<const char> data) {
               /* overwrite= */ false);
 }
 
-bool LRUCache::GetAuxData(uint64_t seqnum, std::string* data) {
+std::optional<std::string> LRUCache::GetAuxData(uint64_t seqnum) {
     std::string key_str = fmt::format("1_{:016x}", seqnum);
-    auto status = dbm_->Get(key_str, data);
-    return status.IsOK();
+    std::string data;
+    auto status = dbm_->Get(key_str, &data);
+    if (status.IsOK()) {
+        return std::move(data);
+    } else {
+        return std::nullopt;
+    }
 }
 
 }  // namespace log

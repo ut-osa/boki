@@ -22,8 +22,7 @@ public:
         return bits::JoinTwo32(identifier(), seqnum_position_);
     }
 
-    bool GetMetaLogs(uint32_t start_pos, uint32_t end_pos,
-                     std::vector<MetaLogProto>* metalogs) const;
+    std::optional<MetaLogProto> GetMetaLog(uint32_t pos) const;
 
     // Return true if metalog_position changed
     bool ProvideMetaLog(const MetaLogProto& meta_log_proto);

@@ -74,15 +74,15 @@ void MetaLogPrimary::UpdateReplicaProgress(uint16_t sequencer_id,
     }
 }
 
-bool MetaLogPrimary::MarkNextCut(MetaLogProto* meta_log_proto) {
+std::optional<MetaLogProto> MetaLogPrimary::MarkNextCut() {
     if (dirty_shards_.empty()) {
-        return false;
+        return std::nullopt;
     }
-    meta_log_proto->Clear();
-    meta_log_proto->set_logspace_id(identifier());
-    meta_log_proto->set_metalog_seqnum(metalog_position());
-    meta_log_proto->set_type(MetaLogProto::NEW_LOGS);
-    auto* new_logs_proto = meta_log_proto->mutable_new_logs_proto();
+    MetaLogProto meta_log_proto;
+    meta_log_proto.set_logspace_id(identifier());
+    meta_log_proto.set_metalog_seqnum(metalog_position());
+    meta_log_proto.set_type(MetaLogProto::NEW_LOGS);
+    auto* new_logs_proto = meta_log_proto.mutable_new_logs_proto();
     new_logs_proto->set_start_seqnum(bits::LowHalf64(seqnum_position()));
     uint32_t total_delta = 0;
     for (uint16_t engine_id : view_->GetEngineNodes()) {
@@ -101,12 +101,12 @@ bool MetaLogPrimary::MarkNextCut(MetaLogProto* meta_log_proto) {
     HVLOG(1) << fmt::format("Generate new NEW_LOGS meta log: "
                             "start_seqnum={}, total_delta={}",
                             new_logs_proto->start_seqnum(), total_delta);
-    if (!ProvideMetaLog(*meta_log_proto)) {
+    if (!ProvideMetaLog(meta_log_proto)) {
         HLOG(FATAL) << "Failed to advance metalog position";
     }
     DCHECK_EQ(new_logs_proto->start_seqnum() + total_delta,
               bits::LowHalf64(seqnum_position()));
-    return true;
+    return std::move(meta_log_proto);
 }
 
 void MetaLogPrimary::UpdateMetaLogReplicatedPosition() {
@@ -292,26 +292,28 @@ void LogStorage::PollReadResults(ReadResultVec* results) {
     pending_read_results_.clear();
 }
 
-bool LogStorage::PollIndexData(IndexDataProto* data) {
+std::optional<IndexDataProto> LogStorage::PollIndexData() {
     if (index_data_.seqnum_halves_size() == 0) {
-        return false;
+        return std::nullopt;
     }
-    data->Swap(&index_data_);
+    IndexDataProto data;
+    data.Swap(&index_data_);
     index_data_.Clear();
     index_data_.set_logspace_id(identifier());
-    return true;
+    return std::move(data);
 }
 
-bool LogStorage::GrabShardProgressForSending(std::vector<uint32_t>* progress) {
+std::optional<std::vector<uint32_t>> LogStorage::GrabShardProgressForSending() {
     if (!shard_progrss_dirty_) {
-        return false;
+        return std::nullopt;
     }
-    progress->clear();
+    std::vector<uint32_t> progress;
+    progress.reserve(storage_node_->GetSourceEngineNodes().size());
     for (uint16_t engine_id : storage_node_->GetSourceEngineNodes()) {
-        progress->push_back(shard_progrsses_[engine_id]);
+        progress.push_back(shard_progrsses_[engine_id]);
     }
     shard_progrss_dirty_ = false;
-    return true;
+    return std::move(progress);
 }
 
 void LogStorage::OnNewLogs(uint32_t metalog_seqnum,

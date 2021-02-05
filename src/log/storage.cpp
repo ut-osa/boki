@@ -72,9 +72,8 @@ void Storage::OnViewFinalized(const FinalizedView* finalized_view) {
                 LogStorage::ReadResultVec tmp;
                 locked_storage->PollReadResults(&tmp);
                 results.insert(results.end(), tmp.begin(), tmp.end());
-                IndexDataProto index_data;
-                if (locked_storage->PollIndexData(&index_data)) {
-                    index_data_vec.push_back(std::move(index_data));
+                if (auto index_data = locked_storage->PollIndexData(); index_data.has_value()) {
+                    index_data_vec.push_back(std::move(*index_data));
                 }
             }
         );
@@ -181,8 +180,7 @@ void Storage::OnRecvNewMetaLogs(const SharedLogMessage& message,
     DCHECK_EQ(metalogs_proto.logspace_id(), message.logspace_id);
     const View* view = nullptr;
     LogStorage::ReadResultVec results;
-    IndexDataProto index_data;
-    bool has_index_data = false;
+    std::optional<IndexDataProto> index_data;
     {
         absl::ReaderMutexLock view_lk(&view_mu_);
         ONHOLD_IF_FROM_FUTURE_VIEW(message, payload);
@@ -196,12 +194,12 @@ void Storage::OnRecvNewMetaLogs(const SharedLogMessage& message,
                 locked_storage->ProvideMetaLog(metalog_proto);
             }
             locked_storage->PollReadResults(&results);
-            has_index_data = locked_storage->PollIndexData(&index_data);
+            index_data = locked_storage->PollIndexData();
         }
     }
     ProcessReadResults(results);
-    if (has_index_data) {
-        SendIndexData(DCHECK_NOTNULL(view), index_data);
+    if (index_data.has_value()) {
+        SendIndexData(DCHECK_NOTNULL(view), *index_data);
     }
 }
 
@@ -242,8 +240,9 @@ void Storage::ProcessReadResults(const LogStorage::ReadResultVec& results) {
 void Storage::ProcessReadFromDB(const SharedLogMessage& request) {
     uint64_t seqnum = bits::JoinTwo32(request.logspace_id, request.seqnum_lowhalf);
     LogEntryProto log_entry;
-    bool found = GetLogEntryFromDB(seqnum, &log_entry);
-    if (!found) {
+    if (auto tmp = GetLogEntryFromDB(seqnum); tmp.has_value()) {
+        log_entry = std::move(*tmp);
+    } else {
         HLOG(ERROR) << fmt::format("Failed to read log data (seqnum={})",
                                    bits::HexStr0x(seqnum));
         SharedLogMessage response = SharedLogMessageHelper::NewDataLostResponse();
@@ -303,9 +302,9 @@ void Storage::SendShardProgressIfNeeded() {
                                        LockablePtr<LogStorage> storage_ptr) {
                 auto locked_storage = storage_ptr.Lock();
                 RETURN_IF_LOGSPACE_FINALIZED(locked_storage);
-                std::vector<uint32_t> progress;
-                if (locked_storage->GrabShardProgressForSending(&progress)) {
-                    progress_to_send.emplace_back(logspace_id, std::move(progress));
+                auto progress = locked_storage->GrabShardProgressForSending();
+                if (progress.has_value()) {
+                    progress_to_send.emplace_back(logspace_id, std::move(*progress));
                 }
             }
         );

@@ -142,7 +142,7 @@ void Sequencer::HandleTrimRequest(const SharedLogMessage& request) {
 void Sequencer::OnRecvMetaLogProgress(const SharedLogMessage& message) {
     DCHECK(SharedLogMessageHelper::GetOpType(message) == SharedLogOpType::META_PROG);
     const View* view = nullptr;
-    std::vector<MetaLogProto> replicated_metalogs;
+    absl::InlinedVector<MetaLogProto, 4> replicated_metalogs;
     {
         absl::ReaderMutexLock view_lk(&view_mu_);
         PANIC_IF_FROM_FUTURE_VIEW(message);  // I believe this will never happen
@@ -156,11 +156,11 @@ void Sequencer::OnRecvMetaLogProgress(const SharedLogMessage& message) {
             locked_logspace->UpdateReplicaProgress(
                 message.origin_node_id, message.metalog_position);
             uint32_t new_position = locked_logspace->replicated_metalog_position();
-            if (new_position > old_position) {
-                if (!locked_logspace->GetMetaLogs(old_position, new_position,
-                                                  &replicated_metalogs)) {
-                    HLOG(FATAL) << fmt::format("Cannot get meta log between {} and {}",
-                                                old_position, new_position);
+            for (uint32_t pos = old_position; pos < new_position; pos++) {
+                if (auto metalog = locked_logspace->GetMetaLog(pos); metalog.has_value()) {
+                    replicated_metalogs.push_back(std::move(*metalog));
+                } else {
+                    HLOG(FATAL) << fmt::format("Cannot get meta log at position {}", pos);
                 }
             }
         }
@@ -230,8 +230,7 @@ void Sequencer::ProcessRequests(const std::vector<SharedLogRequest>& requests) {
 
 void Sequencer::MarkNextCutIfDoable() {
     const View* view = nullptr;
-    MetaLogProto meta_log_proto;
-    bool has_new_cut = false;
+    std::optional<MetaLogProto> meta_log_proto;
     {
         absl::ReaderMutexLock view_lk(&view_mu_);
         if (current_primary_ == nullptr || current_view_ == nullptr) {
@@ -245,11 +244,11 @@ void Sequencer::MarkNextCutIfDoable() {
                 HLOG(INFO) << "Not all meta log replicated, will not mark new cut";
                 return;
             }
-            has_new_cut = locked_logspace->MarkNextCut(&meta_log_proto);
+            meta_log_proto = locked_logspace->MarkNextCut();
         }
     }
-    if (has_new_cut) {
-        ReplicateMetaLog(view, meta_log_proto);
+    if (meta_log_proto.has_value()) {
+        ReplicateMetaLog(view, *meta_log_proto);
     }
 }
 

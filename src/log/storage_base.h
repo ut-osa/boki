@@ -36,7 +36,7 @@ protected:
 
     void MessageHandler(const protocol::SharedLogMessage& message,
                         std::span<const char> payload);
-    bool GetLogEntryFromDB(uint64_t seqnum, LogEntryProto* log_entry_proto);
+    std::optional<LogEntryProto> GetLogEntryFromDB(uint64_t seqnum);
     void PutLogEntryToDB(const LogEntry& log_entry);
 
     void SendIndexData(const View* view, const IndexDataProto& index_data_proto);

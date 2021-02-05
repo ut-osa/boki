@@ -26,17 +26,12 @@ void LogSpaceBase::AddInterestedShard(uint16_t engine_id) {
     interested_shards_.insert(idx);
 }
 
-bool LogSpaceBase::GetMetaLogs(uint32_t start_pos, uint32_t end_pos,
-                               std::vector<MetaLogProto>* metalogs) const {
+std::optional<MetaLogProto> LogSpaceBase::GetMetaLog(uint32_t pos) const {
     DCHECK(mode_ == kFullMode);
-    if (start_pos >= end_pos || end_pos > metalog_position_) {
-        return false;
+    if (pos >= metalog_position_) {
+        return std::nullopt;
     }
-    metalogs->resize(end_pos - start_pos);
-    for (uint32_t i = start_pos; i < end_pos; i++) {
-        metalogs->at(i - start_pos).CopyFrom(*applied_metalogs_.at(i));
-    }
-    return true;
+    return *applied_metalogs_.at(pos);
 }
 
 bool LogSpaceBase::ProvideMetaLog(const MetaLogProto& meta_log) {

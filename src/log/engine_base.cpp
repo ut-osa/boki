@@ -270,11 +270,8 @@ void EngineBase::LogCachePut(const LogMetaData& log_metadata,
     log_cache_->Put(log_metadata, user_tags, log_data);
 }
 
-bool EngineBase::LogCacheGet(uint64_t seqnum, LogEntry* log_entry) {
-    if (!log_cache_.has_value()) {
-        return false;
-    }
-    return log_cache_->Get(seqnum, log_entry);
+std::optional<LogEntry> EngineBase::LogCacheGet(uint64_t seqnum) {
+    return log_cache_.has_value() ? log_cache_->Get(seqnum) : std::nullopt;
 }
 
 void EngineBase::LogCachePutAuxData(uint64_t seqnum, std::span<const char> data) {
@@ -283,11 +280,8 @@ void EngineBase::LogCachePutAuxData(uint64_t seqnum, std::span<const char> data)
     }
 }
 
-bool EngineBase::LogCacheGetAuxData(uint64_t seqnum, std::string* data) {
-    if (!log_cache_.has_value()) {
-        return false;
-    }
-    return log_cache_->GetAuxData(seqnum, data);
+std::optional<std::string> EngineBase::LogCacheGetAuxData(uint64_t seqnum) {
+    return log_cache_.has_value() ? log_cache_->GetAuxData(seqnum) : std::nullopt;
 }
 
 void EngineBase::HandleSetAuxData(LocalOp* op) {

@@ -72,19 +72,20 @@ void RocksDBBackend::InstallLogSpace(uint32_t logspace_id) {
     }
 }
 
-bool RocksDBBackend::Get(uint32_t logspace_id, uint32_t key, std::string* data) {
+std::optional<std::string> RocksDBBackend::Get(uint32_t logspace_id, uint32_t key) {
     rocksdb::ColumnFamilyHandle* cf_handle = GetCFHandle(logspace_id);
     if (cf_handle == nullptr) {
         LOG(WARNING) << fmt::format("Log space {} not created", bits::HexStr0x(logspace_id));
-        return false;
+        return std::nullopt;
     }
     std::string key_str = bits::HexStr(key);
-    auto status = db_->Get(rocksdb::ReadOptions(), cf_handle, key_str, data);
+    std::string data;
+    auto status = db_->Get(rocksdb::ReadOptions(), cf_handle, key_str, &data);
     if (status.IsNotFound()) {
-        return false;
+        return std::nullopt;
     }
     ROCKSDB_CHECK_OK(status, Get);
-    return true;
+    return std::move(data);
 }
 
 void RocksDBBackend::Put(uint32_t logspace_id, uint32_t key, std::span<const char> data) {
@@ -162,15 +163,20 @@ void TkrzwDBMBackend::InstallLogSpace(uint32_t logspace_id) {
     }
 }
 
-bool TkrzwDBMBackend::Get(uint32_t logspace_id, uint32_t key, std::string* data) {
+std::optional<std::string> TkrzwDBMBackend::Get(uint32_t logspace_id, uint32_t key) {
     tkrzw::DBM* dbm = GetDBM(logspace_id);
     if (dbm == nullptr) {
         LOG(WARNING) << fmt::format("Log space {} not created", bits::HexStr0x(logspace_id));
-        return false;
+        return std::nullopt;
     }
     std::string key_str = bits::HexStr(key);
-    auto status = dbm->Get(key_str, data);
-    return status.IsOK();
+    std::string data;
+    auto status = dbm->Get(key_str, &data);
+    if (status.IsOK()) {
+        return std::move(data);
+    } else {
+        return std::nullopt;
+    }
 }
 
 void TkrzwDBMBackend::Put(uint32_t logspace_id, uint32_t key, std::span<const char> data) {

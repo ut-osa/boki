@@ -470,33 +470,29 @@ void Engine::ProcessIndexFoundResult(const IndexQueryResult& query_result) {
     const IndexQuery& query = query_result.original_query;
     bool local_request = (query.origin_node_id == my_node_id());
     uint64_t seqnum = query_result.found_result.seqnum;
-    LogEntry log_entry;
-    bool cache_hit = LogCacheGet(seqnum, &log_entry);
-    bool send_success = false;
-    if (cache_hit) {
+    if (auto cached_log_entry = LogCacheGet(seqnum); cached_log_entry.has_value()) {
         HVLOG(1) << fmt::format("Cache hit for log entry (seqnum {})",
                                 bits::HexStr0x(seqnum));
-        std::string aux_data;
-        if (LogCacheGetAuxData(seqnum, &aux_data)) {
+        const LogEntry& log_entry = cached_log_entry.value();
+        std::optional<std::string> cached_aux_data = LogCacheGetAuxData(seqnum);
+        std::span<const char> aux_data;
+        if (cached_aux_data.has_value()) {
             size_t full_size = log_entry.data.size()
                              + log_entry.user_tags.size() * sizeof(uint64_t)
-                             + aux_data.size();
-            if (full_size > MESSAGE_INLINE_DATA_SIZE) {
+                             + cached_aux_data->size();
+            if (full_size <= MESSAGE_INLINE_DATA_SIZE) {
+                aux_data = STRING_AS_SPAN(*cached_aux_data);
+            } else {
                 HLOG(WARNING) << fmt::format("Inline buffer of message not large enough "
                                              "for auxiliary data of log (seqnum {})",
                                              bits::HexStr0x(seqnum));
-                aux_data.clear();
             }
-        } else {
-            aux_data.clear();
         }
         if (local_request) {
             LocalOp* op = onging_reads_.PollChecked(query.client_data);
             Message response = BuildLocalReadOKResponse(log_entry);
-            if (aux_data.size() > 0) {
-                response.log_aux_data_size = gsl::narrow_cast<uint16_t>(aux_data.size());
-                MessageHelper::AppendInlineData(&response, STRING_AS_SPAN(aux_data));
-            }
+            response.log_aux_data_size = gsl::narrow_cast<uint16_t>(aux_data.size());
+            MessageHelper::AppendInlineData(&response, aux_data);
             FinishLocalOpWithResponse(op, &response, query_result.metalog_progress);
         } else {
             HVLOG(1) << fmt::format("Send read response for log (seqnum {})",
@@ -507,20 +503,19 @@ void Engine::ProcessIndexFoundResult(const IndexQueryResult& query_result) {
             response.aux_data_size = gsl::narrow_cast<uint16_t>(aux_data.size());
             SendReadResponse(query, &response,
                              VECTOR_AS_CHAR_SPAN(log_entry.user_tags),
-                             STRING_AS_SPAN(log_entry.data),
-                             STRING_AS_SPAN(aux_data));
+                             STRING_AS_SPAN(log_entry.data), aux_data);
         }
     } else {
-        send_success = SendStorageReadRequest(query_result);
-    }
-    if (!cache_hit && !send_success) {
-        HLOG(WARNING) << fmt::format("Failed to send read request for seqnum {} ",
-                                     bits::HexStr0x(seqnum));
-        if (local_request) {
-            LocalOp* op = onging_reads_.PollChecked(query.client_data);
-            FinishLocalOpWithFailure(op, SharedLogResultType::DATA_LOST);
-        } else {
-            SendReadFailureResponse(query, SharedLogResultType::DATA_LOST);
+        bool success = SendStorageReadRequest(query_result);
+        if (!success) {
+            HLOG(WARNING) << fmt::format("Failed to send read request for seqnum {} ",
+                                         bits::HexStr0x(seqnum));
+            if (local_request) {
+                LocalOp* op = onging_reads_.PollChecked(query.client_data);
+                FinishLocalOpWithFailure(op, SharedLogResultType::DATA_LOST);
+            } else {
+                SendReadFailureResponse(query, SharedLogResultType::DATA_LOST);
+            }
         }
     }
 }
