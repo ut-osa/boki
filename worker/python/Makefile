@@ -32,7 +32,7 @@ SHELL = /bin/bash
 export V := 0
 export CMD_PREFIX := @
 ifeq ($(V),1)
-    CMD_PREFIX :=
+CMD_PREFIX :=
 endif
 
 BUILD_PATH := build

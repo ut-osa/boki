@@ -23,11 +23,11 @@ INCLUDES = -I$(SRC_PATH) -I./include -I./deps/out/include \
 PROTOC = ./deps/out/bin/protoc
 # General linker settings
 ABSL_LIBRARIES = $(shell find deps/out/lib/libabsl_*.a -printf '%f\n' \
-                   | sed -e 's/libabsl_\([a-z0-9_]\+\)\.a/-labsl_\1/g')
+		| sed -e 's/libabsl_\([a-z0-9_]\+\)\.a/-labsl_\1/g')
 LINK_FLAGS = -Ldeps/out/lib \
-    -Wl,-Bstatic -luv_a -lhttp_parser -lnghttp2 \
+	-Wl,-Bstatic -luv_a -lhttp_parser -lnghttp2 \
 	-luring -lprotobuf-lite -lrocksdb -ltkrzw -lzookeeper_st \
-    -Wl,--start-group $(ABSL_LIBRARIES) -Wl,--end-group \
+	-Wl,--start-group $(ABSL_LIBRARIES) -Wl,--end-group \
 	-lzstd -ljemalloc \
 	-Wl,-Bdynamic -lpthread -ldl \
 	-Wl,--gc-sections
@@ -44,19 +44,19 @@ BUILD_BENCH = 0
 FORCE_DCHECK = 0
 
 ifneq ("$(wildcard config.mk)","")
-    include config.mk
+include config.mk
 endif
 
 ifneq (,$(findstring clang,$(CXX)))
-    COMPILE_FLAGS += -Wthread-safety -Wno-unused-private-field
+COMPILE_FLAGS += -Wthread-safety -Wno-unused-private-field
 endif
 
 ifeq ($(DISABLE_STAT),1)
-    COMPILE_FLAGS += -D__FAAS_DISABLE_STAT
+COMPILE_FLAGS += -D__FAAS_DISABLE_STAT
 endif
 
 ifeq ($(FORCE_DCHECK),1)
-    COMPILE_FLAGS += -DDCHECK_ALWAYS_ON
+COMPILE_FLAGS += -DDCHECK_ALWAYS_ON
 endif
 
 # Function used to check variables. Use on the command line:
@@ -74,19 +74,19 @@ SHELL = /bin/bash
 export V := 0
 export CMD_PREFIX := @
 ifeq ($(V),1)
-    CMD_PREFIX :=
+CMD_PREFIX :=
 endif
 
 COMPILE_FLAGS += $(INCLUDES)
 
 ifeq ($(DEBUG_BUILD),1)
-    BUILD_NAME     = debug
-    COMPILE_FLAGS += $(DCOMPILE_FLAGS)
-    LINK_FLAGS    += $(DLINK_FLAGS)
+BUILD_NAME     = debug
+COMPILE_FLAGS += $(DCOMPILE_FLAGS)
+LINK_FLAGS    += $(DLINK_FLAGS)
 else
-    BUILD_NAME     = release
-    COMPILE_FLAGS += $(RCOMPILE_FLAGS)
-    LINK_FLAGS    += $(RLINK_FLAGS)
+BUILD_NAME     = release
+COMPILE_FLAGS += $(RCOMPILE_FLAGS)
+LINK_FLAGS    += $(RLINK_FLAGS)
 endif
 
 BUILD_PATH := build/$(BUILD_NAME)
@@ -94,16 +94,12 @@ BIN_PATH := bin/$(BUILD_NAME)
 
 # Find all source files in the source directory, sorted by most
 # recently modified
-SOURCES = $(shell find $(SRC_PATH) -name '*.$(SRC_EXT)' -printf '%T@\t%p\n' \
-            | sort -k 1nr | cut -f2-)
-BIN_SOURCES = $(shell find $(SRC_PATH)/bin -name '*.$(SRC_EXT)' -printf '%T@\t%p\n' \
-                | sort -k 1nr | cut -f2-)
-BENCH_BIN_SOURCES = $(shell find $(SRC_PATH)/bin -name 'bench_*.$(SRC_EXT)' -printf '%T@\t%p\n' \
-                      | sort -k 1nr | cut -f2-)
+SOURCES = $(shell find $(SRC_PATH) -name '*.$(SRC_EXT)')
+BIN_SOURCES = $(shell find $(SRC_PATH)/bin -name '*.$(SRC_EXT)')
+BENCH_BIN_SOURCES = $(shell find $(SRC_PATH)/bin -name 'bench_*.$(SRC_EXT)')
 
 # Protobuf related
-PROTO_SOURCES = $(shell find $(SRC_PATH)/proto -name '*.proto' -printf '%T@\t%p\n' \
-                  | sort -k 1nr | cut -f2-)
+PROTO_SOURCES = $(shell find $(SRC_PATH)/proto -name '*.proto')
 PROTO_HEADERS = $(PROTO_SOURCES:$(SRC_PATH)/proto/%.proto=$(SRC_PATH)/proto/%.pb.h)
 PROTO_OBJECTS = $(PROTO_SOURCES:$(SRC_PATH)/proto/%.proto=$(BUILD_PATH)/proto/%.pb.o)
 
@@ -121,9 +117,9 @@ BENCH_BIN_OUTPUTS = $(BENCH_BIN_SOURCES:$(SRC_PATH)/bin/%.$(SRC_EXT)=$(BIN_PATH)
 BIN_OUTPUTS = $(BIN_OBJECTS:$(BUILD_PATH)/bin/%.o=$(BIN_PATH)/%)
 
 ifeq ($(BUILD_BENCH),1)
-    TARGET_BINS = $(BIN_OUTPUTS)
+TARGET_BINS = $(BIN_OUTPUTS)
 else
-    TARGET_BINS = $(filter-out $(BENCH_BIN_OUTPUTS),$(BIN_OUTPUTS))
+TARGET_BINS = $(filter-out $(BENCH_BIN_OUTPUTS),$(BIN_OUTPUTS))
 endif
 
 TIME_FILE = $(dir $@).$(notdir $@)_time
