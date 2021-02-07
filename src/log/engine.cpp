@@ -223,8 +223,10 @@ void Engine::HandleLocalRead(LocalOp* op) {
     DCHECK(  op->type == SharedLogOpType::READ_NEXT
           || op->type == SharedLogOpType::READ_PREV);
     int direction = (op->type == SharedLogOpType::READ_NEXT) ? 1 : -1;
-    HVLOG(1) << fmt::format("Handle local read: op_id={}, logspace={}, tag={}, direction={}",
-                            op->id, op->user_logspace, op->query_tag, direction);
+    HVLOG(1) << fmt::format("Handle local read: op_id={}, logspace={}, tag={}, "
+                            "seqnum={} direction={}",
+                            op->id, op->user_logspace, op->query_tag,
+                            bits::HexStr0x(op->seqnum), direction);
     onging_reads_.PutChecked(op->id, op);
     const View::Sequencer* sequencer_node = nullptr;
     LockablePtr<Index> index_ptr;

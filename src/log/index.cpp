@@ -75,6 +75,7 @@ bool Index::PerSpaceIndex::FindPrev(uint64_t query_seqnum, uint64_t user_tag,
     }
     DCHECK(engine_ids_.contains(seqnum_lowhalf));
     *seqnum = bits::JoinTwo32(logspace_id_, seqnum_lowhalf);
+    DCHECK_LE(*seqnum, query_seqnum);
     *engine_id = engine_ids_.at(seqnum_lowhalf);
     return true;
 }
@@ -96,6 +97,7 @@ bool Index::PerSpaceIndex::FindNext(uint64_t query_seqnum, uint64_t user_tag,
     }
     DCHECK(engine_ids_.contains(seqnum_lowhalf));
     *seqnum = bits::JoinTwo32(logspace_id_, seqnum_lowhalf);
+    DCHECK_GE(*seqnum, query_seqnum);
     *engine_id = engine_ids_.at(seqnum_lowhalf);
     return true;
 }
@@ -104,8 +106,8 @@ bool Index::PerSpaceIndex::FindPrev(const std::vector<uint32_t>& seqnums,
                                     uint64_t query_seqnum, uint32_t* result_seqnum) const {
     auto iter = absl::c_upper_bound(
         seqnums, query_seqnum,
-        [logspace_id = logspace_id_] (uint32_t lhs, uint64_t rhs) {
-            return bits::JoinTwo32(logspace_id, lhs) < rhs;
+        [logspace_id = logspace_id_] (uint64_t lhs, uint32_t rhs) {
+            return lhs < bits::JoinTwo32(logspace_id, rhs);
         }
     );
     if (iter == seqnums.begin()) {
