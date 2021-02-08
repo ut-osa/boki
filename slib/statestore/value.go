@@ -1,5 +1,9 @@
 package statestore
 
+import (
+	"fmt"
+)
+
 const (
 	VALUE_Number = iota
 	VALUE_String
@@ -88,6 +92,29 @@ func (v *Value) asInterface() interface{} {
 	}
 }
 
+func (v *Value) String() string {
+	switch v.ValueType {
+	case VALUE_Number:
+		return fmt.Sprintf("%v", v.NumberValue)
+	case VALUE_String:
+		return v.StringValue
+	case VALUE_Bool:
+		return fmt.Sprintf("%t", v.BoolValue)
+	case VALUE_Null:
+		return "null"
+	case VALUE_EmptyObject:
+		return "{}"
+	case VALUE_EmptyArray:
+		return "[]"
+	case VALUE_Object:
+		return "<object>"
+	case VALUE_Array:
+		return "<array>"
+	default:
+		panic("Unknown value type")
+	}
+}
+
 func NumberValue(value float64) Value {
 	return Value{ValueType: VALUE_Number, NumberValue: value}
 }
@@ -123,7 +150,7 @@ func valueFromInterface(contents interface{}) Value {
 	case map[string]interface{}:
 		return Value{ValueType: VALUE_Object, Object: v}
 	case []interface{}:
-		return Value{ValueType: VALUE_Object, Array: v}
+		return Value{ValueType: VALUE_Array, Array: v}
 	case nil:
 		return NullValue()
 	default:

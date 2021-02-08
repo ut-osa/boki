@@ -16,6 +16,7 @@ type ObjectRef struct {
 	name     string
 	nameHash uint64
 	view     *ObjectView
+	multiCtx *multiContext
 }
 
 func objectNameHash(name string) uint64 {
@@ -30,6 +31,7 @@ func (env *envImpl) Object(name string) *ObjectRef {
 		name:     name,
 		nameHash: objectNameHash(name),
 		view:     nil,
+		multiCtx: nil,
 	}
 }
 
@@ -42,6 +44,9 @@ func (obj *ObjectRef) ensureView() error {
 }
 
 func (obj *ObjectRef) Get(path string) (Value, error) {
+	if obj.multiCtx != nil {
+		panic("Cannot call Get within multi context")
+	}
 	if err := obj.ensureView(); err != nil {
 		return NullValue(), err
 	}

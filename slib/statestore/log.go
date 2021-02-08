@@ -17,9 +17,10 @@ const (
 )
 
 type ObjectLogEntry struct {
-	SeqNum  uint64   `json:"-"`
-	LogType int      `json:"t"`
-	Op      *WriteOp `json:"o,omitempty"`
+	SeqNum  uint64     `json:"-"`
+	LogType int        `json:"t"`
+	ObjName string     `json:"n,omitempty"`
+	Ops     []*WriteOp `json:"o,omitempty"`
 }
 
 const kLogTagReserveBits = 3
@@ -83,7 +84,7 @@ func (obj *ObjectRef) SyncTo(tailSeqNum uint64) error {
 		}
 		switch objectLog.LogType {
 		case LOG_NormalOp:
-			if objectLog.Op != nil && objectLog.Op.ObjName == obj.name {
+			if objectLog.ObjName == obj.name {
 				view = createObjectView(logEntry)
 				if view == nil {
 					objectLog.SeqNum = logEntry.SeqNum
@@ -116,7 +117,7 @@ func (obj *ObjectRef) SyncTo(tailSeqNum uint64) error {
 		}
 		switch objectLog.LogType {
 		case LOG_NormalOp:
-			view.applyWriteOp(objectLog.SeqNum, objectLog.Op)
+			view.applyNormalOpLog(objectLog.SeqNum, objectLog.Ops)
 			if err := setObjectViewCache(env, objectLog.SeqNum, view); err != nil {
 				return err
 			}
@@ -132,11 +133,12 @@ func (obj *ObjectRef) Sync() error {
 	return obj.SyncTo(protocol.MaxLogSeqnum)
 }
 
-func (obj *ObjectRef) appendWriteLog(op *WriteOp) (uint64 /* seqNum */, error) {
+func (obj *ObjectRef) appendNormalOpLog(ops []*WriteOp) (uint64 /* seqNum */, error) {
 	logEntry := ObjectLogEntry{
 		SeqNum:  0,
 		LogType: LOG_NormalOp,
-		Op:      op,
+		ObjName: obj.name,
+		Ops:     ops,
 	}
 	encoded, err := json.Marshal(logEntry)
 	if err != nil {
@@ -148,5 +150,16 @@ func (obj *ObjectRef) appendWriteLog(op *WriteOp) (uint64 /* seqNum */, error) {
 		return 0, newRuntimeError(err.Error())
 	} else {
 		return seqNum, nil
+	}
+}
+
+func (obj *ObjectRef) appendWriteLog(op *WriteOp) (uint64 /* seqNum */, error) {
+	return obj.appendNormalOpLog([]*WriteOp{op})
+}
+
+func (view *ObjectView) applyNormalOpLog(seqNum uint64, ops []*WriteOp) {
+	view.nextSeqNum = seqNum + 1
+	for _, op := range ops {
+		view.applyWriteOp(op)
 	}
 }
