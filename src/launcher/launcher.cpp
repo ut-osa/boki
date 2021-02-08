@@ -15,7 +15,11 @@ using protocol::Message;
 using protocol::MessageHelper;
 
 Launcher::Launcher()
-    : state_(kCreated), func_id_(-1), fprocess_mode_(kInvalidMode), engine_tcp_port_(-1),
+    : state_(kCreated),
+      func_id_(-1),
+      fprocess_mode_(kInvalidMode),
+      engine_tcp_port_(-1),
+      engine_id_(0),
       event_loop_thread_("Launcher/EL",
                          absl::bind_front(&Launcher::EventLoopThreadMain, this)),
       buffer_pool_("Launcher", kBufferSize),
@@ -109,6 +113,7 @@ bool Launcher::OnRecvHandshakeResponse(const Message& handshake_response,
     if (handshake_response.flags & protocol::kFuncWorkerUseEngineSocketFlag) {
         func_worker_use_engine_socket_ = true;
     }
+    engine_id_ = handshake_response.engine_id;
     if (!func_config_.Load(std::string_view(payload.data(), payload.size()))) {
         HLOG(ERROR) << "Failed to load function config from handshake response, will close the connection";
         engine_connection_.ScheduleClose();

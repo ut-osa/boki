@@ -28,6 +28,7 @@ bool FuncProcess::Start(uv_loop_t* uv_loop, utils::BufferPool* read_buffer_pool)
     read_buffer_pool_ = read_buffer_pool;
     subprocess_.AddEnvVariable("FAAS_FUNC_ID", launcher_->func_id());
     subprocess_.AddEnvVariable("FAAS_FPROCESS_ID", id_);
+    subprocess_.AddEnvVariable("FAAS_ENGINE_ID", launcher_->engine_id());
     if (initial_client_id_ >= 0) {
         subprocess_.AddEnvVariable("FAAS_CLIENT_ID", initial_client_id_);
     }

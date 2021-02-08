@@ -212,6 +212,7 @@ bool Engine::OnNewHandshake(MessageConnection* connection,
         if (func_worker_use_engine_socket_) {
             response->flags |= protocol::kFuncWorkerUseEngineSocketFlag;
         }
+        response->engine_id = node_id_;
         *response_payload = STRING_AS_SPAN(func_config_json_);
     } else {
         *response = MessageHelper::NewHandshakeResponse(0);

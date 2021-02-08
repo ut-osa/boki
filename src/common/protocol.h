@@ -150,6 +150,7 @@ struct Message {
         union {                   // [34:36]
             uint16_t log_result;
             uint16_t log_client_id;
+            uint16_t engine_id;
         };
     } __attribute__ ((packed));
 

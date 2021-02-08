@@ -16,6 +16,8 @@ type Environment interface {
 	InvokeFuncAsync(ctx context.Context, funcName string, input []byte) error
 	GrpcCall(ctx context.Context, service string, method string, request []byte) ( /* reply */ []byte, error)
 
+	GenerateUniqueID() uint64
+
 	// Shared log operations
 	// Append a new log entry, tags must be non-zero
 	SharedLogAppend(ctx context.Context, tags []uint64, data []byte) ( /* seqnum */ uint64, error)

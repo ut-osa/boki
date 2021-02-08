@@ -73,7 +73,7 @@ func Serve(factory types.FuncHandlerFactory) {
 				log.Fatal("[FATAL] Failed to create FuncWorker: ", err)
 			}
 			numWorkers += 1
-			planedMaxProcs := (numWorkers - 1) / maxProcFactor + 1
+			planedMaxProcs := (numWorkers-1)/maxProcFactor + 1
 			currentMaxProcs := runtime.GOMAXPROCS(0)
 			if planedMaxProcs > currentMaxProcs {
 				runtime.GOMAXPROCS(planedMaxProcs)

@@ -53,6 +53,7 @@ public:
     std::string_view fprocess_working_dir() const { return fprocess_working_dir_; }
     std::string_view fprocess_output_dir() const { return fprocess_output_dir_; }
     int engine_tcp_port() const { return engine_tcp_port_; }
+    uint16_t engine_id() const { return engine_id_; }
 
     std::string_view func_name() const {
         const FuncConfig::Entry* entry = func_config_.find_by_func_id(func_id_);
@@ -89,6 +90,7 @@ private:
     std::string fprocess_output_dir_;
     Mode fprocess_mode_;
     int engine_tcp_port_;
+    uint16_t engine_id_;
 
     uv_loop_t uv_loop_;
     uv_async_t stop_event_;

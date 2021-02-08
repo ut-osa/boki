@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -39,10 +40,18 @@ type FuncWorker struct {
 	nextCallId           uint32
 	nextLogOpId          uint64
 	currentCall          uint64
+	uidHighHalf          uint32
+	nextUidLowHalf       uint32
 	mux                  sync.Mutex
 }
 
 func NewFuncWorker(funcId uint16, clientId uint16, factory types.FuncHandlerFactory) (*FuncWorker, error) {
+	engineId := uint32(0)
+	if parsed, err := strconv.Atoi(os.Getenv("FAAS_ENGINE_ID")); err == nil {
+		log.Printf("[INFO] Parse FAAS_ENGINE_ID: %d", parsed)
+		engineId = uint32(parsed)
+	}
+	uidHighHalf := (engineId << protocol.ClientIdBits) + uint32(clientId)
 	w := &FuncWorker{
 		funcId:               funcId,
 		clientId:             clientId,
@@ -55,6 +64,8 @@ func NewFuncWorker(funcId uint16, clientId uint16, factory types.FuncHandlerFact
 		nextCallId:           0,
 		nextLogOpId:          0,
 		currentCall:          0,
+		uidHighHalf:          uidHighHalf,
+		nextUidLowHalf:       0,
 	}
 	return w, nil
 }
@@ -548,7 +559,7 @@ func buildLogEntryFromReadResponse(response []byte) *types.LogEntry {
 	numTags := protocol.GetLogNumTagsFromMessage(response)
 	auxDataSize := protocol.GetLogAuxDataSizeFromMessage(response)
 	responseData := protocol.GetInlineDataFromMessage(response)
-	logDataSize := len(responseData) - numTags * protocol.SharedLogTagByteSize - auxDataSize
+	logDataSize := len(responseData) - numTags*protocol.SharedLogTagByteSize - auxDataSize
 	if logDataSize <= 0 {
 		log.Fatalf("[FATAL] Size of inline data too smaler: size=%d, num_tags=%d, aux_data=%d", len(responseData), numTags, auxDataSize)
 	}
@@ -560,7 +571,7 @@ func buildLogEntryFromReadResponse(response []byte) *types.LogEntry {
 	return &types.LogEntry{
 		SeqNum:  seqNum,
 		Tags:    tags,
-		Data:    responseData[logDataStart: logDataStart+logDataSize],
+		Data:    responseData[logDataStart : logDataStart+logDataSize],
 		AuxData: responseData[logDataStart+logDataSize:],
 	}
 }
@@ -584,6 +595,11 @@ func (w *FuncWorker) sharedLogReadCommon(message []byte, opId uint64) (*types.Lo
 	} else {
 		return nil, fmt.Errorf("Failed to read log")
 	}
+}
+
+func (w *FuncWorker) GenerateUniqueID() uint64 {
+	uidLowHalf := atomic.AddUint32(&w.nextUidLowHalf, 1)
+	return (uint64(w.uidHighHalf) << 32) + uint64(uidLowHalf)
 }
 
 // Implement types.Environment
