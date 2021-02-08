@@ -114,6 +114,9 @@ func (obj *ObjectRef) MultiCommit() error {
 }
 
 func (obj *ObjectRef) doWriteOp(op *WriteOp) *WriteResult {
+	if op.Value.Object != nil || op.Value.Array != nil {
+		panic("Object or Array value not supported")
+	}
 	result := newEmptyResult()
 	if obj.multiCtx != nil {
 		obj.multiCtx.appendOp(op, result)
