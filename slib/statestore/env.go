@@ -13,11 +13,13 @@ type Env interface {
 type envImpl struct {
 	faasCtx context.Context
 	faasEnv types.Environment
+	txnCtx  *txnContext
 }
 
 func CreateEnv(ctx context.Context, faasEnv types.Environment) Env {
 	return &envImpl{
 		faasCtx: ctx,
 		faasEnv: faasEnv,
+		txnCtx:  nil,
 	}
 }

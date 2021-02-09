@@ -17,6 +17,7 @@ type ObjectRef struct {
 	nameHash uint64
 	view     *ObjectView
 	multiCtx *multiContext
+	txnCtx   *txnContext
 }
 
 func objectNameHash(name string) uint64 {
@@ -32,12 +33,17 @@ func (env *envImpl) Object(name string) *ObjectRef {
 		nameHash: objectNameHash(name),
 		view:     nil,
 		multiCtx: nil,
+		txnCtx:   env.txnCtx,
 	}
 }
 
 func (obj *ObjectRef) ensureView() error {
 	if obj.view == nil {
-		return obj.Sync()
+		if obj.txnCtx == nil {
+			return obj.Sync()
+		} else {
+			return obj.SyncTo(obj.txnCtx.id)
+		}
 	} else {
 		return nil
 	}

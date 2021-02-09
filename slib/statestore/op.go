@@ -75,6 +75,9 @@ func (obj *ObjectRef) MultiBegin() {
 	if obj.multiCtx != nil {
 		panic("Already in multi context")
 	}
+	if obj.txnCtx != nil {
+		panic("Multi not supported within transaction")
+	}
 	obj.multiCtx = &multiContext{
 		ops:     make([]*WriteOp, 0, 4),
 		results: make([]*WriteResult, 0, 4),
@@ -94,6 +97,10 @@ func (obj *ObjectRef) MultiCommit() error {
 	}
 	ctx := obj.multiCtx
 	obj.multiCtx = nil
+	if len(ctx.ops) == 0 {
+		// Nothing to commit
+		return nil
+	}
 	seqNum, err := obj.appendNormalOpLog(ctx.ops)
 	if err != nil {
 		return err
@@ -120,6 +127,10 @@ func (obj *ObjectRef) doWriteOp(op *WriteOp) *WriteResult {
 	result := newEmptyResult()
 	if obj.multiCtx != nil {
 		obj.multiCtx.appendOp(op, result)
+		return result
+	}
+	if obj.txnCtx != nil {
+		obj.txnCtx.appendOp(op, result)
 		return result
 	}
 	seqNum, err := obj.appendWriteLog(op)
