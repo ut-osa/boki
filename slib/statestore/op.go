@@ -105,7 +105,7 @@ func (obj *ObjectRef) MultiCommit() error {
 	if err != nil {
 		return err
 	}
-	if err := obj.SyncTo(seqNum); err != nil {
+	if err := obj.syncTo(seqNum); err != nil {
 		return err
 	}
 	obj.view.nextSeqNum = seqNum + 1
@@ -130,14 +130,18 @@ func (obj *ObjectRef) doWriteOp(op *WriteOp) *WriteResult {
 		return result
 	}
 	if obj.txnCtx != nil {
-		obj.txnCtx.appendOp(op, result)
+		if !obj.txnCtx.active {
+			panic("Cannot do modifications within inactive transaction!")
+		}
+		obj.txnCtx.appendOp(op)
+		result.successWithValue(NullValue())
 		return result
 	}
 	seqNum, err := obj.appendWriteLog(op)
 	if err != nil {
 		return result.failure(err)
 	}
-	if err := obj.SyncTo(seqNum); err != nil {
+	if err := obj.syncTo(seqNum); err != nil {
 		return result.failure(err)
 	}
 	obj.view.nextSeqNum = seqNum + 1

@@ -41,6 +41,15 @@ func txnHistoryLogTag(txnId uint64) uint64 {
 	return (txnId << kLogTagReserveBits) + kTxnHistoryLogTagLowBits
 }
 
+func (l *ObjectLogEntry) fillWriteSet() {
+	if l.LogType == LOG_NormalOp || l.LogType == LOG_TxnCommit {
+		l.writeSet = make(map[string]bool)
+		for _, op := range l.Ops {
+			l.writeSet[op.ObjName] = true
+		}
+	}
+}
+
 func decodeLogEntry(logEntry *types.LogEntry) *ObjectLogEntry {
 	objectLog := &ObjectLogEntry{}
 	err := json.Unmarshal(logEntry.Data, objectLog)
@@ -56,12 +65,7 @@ func decodeLogEntry(logEntry *types.LogEntry) *ObjectLogEntry {
 		objectLog.auxData = contents
 	}
 	objectLog.seqNum = logEntry.SeqNum
-	if objectLog.LogType == LOG_NormalOp || objectLog.LogType == LOG_TxnCommit {
-		objectLog.writeSet = make(map[string]bool)
-		for _, op := range objectLog.Ops {
-			objectLog.writeSet[op.ObjName] = true
-		}
-	}
+	objectLog.fillWriteSet()
 	return objectLog
 }
 
@@ -99,7 +103,7 @@ func (txnCommitLog *ObjectLogEntry) checkTxnCommitResult(env *envImpl) (bool, er
 	commitResult := true
 	checkedTag := make(map[uint64]bool)
 	for _, op := range txnCommitLog.Ops {
-		tag := objectNameHash(op.ObjName)
+		tag := objectLogTag(objectNameHash(op.ObjName))
 		if _, exists := checkedTag[tag]; exists {
 			continue
 		}
@@ -176,10 +180,12 @@ func (l *ObjectLogEntry) cacheObjectView(env *envImpl, objName string, view *Obj
 			env.setLogAuxData(l.seqNum, l.auxData)
 			delete(l.auxData, key)
 		}
+	} else {
+		panic("Wrong log type")
 	}
 }
 
-func (obj *ObjectRef) SyncTo(tailSeqNum uint64) error {
+func (obj *ObjectRef) syncTo(tailSeqNum uint64) error {
 	tag := objectLogTag(obj.nameHash)
 	env := obj.env
 	objectLogs := make([]*ObjectLogEntry, 0, 4)
@@ -224,6 +230,7 @@ func (obj *ObjectRef) SyncTo(tailSeqNum uint64) error {
 		if view == nil {
 			objectLogs = append(objectLogs, objectLog)
 		} else {
+			// log.Printf("[DEBUG] Load cached view: seqNum=%#016x, obj=%s", seqNum, obj.name)
 			break
 		}
 	}
@@ -256,14 +263,14 @@ func (obj *ObjectRef) SyncTo(tailSeqNum uint64) error {
 }
 
 func (obj *ObjectRef) Sync() error {
-	return obj.SyncTo(protocol.MaxLogSeqnum)
+	return obj.syncTo(protocol.MaxLogSeqnum)
 }
 
 func (obj *ObjectRef) appendNormalOpLog(ops []*WriteOp) (uint64 /* seqNum */, error) {
 	if len(ops) == 0 {
 		panic("Empty Ops for NormalOp log")
 	}
-	logEntry := ObjectLogEntry{
+	logEntry := &ObjectLogEntry{
 		LogType: LOG_NormalOp,
 		Ops:     ops,
 	}
@@ -285,7 +292,7 @@ func (obj *ObjectRef) appendWriteLog(op *WriteOp) (uint64 /* seqNum */, error) {
 }
 
 func (env *envImpl) appendTxnBeginLog() (uint64 /* seqNum */, error) {
-	logEntry := ObjectLogEntry{LogType: LOG_TxnBegin}
+	logEntry := &ObjectLogEntry{LogType: LOG_TxnBegin}
 	encoded, err := json.Marshal(logEntry)
 	if err != nil {
 		panic(err)
@@ -294,6 +301,7 @@ func (env *envImpl) appendTxnBeginLog() (uint64 /* seqNum */, error) {
 	if err != nil {
 		return 0, newRuntimeError(err.Error())
 	} else {
+		// log.Printf("[DEBUG] Append TxnBegin log: seqNum=%#016x", seqNum)
 		return seqNum, nil
 	}
 }
@@ -307,6 +315,7 @@ func (env *envImpl) setLogAuxData(seqNum uint64, data interface{}) error {
 	if err != nil {
 		return newRuntimeError(err.Error())
 	} else {
+		// log.Printf("[DEBUG] Set AuxData for log (seqNum=%#016x): contents=%s", seqNum, string(encoded))
 		return nil
 	}
 }
