@@ -87,7 +87,7 @@ std::optional<LogEntry> LRUCache::Get(uint64_t seqnum) {
 void LRUCache::PutAuxData(uint64_t seqnum, std::span<const char> data) {
     std::string key_str = fmt::format("1_{:016x}", seqnum);
     dbm_->Set(key_str, std::string_view(data.data(), data.size()),
-              /* overwrite= */ false);
+              /* overwrite= */ true);
 }
 
 std::optional<std::string> LRUCache::GetAuxData(uint64_t seqnum) {
