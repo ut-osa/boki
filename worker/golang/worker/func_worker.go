@@ -517,10 +517,32 @@ func (w *FuncWorker) GrpcCall(ctx context.Context, service string, method string
 	return w.newFuncCallCommon(funcCall, request, false /* async */)
 }
 
+func checkAndDuplicateTags(tags []uint64) ([]uint64, error) {
+	if len(tags) == 0 {
+		return nil, nil
+	}
+	tagSet := make(map[uint64]bool)
+	for _, tag := range tags {
+		if tag == 0 || ^tag == 0 {
+			return nil, fmt.Errorf("Invalid tag: %v", tag)
+		}
+		tagSet[tag] = true
+	}
+	results := make([]uint64, 0, len(tags))
+	for tag, _ := range tagSet {
+		results = append(results, tag)
+	}
+	return results, nil
+}
+
 // Implement types.Environment
 func (w *FuncWorker) SharedLogAppend(ctx context.Context, tags []uint64, data []byte) (uint64, error) {
 	if len(data) == 0 {
 		return 0, fmt.Errorf("Data cannot be empty")
+	}
+	tags, err := checkAndDuplicateTags(tags)
+	if err != nil {
+		return 0, err
 	}
 	if len(data)+len(tags)*protocol.SharedLogTagByteSize > protocol.MessageInlineDataSize {
 		return 0, fmt.Errorf("Data too larger (size=%d, num_tags=%d), expect no more than %d bytes", len(data), len(tags), protocol.MessageInlineDataSize)
@@ -539,7 +561,7 @@ func (w *FuncWorker) SharedLogAppend(ctx context.Context, tags []uint64, data []
 	w.mux.Lock()
 	outputChan := make(chan []byte)
 	w.outgoingLogOps[id] = outputChan
-	_, err := w.outputPipe.Write(message)
+	_, err = w.outputPipe.Write(message)
 	w.mux.Unlock()
 	if err != nil {
 		return 0, err
