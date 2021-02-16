@@ -11,14 +11,16 @@ const (
 	OP_Delete
 	OP_NumberFetchAdd
 	OP_ArrayPushBack
+	OP_ArrayPushBackWithLimit
 	OP_ArrayPopBack
 )
 
 type WriteOp struct {
-	OpType  int    `json:"t"`
-	ObjName string `json:"o"`
-	Path    string `json:"p"`
-	Value   Value  `json:"v"`
+	OpType   int    `json:"t"`
+	ObjName  string `json:"o"`
+	Path     string `json:"p"`
+	Value    Value  `json:"v"`
+	IntParam int    `json:"i"`
 }
 
 type WriteResult struct {
@@ -133,6 +135,9 @@ func (obj *ObjectRef) doWriteOp(op *WriteOp) *WriteResult {
 		if !obj.txnCtx.active {
 			panic("Cannot do modifications within inactive transaction!")
 		}
+		if obj.txnCtx.readonly {
+			panic("Cannot do modifications within read-only transaction!")
+		}
 		obj.txnCtx.appendOp(op)
 		result.successWithValue(NullValue())
 		return result
@@ -161,6 +166,18 @@ func (obj *ObjectRef) Set(path string, value Value) *WriteResult {
 	})
 }
 
+func (obj *ObjectRef) SetString(path string, value string) *WriteResult {
+	return obj.Set(path, StringValue(value))
+}
+
+func (obj *ObjectRef) SetNumber(path string, value float64) *WriteResult {
+	return obj.Set(path, NumberValue(value))
+}
+
+func (obj *ObjectRef) SetBoolean(path string, value bool) *WriteResult {
+	return obj.Set(path, BoolValue(value))
+}
+
 func (obj *ObjectRef) MakeObject(path string) *WriteResult {
 	return obj.doWriteOp(&WriteOp{
 		OpType:  OP_MakeObject,
@@ -171,11 +188,14 @@ func (obj *ObjectRef) MakeObject(path string) *WriteResult {
 }
 
 func (obj *ObjectRef) MakeArray(path string, arraySize int) *WriteResult {
+	if arraySize < 0 {
+		panic("Negative arraySize")
+	}
 	return obj.doWriteOp(&WriteOp{
-		OpType:  OP_MakeArray,
-		ObjName: obj.name,
-		Path:    path,
-		Value:   NumberValue(float64(arraySize)),
+		OpType:   OP_MakeArray,
+		ObjName:  obj.name,
+		Path:     path,
+		IntParam: arraySize,
 	})
 }
 
@@ -203,6 +223,19 @@ func (obj *ObjectRef) ArrayPushBack(path string, value Value) *WriteResult {
 		ObjName: obj.name,
 		Path:    path,
 		Value:   value,
+	})
+}
+
+func (obj *ObjectRef) ArrayPushBackWithLimit(path string, value Value, sizeLimit int) *WriteResult {
+	if sizeLimit < 0 {
+		panic("Negative sizeLimit")
+	}
+	return obj.doWriteOp(&WriteOp{
+		OpType:   OP_ArrayPushBackWithLimit,
+		ObjName:  obj.name,
+		Path:     path,
+		Value:    value,
+		IntParam: sizeLimit,
 	})
 }
 
@@ -305,6 +338,28 @@ func applyArrayPushBackOp(parent *gabs.Container, lastSeg string, value interfac
 	}
 }
 
+func applyArrayPushBackWithLimitOp(parent *gabs.Container, lastSeg string, value interface{}, sizeLimit int) (Value /* oldValue */, error) {
+	current := parent.Search(lastSeg)
+	if current == nil {
+		return NullValue(), newPathNotExistError(lastSeg)
+	}
+	if arr, ok := current.Data().([]interface{}); ok {
+		oldValue := NullValue()
+		newArr := append(arr, value)
+		if len(newArr) > sizeLimit {
+			oldValue = valueFromInterface(arr[0])
+			newArr = arr[1:]
+		}
+		if _, err := parent.Set(newArr, lastSeg); err == nil {
+			return oldValue, nil
+		} else {
+			return NullValue(), newGabsError(err)
+		}
+	} else {
+		return NullValue(), newBadArgumentsError("Expect array type")
+	}
+}
+
 func applyArrayPopBackOp(parent *gabs.Container, lastSeg string) (Value, error) {
 	current := parent.Search(lastSeg)
 	if current == nil {
@@ -342,13 +397,15 @@ func (view *ObjectView) applyWriteOp(op *WriteOp) (Value, error) {
 	case OP_MakeObject:
 		return NullValue(), applyMakeObjectOp(parent, lastSeg)
 	case OP_MakeArray:
-		return NullValue(), applyMakeArrayOp(parent, lastSeg, int(op.Value.AsNumber()))
+		return NullValue(), applyMakeArrayOp(parent, lastSeg, op.IntParam)
 	case OP_Delete:
 		return applyDeleteOp(parent, lastSeg)
 	case OP_NumberFetchAdd:
 		return applyNumberFetchAddOp(parent, lastSeg, op.Value.AsNumber())
 	case OP_ArrayPushBack:
 		return NullValue(), applyArrayPushBackOp(parent, lastSeg, op.Value.asInterface())
+	case OP_ArrayPushBackWithLimit:
+		return applyArrayPushBackWithLimitOp(parent, lastSeg, op.Value.asInterface(), op.IntParam)
 	case OP_ArrayPopBack:
 		return applyArrayPopBackOp(parent, lastSeg)
 	default:

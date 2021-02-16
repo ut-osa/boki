@@ -69,6 +69,25 @@ func (v *Value) AsArray() []interface{} {
 	return v.Array
 }
 
+func (v *Value) Size() int {
+	switch v.ValueType {
+	case VALUE_String:
+		return len(v.StringValue)
+	case VALUE_Null:
+		return 0
+	case VALUE_EmptyObject:
+		return 0
+	case VALUE_EmptyArray:
+		return 0
+	case VALUE_Object:
+		return len(v.Object)
+	case VALUE_Array:
+		return len(v.Array)
+	default:
+		panic("No size for value type")
+	}
+}
+
 func (v *Value) asInterface() interface{} {
 	switch v.ValueType {
 	case VALUE_Number:

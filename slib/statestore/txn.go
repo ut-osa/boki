@@ -8,18 +8,39 @@ import (
 )
 
 type txnContext struct {
-	active bool
-	id     uint64 // TxnId is the seqnum of TxnBegin log
-	ops    []*WriteOp
+	active   bool
+	readonly bool
+	id       uint64 // TxnId is the seqnum of TxnBegin log
+	ops      []*WriteOp
 }
 
 func CreateTxnEnv(ctx context.Context, faasEnv types.Environment) (Env, error) {
 	env := CreateEnv(ctx, faasEnv).(*envImpl)
 	if seqNum, err := env.appendTxnBeginLog(); err == nil {
 		env.txnCtx = &txnContext{
-			active: true,
-			id:     seqNum,
-			ops:    make([]*WriteOp, 0, 4),
+			active:   true,
+			readonly: false,
+			id:       seqNum,
+			ops:      make([]*WriteOp, 0, 4),
+		}
+		return env, nil
+	} else {
+		return nil, err
+	}
+}
+
+func CreateReadOnlyTxnEnv(ctx context.Context, faasEnv types.Environment) (Env, error) {
+	env := CreateEnv(ctx, faasEnv).(*envImpl)
+	if tail, err := faasEnv.SharedLogCheckTail(ctx, 0 /* tag */); err == nil {
+		seqNum := uint64(0)
+		if tail != nil {
+			seqNum = tail.SeqNum + 1
+		}
+		env.txnCtx = &txnContext{
+			active:   true,
+			readonly: true,
+			id:       seqNum,
+			ops:      nil,
 		}
 		return env, nil
 	} else {
@@ -30,6 +51,9 @@ func CreateTxnEnv(ctx context.Context, faasEnv types.Environment) (Env, error) {
 func (env *envImpl) TxnAbort() error {
 	if env.txnCtx == nil {
 		panic("Not in a transaction env")
+	}
+	if env.txnCtx.readonly {
+		panic("Read-only transaction")
 	}
 	ctx := env.txnCtx
 	env.txnCtx = nil
@@ -53,6 +77,9 @@ func (env *envImpl) TxnAbort() error {
 func (env *envImpl) TxnCommit() (bool /* committed */, error) {
 	if env.txnCtx == nil {
 		panic("Not in a transaction env")
+	}
+	if env.txnCtx.readonly {
+		panic("Read-only transaction")
 	}
 	ctx := env.txnCtx
 	env.txnCtx = nil
