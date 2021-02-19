@@ -6,6 +6,7 @@ import (
 
 	"cs.utexas.edu/zjia/faas/protocol"
 	"cs.utexas.edu/zjia/faas/types"
+
 	gabs "github.com/Jeffail/gabs/v2"
 )
 
@@ -51,14 +52,22 @@ func (l *ObjectLogEntry) fillWriteSet() {
 }
 
 func decodeLogEntry(logEntry *types.LogEntry) *ObjectLogEntry {
+	reader, err := decompressReader(logEntry.Data)
+	if err != nil {
+		panic(err)
+	}
 	objectLog := &ObjectLogEntry{}
-	err := json.Unmarshal(logEntry.Data, objectLog)
+	err = json.NewDecoder(reader).Decode(objectLog)
 	if err != nil {
 		panic(err)
 	}
 	if len(logEntry.AuxData) > 0 {
+		reader, err := decompressReader(logEntry.AuxData)
+		if err != nil {
+			panic(err)
+		}
 		var contents map[string]interface{}
-		err := json.Unmarshal(logEntry.AuxData, &contents)
+		err = json.NewDecoder(reader).Decode(&contents)
 		if err != nil {
 			panic(err)
 		}
@@ -100,6 +109,7 @@ func (txnCommitLog *ObjectLogEntry) checkTxnCommitResult(env *envImpl) (bool, er
 	} else {
 		txnCommitLog.auxData = make(map[string]interface{})
 	}
+	// log.Printf("[DEBUG] Failed to load txn status: seqNum=%#016x", txnCommitLog.seqNum)
 	commitResult := true
 	checkedTag := make(map[uint64]bool)
 	for _, op := range txnCommitLog.Ops {
@@ -117,6 +127,7 @@ func (txnCommitLog *ObjectLogEntry) checkTxnCommitResult(env *envImpl) (bool, er
 				break
 			}
 			seqNum = logEntry.SeqNum
+			// log.Printf("[DEBUG] Read log with seqnum %#016x", seqNum)
 
 			objectLog := decodeLogEntry(logEntry)
 			if !txnCommitLog.writeSetOverlapped(objectLog) {
@@ -279,7 +290,7 @@ func (obj *ObjectRef) appendNormalOpLog(ops []*WriteOp) (uint64 /* seqNum */, er
 		panic(err)
 	}
 	tag := objectLogTag(obj.nameHash)
-	seqNum, err := obj.env.faasEnv.SharedLogAppend(obj.env.faasCtx, []uint64{tag}, encoded)
+	seqNum, err := obj.env.faasEnv.SharedLogAppend(obj.env.faasCtx, []uint64{tag}, compressData(encoded))
 	if err != nil {
 		return 0, newRuntimeError(err.Error())
 	} else {
@@ -297,7 +308,7 @@ func (env *envImpl) appendTxnBeginLog() (uint64 /* seqNum */, error) {
 	if err != nil {
 		panic(err)
 	}
-	seqNum, err := env.faasEnv.SharedLogAppend(env.faasCtx, []uint64{kTxnMetaLogTag}, encoded)
+	seqNum, err := env.faasEnv.SharedLogAppend(env.faasCtx, []uint64{kTxnMetaLogTag}, compressData(encoded))
 	if err != nil {
 		return 0, newRuntimeError(err.Error())
 	} else {
@@ -311,7 +322,7 @@ func (env *envImpl) setLogAuxData(seqNum uint64, data interface{}) error {
 	if err != nil {
 		panic(err)
 	}
-	err = env.faasEnv.SharedLogSetAuxData(env.faasCtx, seqNum, encoded)
+	err = env.faasEnv.SharedLogSetAuxData(env.faasCtx, seqNum, compressData(encoded))
 	if err != nil {
 		return newRuntimeError(err.Error())
 	} else {
