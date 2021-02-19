@@ -259,7 +259,7 @@ bool MessageConnection::OnRecvData(int status, std::span<const char> data) {
         return false;
     }
     if (data.size() == 0) {
-        if (in_fifo_fd_.has_value()) {
+        if (!in_fifo_fd_.has_value()) {
             HLOG(INFO) << "Connection closed remotely";
             ScheduleClose();
             return false;
