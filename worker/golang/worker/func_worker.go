@@ -42,6 +42,7 @@ type FuncWorker struct {
 	currentCall          uint64
 	uidHighHalf          uint32
 	nextUidLowHalf       uint32
+	sharedLogReadCount   int32
 	mux                  sync.Mutex
 }
 
@@ -58,7 +59,7 @@ func NewFuncWorker(funcId uint16, clientId uint16, factory types.FuncHandlerFact
 		factory:              factory,
 		isGrpcSrv:            false,
 		useFifoForNestedCall: false,
-		newFuncCallChan:      make(chan []byte),
+		newFuncCallChan:      make(chan []byte, 4),
 		outgoingFuncCalls:    make(map[uint64](chan []byte)),
 		outgoingLogOps:       make(map[uint64](chan []byte)),
 		nextCallId:           0,
@@ -81,9 +82,10 @@ func (w *FuncWorker) Run() {
 	go w.servingLoop()
 	for {
 		message := protocol.NewEmptyMessage()
-		n, err := w.inputPipe.Read(message)
-		if err != nil || n != protocol.MessageFullByteSize {
-			log.Fatal("[FATAL] Failed to read engine message")
+		if n, err := w.inputPipe.Read(message); err != nil {
+			log.Fatalf("[FATAL] Failed to read engine message: %v", err)
+		} else if n != protocol.MessageFullByteSize {
+			log.Fatalf("[FATAL] Failed to read one complete engine message: nread=%d", n)
 		}
 		if protocol.IsDispatchFuncCallMessage(message) {
 			w.newFuncCallChan <- message
@@ -219,6 +221,7 @@ func (w *FuncWorker) executeFunc(dispatchFuncMessage []byte) {
 	}
 
 	var output []byte
+	atomic.StoreInt32(&w.sharedLogReadCount, int32(0))
 	atomic.StoreUint64(&w.currentCall, funcCall.FullCallId())
 	startTimestamp := common.GetMonotonicMicroTimestamp()
 	if w.isGrpcSrv {
@@ -392,7 +395,7 @@ func (w *FuncWorker) newFuncCallCommon(funcCall protocol.FuncCall, input []byte,
 
 	w.mux.Lock()
 	if !w.useFifoForNestedCall {
-		outputChan = make(chan []byte)
+		outputChan = make(chan []byte, 1)
 		w.outgoingFuncCalls[funcCall.FullCallId()] = outputChan
 	}
 	_, err = w.outputPipe.Write(message)
@@ -559,7 +562,7 @@ func (w *FuncWorker) SharedLogAppend(ctx context.Context, tags []uint64, data []
 	}
 
 	w.mux.Lock()
-	outputChan := make(chan []byte)
+	outputChan := make(chan []byte, 1)
 	w.outgoingLogOps[id] = outputChan
 	_, err = w.outputPipe.Write(message)
 	w.mux.Unlock()
@@ -599,8 +602,13 @@ func buildLogEntryFromReadResponse(response []byte) *types.LogEntry {
 }
 
 func (w *FuncWorker) sharedLogReadCommon(message []byte, opId uint64) (*types.LogEntry, error) {
+	count := atomic.AddInt32(&w.sharedLogReadCount, int32(1))
+	if count > 16 {
+		log.Printf("[WARN] Make %d-th shared log read request", count)
+	}
+
 	w.mux.Lock()
-	outputChan := make(chan []byte)
+	outputChan := make(chan []byte, 1)
 	w.outgoingLogOps[opId] = outputChan
 	_, err := w.outputPipe.Write(message)
 	w.mux.Unlock()
@@ -660,7 +668,7 @@ func (w *FuncWorker) SharedLogSetAuxData(ctx context.Context, seqNum uint64, aux
 	protocol.FillInlineDataInMessage(message, auxData)
 
 	w.mux.Lock()
-	outputChan := make(chan []byte)
+	outputChan := make(chan []byte, 1)
 	w.outgoingLogOps[id] = outputChan
 	_, err := w.outputPipe.Write(message)
 	w.mux.Unlock()

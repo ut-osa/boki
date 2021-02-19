@@ -486,8 +486,10 @@ void Engine::ProcessIndexFoundResult(const IndexQueryResult& query_result) {
                 aux_data = STRING_AS_SPAN(*cached_aux_data);
             } else {
                 HLOG(WARNING) << fmt::format("Inline buffer of message not large enough "
-                                             "for auxiliary data of log (seqnum {})",
-                                             bits::HexStr0x(seqnum));
+                                             "for auxiliary data of log (seqnum {}): "
+                                             "log_size={}, num_tags={} aux_data_size={}",
+                                             bits::HexStr0x(seqnum), log_entry.data.size(),
+                                             log_entry.user_tags.size(), cached_aux_data->size());
             }
         }
         if (local_request) {
