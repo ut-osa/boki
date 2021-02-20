@@ -85,7 +85,7 @@ std::optional<std::string> RocksDBBackend::Get(uint32_t logspace_id, uint32_t ke
         return std::nullopt;
     }
     ROCKSDB_CHECK_OK(status, Get);
-    return std::move(data);
+    return data;
 }
 
 void RocksDBBackend::Put(uint32_t logspace_id, uint32_t key, std::span<const char> data) {
@@ -173,7 +173,7 @@ std::optional<std::string> TkrzwDBMBackend::Get(uint32_t logspace_id, uint32_t k
     std::string data;
     auto status = dbm->Get(key_str, &data);
     if (status.IsOK()) {
-        return std::move(data);
+        return data;
     } else {
         return std::nullopt;
     }

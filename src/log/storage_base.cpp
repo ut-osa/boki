@@ -119,7 +119,7 @@ std::optional<LogEntryProto> StorageBase::GetLogEntryFromDB(uint64_t seqnum) {
     if (!log_entry_proto.ParseFromString(*data)) {
         HLOG(FATAL) << "Failed to parse LogEntryProto";
     }
-    return std::move(log_entry_proto);
+    return log_entry_proto;
 }
 
 void StorageBase::PutLogEntryToDB(const LogEntry& log_entry) {

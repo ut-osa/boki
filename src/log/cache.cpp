@@ -78,7 +78,7 @@ std::optional<LogEntry> LRUCache::Get(uint64_t seqnum) {
         LogEntry log_entry;
         DecodeLogEntry(std::move(data), &log_entry);
         DCHECK_EQ(seqnum, log_entry.metadata.seqnum);
-        return std::move(log_entry);
+        return log_entry;
     } else {
         return std::nullopt;
     }
@@ -95,7 +95,7 @@ std::optional<std::string> LRUCache::GetAuxData(uint64_t seqnum) {
     std::string data;
     auto status = dbm_->Get(key_str, &data);
     if (status.IsOK()) {
-        return std::move(data);
+        return data;
     } else {
         return std::nullopt;
     }

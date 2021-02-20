@@ -106,7 +106,7 @@ std::optional<MetaLogProto> MetaLogPrimary::MarkNextCut() {
     }
     DCHECK_EQ(new_logs_proto->start_seqnum() + total_delta,
               bits::LowHalf64(seqnum_position()));
-    return std::move(meta_log_proto);
+    return meta_log_proto;
 }
 
 void MetaLogPrimary::UpdateMetaLogReplicatedPosition() {
@@ -300,7 +300,7 @@ std::optional<IndexDataProto> LogStorage::PollIndexData() {
     data.Swap(&index_data_);
     index_data_.Clear();
     index_data_.set_logspace_id(identifier());
-    return std::move(data);
+    return data;
 }
 
 std::optional<std::vector<uint32_t>> LogStorage::GrabShardProgressForSending() {
@@ -313,7 +313,7 @@ std::optional<std::vector<uint32_t>> LogStorage::GrabShardProgressForSending() {
         progress.push_back(shard_progrsses_[engine_id]);
     }
     shard_progrss_dirty_ = false;
-    return std::move(progress);
+    return progress;
 }
 
 void LogStorage::OnNewLogs(uint32_t metalog_seqnum,
