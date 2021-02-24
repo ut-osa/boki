@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"log"
 
+	"cs.utexas.edu/zjia/faas/slib/constants"
+	"cs.utexas.edu/zjia/faas/slib/compress"
+
 	"cs.utexas.edu/zjia/faas/protocol"
 	"cs.utexas.edu/zjia/faas/types"
 
@@ -28,18 +31,12 @@ type ObjectLogEntry struct {
 	TxnId   uint64     `json:"x"`
 }
 
-const kLogTagReserveBits = 3
-const kTxnMetaLogTag = 1
-
-const kObjectLogTagLowBits = 2
-const kTxnHistoryLogTagLowBits = 3
-
 func objectLogTag(objNameHash uint64) uint64 {
-	return (objNameHash << kLogTagReserveBits) + kObjectLogTagLowBits
+	return (objNameHash << constants.LogTagReserveBits) + constants.ObjectLogTagLowBits
 }
 
 func txnHistoryLogTag(txnId uint64) uint64 {
-	return (txnId << kLogTagReserveBits) + kTxnHistoryLogTagLowBits
+	return (txnId << constants.LogTagReserveBits) + constants.TxnHistoryLogTagLowBits
 }
 
 func (l *ObjectLogEntry) fillWriteSet() {
@@ -52,7 +49,7 @@ func (l *ObjectLogEntry) fillWriteSet() {
 }
 
 func decodeLogEntry(logEntry *types.LogEntry) *ObjectLogEntry {
-	reader, err := decompressReader(logEntry.Data)
+	reader, err := compress.DecompressReader(logEntry.Data)
 	if err != nil {
 		panic(err)
 	}
@@ -62,7 +59,7 @@ func decodeLogEntry(logEntry *types.LogEntry) *ObjectLogEntry {
 		panic(err)
 	}
 	if len(logEntry.AuxData) > 0 {
-		reader, err := decompressReader(logEntry.AuxData)
+		reader, err := compress.DecompressReader(logEntry.AuxData)
 		if err != nil {
 			panic(err)
 		}
@@ -289,8 +286,8 @@ func (obj *ObjectRef) appendNormalOpLog(ops []*WriteOp) (uint64 /* seqNum */, er
 	if err != nil {
 		panic(err)
 	}
-	tag := objectLogTag(obj.nameHash)
-	seqNum, err := obj.env.faasEnv.SharedLogAppend(obj.env.faasCtx, []uint64{tag}, compressData(encoded))
+	tags := []uint64{objectLogTag(obj.nameHash)}
+	seqNum, err := obj.env.faasEnv.SharedLogAppend(obj.env.faasCtx, tags, compress.CompressData(encoded))
 	if err != nil {
 		return 0, newRuntimeError(err.Error())
 	} else {
@@ -308,7 +305,8 @@ func (env *envImpl) appendTxnBeginLog() (uint64 /* seqNum */, error) {
 	if err != nil {
 		panic(err)
 	}
-	seqNum, err := env.faasEnv.SharedLogAppend(env.faasCtx, []uint64{kTxnMetaLogTag}, compressData(encoded))
+	tags := []uint64{constants.TxnMetaLogTag}
+	seqNum, err := env.faasEnv.SharedLogAppend(env.faasCtx, tags, compress.CompressData(encoded))
 	if err != nil {
 		return 0, newRuntimeError(err.Error())
 	} else {
@@ -322,7 +320,7 @@ func (env *envImpl) setLogAuxData(seqNum uint64, data interface{}) error {
 	if err != nil {
 		panic(err)
 	}
-	err = env.faasEnv.SharedLogSetAuxData(env.faasCtx, seqNum, compressData(encoded))
+	err = env.faasEnv.SharedLogSetAuxData(env.faasCtx, seqNum, compress.CompressData(encoded))
 	if err != nil {
 		return newRuntimeError(err.Error())
 	} else {

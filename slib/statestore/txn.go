@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 
+	"cs.utexas.edu/zjia/faas/slib/constants"
+	"cs.utexas.edu/zjia/faas/slib/compress"
+
 	"cs.utexas.edu/zjia/faas/types"
 )
 
@@ -66,8 +69,8 @@ func (env *envImpl) TxnAbort() error {
 	if err != nil {
 		panic(err)
 	}
-	tags := []uint64{kTxnMetaLogTag, txnHistoryLogTag(ctx.id)}
-	if _, err := env.faasEnv.SharedLogAppend(env.faasCtx, tags, compressData(encoded)); err == nil {
+	tags := []uint64{constants.TxnMetaLogTag, txnHistoryLogTag(ctx.id)}
+	if _, err := env.faasEnv.SharedLogAppend(env.faasCtx, tags, compress.CompressData(encoded)); err == nil {
 		return nil
 	} else {
 		return newRuntimeError(err.Error())
@@ -94,11 +97,11 @@ func (env *envImpl) TxnCommit() (bool /* committed */, error) {
 	if err != nil {
 		panic(err)
 	}
-	tags := []uint64{kTxnMetaLogTag, txnHistoryLogTag(ctx.id)}
+	tags := []uint64{constants.TxnMetaLogTag, txnHistoryLogTag(ctx.id)}
 	for _, op := range ctx.ops {
 		tags = append(tags, objectLogTag(objectNameHash(op.ObjName)))
 	}
-	seqNum, err := env.faasEnv.SharedLogAppend(env.faasCtx, tags, compressData(encoded))
+	seqNum, err := env.faasEnv.SharedLogAppend(env.faasCtx, tags, compress.CompressData(encoded))
 	if err != nil {
 		return false, newRuntimeError(err.Error())
 	}
