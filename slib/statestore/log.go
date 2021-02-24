@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"log"
 
-	"cs.utexas.edu/zjia/faas/slib/constants"
 	"cs.utexas.edu/zjia/faas/slib/compress"
+	"cs.utexas.edu/zjia/faas/slib/constants"
 
 	"cs.utexas.edu/zjia/faas/protocol"
 	"cs.utexas.edu/zjia/faas/types"
