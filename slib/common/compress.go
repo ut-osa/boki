@@ -1,4 +1,4 @@
-package compress
+package common
 
 import (
 	"bytes"

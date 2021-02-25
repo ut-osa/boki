@@ -1,7 +1,7 @@
 package statestore
 
 import (
-	"hash/fnv"
+	"cs.utexas.edu/zjia/faas/slib/common"
 
 	gabs "github.com/Jeffail/gabs/v2"
 )
@@ -20,12 +20,6 @@ type ObjectRef struct {
 	txnCtx   *txnContext
 }
 
-func objectNameHash(name string) uint64 {
-	h := fnv.New64a()
-	h.Write([]byte(name))
-	return h.Sum64()
-}
-
 func (env *envImpl) Object(name string) *ObjectRef {
 	if env.txnCtx != nil && !env.txnCtx.active {
 		panic("Cannot create object within inactive transaction!")
@@ -33,7 +27,7 @@ func (env *envImpl) Object(name string) *ObjectRef {
 	obj := &ObjectRef{
 		env:      env,
 		name:     name,
-		nameHash: objectNameHash(name),
+		nameHash: common.NameHash(name),
 		view:     nil,
 		multiCtx: nil,
 		txnCtx:   env.txnCtx,
