@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"time"
 
 	"cs.utexas.edu/zjia/faas/slib/common"
 
@@ -93,19 +94,6 @@ func (q *Queue) Push(payload string) error {
 	tags := []uint64{queueLogTag(q.nameHash), queuePushLogTag(q.nameHash)}
 	_, err = q.env.SharedLogAppend(q.ctx, tags, encoded)
 	return err
-}
-
-func (q *Queue) appendPopLog() (uint64, error) {
-	logEntry := &QueueLogEntry{
-		QueueName: q.name,
-		IsPush:    false,
-	}
-	encoded, err := json.Marshal(logEntry)
-	if err != nil {
-		panic(err)
-	}
-	tags := []uint64{queueLogTag(q.nameHash)}
-	return q.env.SharedLogAppend(q.ctx, tags, encoded)
 }
 
 func (q *Queue) isEmpty() bool {
@@ -213,6 +201,23 @@ func (q *Queue) syncTo(tailSeqNum uint64) error {
 	return nil
 }
 
+func (q *Queue) appendPopLogAndSync() error {
+	logEntry := &QueueLogEntry{
+		QueueName: q.name,
+		IsPush:    false,
+	}
+	encoded, err := json.Marshal(logEntry)
+	if err != nil {
+		panic(err)
+	}
+	tags := []uint64{queueLogTag(q.nameHash)}
+	if seqNum, err := q.env.SharedLogAppend(q.ctx, tags, encoded); err != nil {
+		return err
+	} else {
+		return q.syncTo(seqNum)
+	}
+}
+
 var kQueueEmptyError = errors.New("Queue empty")
 var kQueueTimeoutError = errors.New("Blocking pop timeout")
 
@@ -231,11 +236,7 @@ func (q *Queue) popNonblocking() (string /* payload */, error) {
 	if q.isEmpty() {
 		return "", kQueueEmptyError
 	}
-	seqNum, err := q.appendPopLog()
-	if err != nil {
-		return "", err
-	}
-	if err := q.syncTo(seqNum); err != nil {
+	if err := q.appendPopLogAndSync(); err != nil {
 		return "", err
 	}
 	if nextLog, err := q.findNext(q.consumed, q.tail); err != nil {
@@ -247,8 +248,45 @@ func (q *Queue) popNonblocking() (string /* payload */, error) {
 	}
 }
 
+const kBlockingPopTimeout = 10 * time.Second
+
 func (q *Queue) popBlocking() (string /* payload */, error) {
-	return "", fmt.Errorf("Not implemented")
+	tag := queuePushLogTag(q.nameHash)
+	startTime := time.Now()
+	for time.Since(startTime) < kBlockingPopTimeout {
+		if err := q.syncTo(protocol.MaxLogSeqnum); err != nil {
+			return "", err
+		}
+		if q.isEmpty() {
+			seqNum := q.nextSeqNum
+			for {
+				log.Printf("[DEBUG] BlockingRead: NextSeqNum=%#016x", seqNum)
+				logEntry, err := q.env.SharedLogReadNextBlock(q.ctx, tag, seqNum)
+				if err != nil {
+					return "", err
+				}
+				if logEntry != nil {
+					queueLog := decodeQueueLogEntry(logEntry)
+					if queueLog.IsPush && queueLog.QueueName == q.name {
+						break
+					}
+					seqNum = logEntry.SeqNum + 1
+				} else if time.Since(startTime) >= kBlockingPopTimeout {
+					return "", kQueueTimeoutError
+				}
+			}
+		} else {
+			if err := q.appendPopLogAndSync(); err != nil {
+				return "", err
+			}
+			if nextLog, err := q.findNext(q.consumed, q.tail); err != nil {
+				return "", err
+			} else if nextLog != nil {
+				return nextLog.Payload, nil
+			}
+		}
+	}
+	return "", kQueueTimeoutError
 }
 
 func (q *Queue) Pop(blocking bool) (string /* payload */, error) {
