@@ -47,6 +47,8 @@ struct IndexQueryResult {
 
 class Index final : public LogSpaceBase {
 public:
+    static constexpr int64_t kBlockingQueryTimeout = 100000; // 100ms
+
     Index(const View* view, uint16_t sequencer_id);
     ~Index();
 
@@ -64,6 +66,8 @@ private:
 
     std::multimap</* metalog_position */ uint32_t,
                   IndexQuery> pending_queries_;
+    std::vector<std::pair</* start_timestamp */ int64_t,
+                          IndexQuery>> blocking_reads_;
     QueryResultVec pending_query_results_;
 
     std::deque<std::pair</* metalog_seqnum */ uint32_t,
@@ -82,8 +86,9 @@ private:
     void OnMetaLogApplied(const MetaLogProto& meta_log_proto) override;
     void AdvanceIndexProgress();
     PerSpaceIndex* GetOrCreateIndex(uint32_t user_logspace);
-    
+
     void ProcessQuery(const IndexQuery& query);
+    bool ProcessBlockingQuery(const IndexQuery& query);
     IndexQueryResult BuildFoundResult(const IndexQuery& query,
                                       uint64_t seqnum, uint16_t engine_id);
     IndexQueryResult BuildNotFoundResult(const IndexQuery& query);

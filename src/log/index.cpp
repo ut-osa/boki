@@ -104,6 +104,13 @@ bool Index::PerSpaceIndex::FindNext(uint64_t query_seqnum, uint64_t user_tag,
 
 bool Index::PerSpaceIndex::FindPrev(const std::vector<uint32_t>& seqnums,
                                     uint64_t query_seqnum, uint32_t* result_seqnum) const {
+    if (seqnums.empty() || bits::JoinTwo32(logspace_id_, seqnums.front()) > query_seqnum) {
+        return false;
+    }
+    if (query_seqnum == kMaxLogSeqNum) {
+        *result_seqnum = seqnums.back();
+        return true;
+    }
     auto iter = absl::c_upper_bound(
         seqnums, query_seqnum,
         [logspace_id = logspace_id_] (uint64_t lhs, uint32_t rhs) {
@@ -120,6 +127,9 @@ bool Index::PerSpaceIndex::FindPrev(const std::vector<uint32_t>& seqnums,
 
 bool Index::PerSpaceIndex::FindNext(const std::vector<uint32_t>& seqnums,
                                     uint64_t query_seqnum, uint32_t* result_seqnum) const {
+    if (seqnums.empty() || bits::JoinTwo32(logspace_id_, seqnums.back()) < query_seqnum) {
+        return false;
+    }
     auto iter = absl::c_lower_bound(
         seqnums, query_seqnum,
         [logspace_id = logspace_id_] (uint32_t lhs, uint64_t rhs) {
@@ -234,6 +244,20 @@ void Index::AdvanceIndexProgress() {
         indexed_metalog_position_ = metalog_seqnum + 1;
         cuts_.pop_front();
     }
+    if (!blocking_reads_.empty()) {
+        int64_t current_timestamp = GetMonotonicMicroTimestamp();
+        std::vector<std::pair<int64_t, IndexQuery>> unfinished;
+        for (const auto& [start_timestamp, query] : blocking_reads_) {
+            if (!ProcessBlockingQuery(query)) {
+                if (current_timestamp - start_timestamp < kBlockingQueryTimeout) {
+                    unfinished.push_back(std::make_pair(start_timestamp, query));
+                } else {
+                    pending_query_results_.push_back(BuildNotFoundResult(query));
+                }
+            }
+        }
+        blocking_reads_ = std::move(unfinished);
+    }
     auto iter = pending_queries_.begin();
     while (iter != pending_queries_.end()) {
         if (iter->first > indexed_metalog_position_) {
@@ -256,6 +280,13 @@ Index::PerSpaceIndex* Index::GetOrCreateIndex(uint32_t user_logspace) {
 }
 
 void Index::ProcessQuery(const IndexQuery& query) {
+    if (query.direction == IndexQuery::kReadNextB) {
+        bool success = ProcessBlockingQuery(query);
+        if (!success) {
+            blocking_reads_.push_back(std::make_pair(GetMonotonicMicroTimestamp(), query));
+        }
+        return;
+    }
     if (!index_.contains(query.user_logspace)) {
         pending_query_results_.push_back(BuildNotFoundResult(query));
         return;
@@ -271,8 +302,6 @@ void Index::ProcessQuery(const IndexQuery& query) {
     case IndexQuery::kReadPrev:
         found = index->FindPrev(query.query_seqnum, query.user_tag, &seqnum, &engine_id);
         break;
-    case IndexQuery::kReadNextB:
-        NOT_IMPLEMENTED();
     default:
         UNREACHABLE();
     }
@@ -281,6 +310,21 @@ void Index::ProcessQuery(const IndexQuery& query) {
     } else {
         pending_query_results_.push_back(BuildNotFoundResult(query));
     }
+}
+
+bool Index::ProcessBlockingQuery(const IndexQuery& query) {
+    DCHECK(query.direction == IndexQuery::kReadNextB);
+    if (!index_.contains(query.user_logspace)) {
+        return false;
+    }
+    uint64_t seqnum;
+    uint16_t engine_id;
+    bool found = GetOrCreateIndex(query.user_logspace)->FindNext(
+        query.query_seqnum, query.user_tag, &seqnum, &engine_id);
+    if (found) {
+        pending_query_results_.push_back(BuildFoundResult(query, seqnum, engine_id));
+    }
+    return found;
 }
 
 IndexQueryResult Index::BuildFoundResult(const IndexQuery& query,
