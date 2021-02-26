@@ -221,12 +221,11 @@ void Engine::HandleLocalTrim(LocalOp* op) {
 
 void Engine::HandleLocalRead(LocalOp* op) {
     DCHECK(  op->type == SharedLogOpType::READ_NEXT
-          || op->type == SharedLogOpType::READ_PREV);
-    int direction = (op->type == SharedLogOpType::READ_NEXT) ? 1 : -1;
-    HVLOG(1) << fmt::format("Handle local read: op_id={}, logspace={}, tag={}, "
-                            "seqnum={} direction={}",
+          || op->type == SharedLogOpType::READ_PREV
+          || op->type == SharedLogOpType::READ_NEXT_B);
+    HVLOG(1) << fmt::format("Handle local read: op_id={}, logspace={}, tag={}, seqnum={}",
                             op->id, op->user_logspace, op->query_tag,
-                            bits::HexStr0x(op->seqnum), direction);
+                            bits::HexStr0x(op->seqnum));
     onging_reads_.PutChecked(op->id, op);
     const View::Sequencer* sequencer_node = nullptr;
     LockablePtr<Index> index_ptr;
@@ -235,7 +234,7 @@ void Engine::HandleLocalRead(LocalOp* op) {
         ONHOLD_IF_SEEN_FUTURE_VIEW(op);
         uint64_t query_seqnum = op->seqnum;
         uint16_t view_id = bits::HighHalf32(bits::HighHalf64(query_seqnum));
-        if (direction < 0 && query_seqnum == kMaxLogSeqNum) {
+        if (op->type == SharedLogOpType::READ_PREV && query_seqnum == kMaxLogSeqNum) {
             // This is a CheckTail read
             view_id = current_view_->id();
         }
@@ -251,7 +250,7 @@ void Engine::HandleLocalRead(LocalOp* op) {
     if (index_ptr != nullptr) {
         // Use local index
         IndexQuery query = {
-            .direction = (direction > 0) ? IndexQuery::kReadNext : IndexQuery::kReadPrev,
+            .direction = IndexQuery::DirectionFromOp(op->type),
             .origin_node_id = my_node_id(),
             .hop_times = 0,
             .client_data = op->id,
@@ -308,7 +307,8 @@ void Engine::HandleLocalRead(LocalOp* op) {
 void Engine::HandleRemoteRead(const SharedLogMessage& request) {
     SharedLogOpType op_type = SharedLogMessageHelper::GetOpType(request);
     DCHECK(  op_type == SharedLogOpType::READ_NEXT
-          || op_type == SharedLogOpType::READ_PREV);
+          || op_type == SharedLogOpType::READ_PREV
+          || op_type == SharedLogOpType::READ_NEXT_B);
     LockablePtr<Index> index_ptr;
     {
         absl::ReaderMutexLock view_lk(&view_mu_);
@@ -316,8 +316,7 @@ void Engine::HandleRemoteRead(const SharedLogMessage& request) {
         index_ptr = index_collection_.GetLogSpaceChecked(request.logspace_id);
     }
     IndexQuery query = {
-        .direction = (op_type == SharedLogOpType::READ_NEXT) ? IndexQuery::kReadNext
-                                                             : IndexQuery::kReadPrev,
+        .direction = IndexQuery::DirectionFromOp(op_type),
         .origin_node_id = request.origin_node_id,
         .hop_times = request.hop_times,
         .client_data = request.client_data,
@@ -562,9 +561,9 @@ void Engine::ProcessRequests(const std::vector<SharedLogRequest>& requests) {
 
 SharedLogMessage Engine::BuildReadRequestMessage(LocalOp* op) {
     DCHECK(  op->type == SharedLogOpType::READ_NEXT
-          || op->type == SharedLogOpType::READ_PREV);
-    int direction = (op->type == SharedLogOpType::READ_NEXT) ? 1 : -1;
-    SharedLogMessage request = SharedLogMessageHelper::NewReadMessage(direction);
+          || op->type == SharedLogOpType::READ_PREV
+          || op->type == SharedLogOpType::READ_NEXT_B);
+    SharedLogMessage request = SharedLogMessageHelper::NewReadMessage(op->type);
     request.origin_node_id = my_node_id();
     request.hop_times = 1;
     request.client_data = op->id;

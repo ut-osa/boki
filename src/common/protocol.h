@@ -581,13 +581,9 @@ public:
         return message;
     }
 
-    static SharedLogMessage NewReadMessage(int direction) {
+    static SharedLogMessage NewReadMessage(SharedLogOpType op_type) {
         NEW_EMPTY_SHAREDLOG_MESSAGE(message);
-        if (direction > 0) {
-            message.op_type = static_cast<uint16_t>(SharedLogOpType::READ_NEXT);
-        } else {
-            message.op_type = static_cast<uint16_t>(SharedLogOpType::READ_PREV);
-        }
+        message.op_type = static_cast<uint16_t>(op_type);
         return message;
     }
 

@@ -271,6 +271,8 @@ void Index::ProcessQuery(const IndexQuery& query) {
     case IndexQuery::kReadPrev:
         found = index->FindPrev(query.query_seqnum, query.user_tag, &seqnum, &engine_id);
         break;
+    case IndexQuery::kReadNextB:
+        NOT_IMPLEMENTED();
     default:
         UNREACHABLE();
     }

@@ -6,7 +6,7 @@ namespace faas {
 namespace log {
 
 struct IndexQuery {
-    enum ReadDirection { kReadNext, kReadPrev };
+    enum ReadDirection { kReadNext, kReadPrev, kReadNextB };
     ReadDirection direction;
     uint16_t origin_node_id;
     uint16_t hop_times;
@@ -16,6 +16,19 @@ struct IndexQuery {
     uint64_t user_tag;
     uint64_t query_seqnum;
     uint64_t metalog_progress;
+
+    static inline ReadDirection DirectionFromOp(protocol::SharedLogOpType op_type) {
+        switch (op_type) {
+        case protocol::SharedLogOpType::READ_NEXT:
+            return kReadNext;
+        case protocol::SharedLogOpType::READ_PREV:
+            return kReadPrev;
+        case protocol::SharedLogOpType::READ_NEXT_B:
+            return kReadNextB;
+        default:
+            UNREACHABLE();
+        }
+    }
 };
 
 struct IndexFoundResult {
