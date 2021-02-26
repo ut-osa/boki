@@ -54,6 +54,7 @@ const (
 	SharedLogOpType_READ_PREV   uint16 = 0x03
 	SharedLogOpType_TRIM        uint16 = 0x04
 	SharedLogOpType_SET_AUXDATA uint16 = 0x05
+	SharedLogOpType_READ_NEXT_B uint16 = 0x06
 )
 
 // SharedLogResultType enum
@@ -209,12 +210,16 @@ func NewSharedLogAppendMessage(currentCallId uint64, myClientId uint16, numTags 
 	return buffer
 }
 
-func NewSharedLogReadMessage(currentCallId uint64, myClientId uint16, tag uint64, seqNum uint64, direction int, clientData uint64) []byte {
+func NewSharedLogReadMessage(currentCallId uint64, myClientId uint16, tag uint64, seqNum uint64, direction int, block bool, clientData uint64) []byte {
 	buffer := NewEmptyMessage()
 	tmp := (currentCallId << MessageTypeBits) + uint64(MessageType_SHARED_LOG_OP)
 	binary.LittleEndian.PutUint64(buffer[0:8], tmp)
 	if direction > 0 {
-		binary.LittleEndian.PutUint16(buffer[32:34], SharedLogOpType_READ_NEXT)
+		if block {
+			binary.LittleEndian.PutUint16(buffer[32:34], SharedLogOpType_READ_NEXT_B)
+		} else {
+			binary.LittleEndian.PutUint16(buffer[32:34], SharedLogOpType_READ_NEXT)
+		}
 	} else {
 		binary.LittleEndian.PutUint16(buffer[32:34], SharedLogOpType_READ_PREV)
 	}

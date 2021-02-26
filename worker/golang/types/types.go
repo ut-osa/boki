@@ -24,6 +24,7 @@ type Environment interface {
 	// Read the first log with `tag` whose seqnum >= given `seqNum`
 	// `tag`==0 means considering log with any tag, including empty tag
 	SharedLogReadNext(ctx context.Context, tag uint64, seqNum uint64) (*LogEntry, error)
+	SharedLogReadNextBlock(ctx context.Context, tag uint64, seqNum uint64) (*LogEntry, error)
 	// Read the last log with `tag` whose seqnum <= given `seqNum`
 	// `tag`==0 means considering log with any tag, including empty tag
 	SharedLogReadPrev(ctx context.Context, tag uint64, seqNum uint64) (*LogEntry, error)

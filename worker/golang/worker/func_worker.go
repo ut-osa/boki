@@ -627,6 +627,7 @@ func (w *FuncWorker) sharedLogReadCommon(message []byte, opId uint64) (*types.Lo
 	}
 }
 
+// Implement types.Environment
 func (w *FuncWorker) GenerateUniqueID() uint64 {
 	uidLowHalf := atomic.AddUint32(&w.nextUidLowHalf, 1)
 	return (uint64(w.uidHighHalf) << 32) + uint64(uidLowHalf)
@@ -636,7 +637,15 @@ func (w *FuncWorker) GenerateUniqueID() uint64 {
 func (w *FuncWorker) SharedLogReadNext(ctx context.Context, tag uint64, seqNum uint64) (*types.LogEntry, error) {
 	id := atomic.AddUint64(&w.nextLogOpId, 1)
 	currentCallId := atomic.LoadUint64(&w.currentCall)
-	message := protocol.NewSharedLogReadMessage(currentCallId, w.clientId, tag, seqNum, 1 /* direction */, id)
+	message := protocol.NewSharedLogReadMessage(currentCallId, w.clientId, tag, seqNum, 1 /* direction */, false /* block */, id)
+	return w.sharedLogReadCommon(message, id)
+}
+
+// Implement types.Environment
+func (w *FuncWorker) SharedLogReadNextBlock(ctx context.Context, tag uint64, seqNum uint64) (*types.LogEntry, error) {
+	id := atomic.AddUint64(&w.nextLogOpId, 1)
+	currentCallId := atomic.LoadUint64(&w.currentCall)
+	message := protocol.NewSharedLogReadMessage(currentCallId, w.clientId, tag, seqNum, 1 /* direction */, true /* block */, id)
 	return w.sharedLogReadCommon(message, id)
 }
 
@@ -644,7 +653,7 @@ func (w *FuncWorker) SharedLogReadNext(ctx context.Context, tag uint64, seqNum u
 func (w *FuncWorker) SharedLogReadPrev(ctx context.Context, tag uint64, seqNum uint64) (*types.LogEntry, error) {
 	id := atomic.AddUint64(&w.nextLogOpId, 1)
 	currentCallId := atomic.LoadUint64(&w.currentCall)
-	message := protocol.NewSharedLogReadMessage(currentCallId, w.clientId, tag, seqNum, -1 /* direction */, id)
+	message := protocol.NewSharedLogReadMessage(currentCallId, w.clientId, tag, seqNum, -1 /* direction */, false /* block */, id)
 	return w.sharedLogReadCommon(message, id)
 }
 

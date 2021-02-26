@@ -90,6 +90,7 @@ enum class SharedLogOpType : uint16_t {
     READ_PREV   = 0x03,  // FuncWorker to Engine, Engine to Index
     TRIM        = 0x04,  // FuncWorker to Engine, Engine to Sequencer
     SET_AUXDATA = 0x05,  // FuncWorker to Engine
+    READ_NEXT_B = 0x06,  // FuncWorker to Engine, Engine to Index
     READ_AT     = 0x10,  // Index to Storage
     REPLICATE   = 0x11,  // Engine to Storage
     INDEX_DATA  = 0x12,  // Engine to Index
