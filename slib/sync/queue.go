@@ -248,7 +248,7 @@ func (q *Queue) popNonblocking() (string /* payload */, error) {
 	}
 }
 
-const kBlockingPopTimeout = 10 * time.Second
+const kBlockingPopTimeout = 1 * time.Second
 
 func (q *Queue) popBlocking() (string /* payload */, error) {
 	tag := queuePushLogTag(q.nameHash)
@@ -260,8 +260,9 @@ func (q *Queue) popBlocking() (string /* payload */, error) {
 		if q.isEmpty() {
 			seqNum := q.nextSeqNum
 			for {
-				log.Printf("[DEBUG] BlockingRead: NextSeqNum=%#016x", seqNum)
-				logEntry, err := q.env.SharedLogReadNextBlock(q.ctx, tag, seqNum)
+				// log.Printf("[DEBUG] BlockingRead: NextSeqNum=%#016x", seqNum)
+				newCtx, _ := context.WithTimeout(q.ctx, kBlockingPopTimeout)
+				logEntry, err := q.env.SharedLogReadNextBlock(newCtx, tag, seqNum)
 				if err != nil {
 					return "", err
 				}

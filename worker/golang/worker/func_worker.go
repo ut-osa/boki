@@ -601,11 +601,11 @@ func buildLogEntryFromReadResponse(response []byte) *types.LogEntry {
 	}
 }
 
-func (w *FuncWorker) sharedLogReadCommon(message []byte, opId uint64) (*types.LogEntry, error) {
-	count := atomic.AddInt32(&w.sharedLogReadCount, int32(1))
-	if count > 16 {
-		log.Printf("[WARN] Make %d-th shared log read request", count)
-	}
+func (w *FuncWorker) sharedLogReadCommon(ctx context.Context, message []byte, opId uint64) (*types.LogEntry, error) {
+	// count := atomic.AddInt32(&w.sharedLogReadCount, int32(1))
+	// if count > 16 {
+	// 	log.Printf("[WARN] Make %d-th shared log read request", count)
+	// }
 
 	w.mux.Lock()
 	outputChan := make(chan []byte, 1)
@@ -616,7 +616,12 @@ func (w *FuncWorker) sharedLogReadCommon(message []byte, opId uint64) (*types.Lo
 		return nil, err
 	}
 
-	response := <-outputChan
+	var response []byte
+	select {
+	case <-ctx.Done():
+		return nil, nil
+	case response = <-outputChan:
+	}
 	result := protocol.GetSharedLogResultTypeFromMessage(response)
 	if result == protocol.SharedLogResultType_READ_OK {
 		return buildLogEntryFromReadResponse(response), nil
@@ -638,7 +643,7 @@ func (w *FuncWorker) SharedLogReadNext(ctx context.Context, tag uint64, seqNum u
 	id := atomic.AddUint64(&w.nextLogOpId, 1)
 	currentCallId := atomic.LoadUint64(&w.currentCall)
 	message := protocol.NewSharedLogReadMessage(currentCallId, w.clientId, tag, seqNum, 1 /* direction */, false /* block */, id)
-	return w.sharedLogReadCommon(message, id)
+	return w.sharedLogReadCommon(ctx, message, id)
 }
 
 // Implement types.Environment
@@ -646,7 +651,7 @@ func (w *FuncWorker) SharedLogReadNextBlock(ctx context.Context, tag uint64, seq
 	id := atomic.AddUint64(&w.nextLogOpId, 1)
 	currentCallId := atomic.LoadUint64(&w.currentCall)
 	message := protocol.NewSharedLogReadMessage(currentCallId, w.clientId, tag, seqNum, 1 /* direction */, true /* block */, id)
-	return w.sharedLogReadCommon(message, id)
+	return w.sharedLogReadCommon(ctx, message, id)
 }
 
 // Implement types.Environment
@@ -654,7 +659,7 @@ func (w *FuncWorker) SharedLogReadPrev(ctx context.Context, tag uint64, seqNum u
 	id := atomic.AddUint64(&w.nextLogOpId, 1)
 	currentCallId := atomic.LoadUint64(&w.currentCall)
 	message := protocol.NewSharedLogReadMessage(currentCallId, w.clientId, tag, seqNum, -1 /* direction */, false /* block */, id)
-	return w.sharedLogReadCommon(message, id)
+	return w.sharedLogReadCommon(ctx, message, id)
 }
 
 // Implement types.Environment

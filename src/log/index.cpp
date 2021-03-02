@@ -249,7 +249,8 @@ void Index::AdvanceIndexProgress() {
         std::vector<std::pair<int64_t, IndexQuery>> unfinished;
         for (const auto& [start_timestamp, query] : blocking_reads_) {
             if (!ProcessBlockingQuery(query)) {
-                if (current_timestamp - start_timestamp < kBlockingQueryTimeout) {
+                if (current_timestamp - start_timestamp
+                        < absl::ToInt64Microseconds(kBlockingQueryTimeout)) {
                     unfinished.push_back(std::make_pair(start_timestamp, query));
                 } else {
                     pending_query_results_.push_back(BuildNotFoundResult(query));

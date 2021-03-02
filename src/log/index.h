@@ -47,7 +47,7 @@ struct IndexQueryResult {
 
 class Index final : public LogSpaceBase {
 public:
-    static constexpr int64_t kBlockingQueryTimeout = 100000; // 100ms
+    static constexpr absl::Duration kBlockingQueryTimeout = absl::Seconds(1);
 
     Index(const View* view, uint16_t sequencer_id);
     ~Index();
