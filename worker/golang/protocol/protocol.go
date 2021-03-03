@@ -82,7 +82,7 @@ const MessageTypeBits = 4
 const MessageHeaderByteSize = 64
 
 // Matches __FAAS_MESSAGE_SIZE in base/macro.h
-const MessageFullByteSize = 2048
+const MessageFullByteSize = 2560
 const MessageInlineDataSize = MessageFullByteSize - MessageHeaderByteSize
 
 const SharedLogTagByteSize = 8
