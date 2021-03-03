@@ -358,7 +358,7 @@ void LogStorage::OnNewLogs(uint32_t metalog_seqnum,
         DCHECK_EQ(live_seqnums_.size(), live_log_entries_.size());
         ShrinkLiveEntriesIfNeeded();
         // Check if we have read request on it
-        if (iter != pending_read_requests_.end() && iter->first == seqnum) {
+        while (iter != pending_read_requests_.end() && iter->first == seqnum) {
             pending_read_results_.push_back(ReadResult {
                 .status = ReadResult::kOK,
                 .log_entry = log_entry_ptr,
