@@ -24,6 +24,8 @@ type Queue struct {
 	consumed   uint64
 	tail       uint64
 	nextSeqNum uint64
+
+	nonce int
 }
 
 type QueueAuxData struct {
@@ -66,8 +68,8 @@ func decodeQueueLogEntry(logEntry *types.LogEntry) *QueueLogEntry {
 	return queueLog
 }
 
-func NewQueue(ctx context.Context, env types.Environment, name string) *Queue {
-	return &Queue{
+func NewQueue(ctx context.Context, env types.Environment, name string) (*Queue, error) {
+	q := &Queue{
 		ctx:        ctx,
 		env:        env,
 		name:       name,
@@ -75,7 +77,12 @@ func NewQueue(ctx context.Context, env types.Environment, name string) *Queue {
 		consumed:   0,
 		tail:       0,
 		nextSeqNum: 0,
+		nonce:      0,
 	}
+	if err := q.syncToBackward(protocol.MaxLogSeqnum); err != nil {
+		return nil, err
+	}
+	return q, nil
 }
 
 func (q *Queue) Push(payload string) error {
@@ -98,6 +105,11 @@ func (q *Queue) Push(payload string) error {
 
 func (q *Queue) isEmpty() bool {
 	return q.consumed >= q.tail
+}
+
+func (q *Queue) coin() bool {
+	q.nonce++
+	return q.nonce % 2 == 0
 }
 
 func (q *Queue) findNext(minSeqNum, maxSeqNum uint64) (*QueueLogEntry, error) {
@@ -149,7 +161,7 @@ func (q *Queue) setAuxData(seqNum uint64, auxData *QueueAuxData) error {
 	return q.env.SharedLogSetAuxData(q.ctx, seqNum, encoded)
 }
 
-func (q *Queue) syncTo(tailSeqNum uint64) error {
+func (q *Queue) syncToBackward(tailSeqNum uint64) error {
 	if tailSeqNum < q.nextSeqNum {
 		log.Fatalf("[FATAL] Current seqNum=%#016x, cannot sync to %#016x", q.nextSeqNum, tailSeqNum)
 	}
@@ -190,12 +202,46 @@ func (q *Queue) syncTo(tailSeqNum uint64) error {
 	for i := len(queueLogs) - 1; i >= 0; i-- {
 		queueLog := queueLogs[i]
 		q.applyLog(queueLog)
-		auxData := &QueueAuxData{
-			Consumed: q.consumed,
-			Tail:     q.tail,
+		if q.coin() {
+			auxData := &QueueAuxData{
+				Consumed: q.consumed,
+				Tail:     q.tail,
+			}
+			if err := q.setAuxData(queueLog.seqNum, auxData); err != nil {
+				return err
+			}
 		}
-		if err := q.setAuxData(queueLog.seqNum, auxData); err != nil {
+	}
+	return nil
+}
+
+func (q *Queue) syncToForward(tailSeqNum uint64) error {
+	if tailSeqNum < q.nextSeqNum {
+		log.Fatalf("[FATAL] Current seqNum=%#016x, cannot sync to %#016x", q.nextSeqNum, tailSeqNum)
+	}
+	tag := queueLogTag(q.nameHash)
+	seqNum := q.nextSeqNum
+	for seqNum < tailSeqNum {
+		logEntry, err := q.env.SharedLogReadNext(q.ctx, tag, seqNum)
+		if err != nil {
 			return err
+		}
+		if logEntry == nil || logEntry.SeqNum >= tailSeqNum {
+			break
+		}
+		seqNum = logEntry.SeqNum + 1
+		queueLog := decodeQueueLogEntry(logEntry)
+		if queueLog.QueueName == q.name {
+			q.applyLog(queueLog)
+			if queueLog.auxData == nil && q.coin() {
+				auxData := &QueueAuxData{
+					Consumed: q.consumed,
+					Tail:     q.tail,
+				}
+				if err := q.setAuxData(queueLog.seqNum, auxData); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	return nil
@@ -214,7 +260,11 @@ func (q *Queue) appendPopLogAndSync() error {
 	if seqNum, err := q.env.SharedLogAppend(q.ctx, tags, encoded); err != nil {
 		return err
 	} else {
-		return q.syncTo(seqNum)
+		if q.coin() {
+			return q.syncToForward(seqNum)
+		} else {
+			return q.syncToBackward(seqNum)
+		}
 	}
 }
 
@@ -230,12 +280,6 @@ func IsQueueTimeoutError(err error) bool {
 }
 
 func (q *Queue) popNonblocking() (string /* payload */, error) {
-	if err := q.syncTo(protocol.MaxLogSeqnum); err != nil {
-		return "", err
-	}
-	if q.isEmpty() {
-		return "", kQueueEmptyError
-	}
 	if err := q.appendPopLogAndSync(); err != nil {
 		return "", err
 	}
@@ -254,7 +298,7 @@ func (q *Queue) popBlocking() (string /* payload */, error) {
 	tag := queuePushLogTag(q.nameHash)
 	startTime := time.Now()
 	for time.Since(startTime) < kBlockingPopTimeout {
-		if err := q.syncTo(protocol.MaxLogSeqnum); err != nil {
+		if err := q.syncToForward(protocol.MaxLogSeqnum); err != nil {
 			return "", err
 		}
 		if q.isEmpty() {
