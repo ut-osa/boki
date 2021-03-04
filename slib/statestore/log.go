@@ -151,12 +151,27 @@ func (txnCommitLog *ObjectLogEntry) checkTxnCommitResult(env *envImpl) (bool, er
 	return commitResult, nil
 }
 
+func (l *ObjectLogEntry) hasCachedObjectView(objName string) bool {
+	if l.auxData == nil {
+		return false
+	}
+	if l.LogType == LOG_NormalOp {
+		return true
+	} else if l.LogType == LOG_TxnCommit {
+		key := "v" + objName
+		_, exists := l.auxData[key]
+		return exists
+	}
+	return false
+}
+
 func (l *ObjectLogEntry) loadCachedObjectView(objName string) *ObjectView {
 	if l.auxData == nil {
 		return nil
 	}
 	if l.LogType == LOG_NormalOp {
 		return &ObjectView{
+			name:       objName,
 			nextSeqNum: l.seqNum + 1,
 			contents:   gabs.Wrap(l.auxData),
 		}
@@ -164,6 +179,7 @@ func (l *ObjectLogEntry) loadCachedObjectView(objName string) *ObjectView {
 		key := "v" + objName
 		if data, exists := l.auxData[key]; exists {
 			return &ObjectView{
+				name:       objName,
 				nextSeqNum: l.seqNum + 1,
 				contents:   gabs.Wrap(data),
 			}
@@ -172,7 +188,7 @@ func (l *ObjectLogEntry) loadCachedObjectView(objName string) *ObjectView {
 	return nil
 }
 
-func (l *ObjectLogEntry) cacheObjectView(env *envImpl, objName string, view *ObjectView) {
+func (l *ObjectLogEntry) cacheObjectView(env *envImpl, view *ObjectView) {
 	if l.LogType == LOG_NormalOp {
 		if l.auxData == nil {
 			env.setLogAuxData(l.seqNum, view.contents.Data())
@@ -181,7 +197,7 @@ func (l *ObjectLogEntry) cacheObjectView(env *envImpl, objName string, view *Obj
 		if l.auxData == nil {
 			l.auxData = make(map[string]interface{})
 		}
-		key := "v" + objName
+		key := "v" + view.name
 		if _, exists := l.auxData[key]; !exists {
 			l.auxData[key] = view.contents.Data()
 			env.setLogAuxData(l.seqNum, l.auxData)
@@ -193,6 +209,53 @@ func (l *ObjectLogEntry) cacheObjectView(env *envImpl, objName string, view *Obj
 }
 
 func (obj *ObjectRef) syncTo(tailSeqNum uint64) error {
+	return obj.syncToBackward(tailSeqNum)
+}
+
+func (obj *ObjectRef) syncToForward(tailSeqNum uint64) error {
+	tag := objectLogTag(obj.nameHash)
+	env := obj.env
+	if obj.view == nil {
+		log.Fatalf("[FATAL] Empty object view: %s", obj.name)
+	}
+	seqNum := obj.view.nextSeqNum
+	if tailSeqNum < seqNum {
+		log.Fatalf("[FATAL] Current seqNum=%#016x, cannot sync to %#016x", seqNum, tailSeqNum)
+	}
+	for seqNum < tailSeqNum {
+		logEntry, err := env.faasEnv.SharedLogReadNext(env.faasCtx, tag, seqNum)
+		if err != nil {
+			return newRuntimeError(err.Error())
+		}
+		if logEntry == nil || logEntry.SeqNum >= tailSeqNum {
+			break
+		}
+		seqNum = logEntry.SeqNum + 1
+		objectLog := decodeLogEntry(logEntry)
+		if !objectLog.withinWriteSet(obj.name) {
+			continue
+		}
+		if objectLog.LogType == LOG_TxnCommit {
+			if committed, err := objectLog.checkTxnCommitResult(env); err != nil {
+				return err
+			} else if !committed {
+				continue
+			}
+		}
+		obj.view.nextSeqNum = objectLog.seqNum + 1
+		for _, op := range objectLog.Ops {
+			if op.ObjName == obj.name {
+				obj.view.applyWriteOp(op)
+			}
+		}
+		if !objectLog.hasCachedObjectView(obj.name) {
+			objectLog.cacheObjectView(env, obj.view)
+		}
+	}
+	return nil
+}
+
+func (obj *ObjectRef) syncToBackward(tailSeqNum uint64) error {
 	tag := objectLogTag(obj.nameHash)
 	env := obj.env
 	objectLogs := make([]*ObjectLogEntry, 0, 4)
@@ -247,6 +310,7 @@ func (obj *ObjectRef) syncTo(tailSeqNum uint64) error {
 			view = obj.view
 		} else {
 			view = &ObjectView{
+				name:       obj.name,
 				nextSeqNum: 0,
 				contents:   gabs.New(),
 			}
@@ -263,14 +327,10 @@ func (obj *ObjectRef) syncTo(tailSeqNum uint64) error {
 				view.applyWriteOp(op)
 			}
 		}
-		objectLog.cacheObjectView(env, obj.name, view)
+		objectLog.cacheObjectView(env, view)
 	}
 	obj.view = view
 	return nil
-}
-
-func (obj *ObjectRef) Sync() error {
-	return obj.syncTo(protocol.MaxLogSeqnum)
 }
 
 func (obj *ObjectRef) appendNormalOpLog(ops []*WriteOp) (uint64 /* seqNum */, error) {

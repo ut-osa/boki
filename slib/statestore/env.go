@@ -15,7 +15,7 @@ type Env interface {
 type envImpl struct {
 	faasCtx context.Context
 	faasEnv types.Environment
-	objs    []*ObjectRef
+	objs    map[string]*ObjectRef
 	txnCtx  *txnContext
 }
 
@@ -23,7 +23,7 @@ func CreateEnv(ctx context.Context, faasEnv types.Environment) Env {
 	return &envImpl{
 		faasCtx: ctx,
 		faasEnv: faasEnv,
-		objs:    make([]*ObjectRef, 0, 4),
+		objs:    make(map[string]*ObjectRef),
 		txnCtx:  nil,
 	}
 }

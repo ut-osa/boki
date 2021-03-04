@@ -109,7 +109,7 @@ func (q *Queue) isEmpty() bool {
 
 func (q *Queue) coin() bool {
 	q.nonce++
-	return q.nonce % 2 == 0
+	return q.nonce%2 == 0
 }
 
 func (q *Queue) findNext(minSeqNum, maxSeqNum uint64) (*QueueLogEntry, error) {

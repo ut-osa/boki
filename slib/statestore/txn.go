@@ -105,20 +105,13 @@ func (env *envImpl) TxnCommit() (bool /* committed */, error) {
 		return false, newRuntimeError(err.Error())
 	}
 	// log.Printf("[DEBUG] Append TxnCommit log: seqNum=%#016x, op_size=%d", seqNum, len(ctx.ops))
-	// Read back the commit log
-	logEntry, err := env.faasEnv.SharedLogReadNext(env.faasCtx, 0, seqNum)
-	if err != nil {
-		return false, newRuntimeError(err.Error())
-	}
-	if logEntry == nil || logEntry.SeqNum != seqNum {
-		panic("Cannot read the log just appended")
-	}
-	objectLog = decodeLogEntry(logEntry)
+	objectLog.fillWriteSet()
+	objectLog.seqNum = seqNum
 	// Check for status
-	if committed, err := objectLog.checkTxnCommitResult(env); err == nil {
-		return committed, nil
-	} else {
+	if committed, err := objectLog.checkTxnCommitResult(env); err != nil {
 		return false, err
+	} else {
+		return committed, nil
 	}
 }
 
