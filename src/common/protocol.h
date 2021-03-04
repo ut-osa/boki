@@ -2,6 +2,7 @@
 
 #include "base/common.h"
 #include "common/time.h"
+#include "utils/bits.h"
 
 namespace faas {
 namespace protocol {
@@ -89,7 +90,7 @@ enum class SharedLogOpType : uint16_t {
     READ_NEXT   = 0x02,  // FuncWorker to Engine, Engine to Index
     READ_PREV   = 0x03,  // FuncWorker to Engine, Engine to Index
     TRIM        = 0x04,  // FuncWorker to Engine, Engine to Sequencer
-    SET_AUXDATA = 0x05,  // FuncWorker to Engine
+    SET_AUXDATA = 0x05,  // FuncWorker to Engine, Engine to Storage
     READ_NEXT_B = 0x06,  // FuncWorker to Engine, Engine to Index
     READ_AT     = 0x10,  // Index to Storage
     REPLICATE   = 0x11,  // Engine to Storage
@@ -178,7 +179,7 @@ enum class ConnType : uint16_t {
     ENGINE_TO_SEQUENCER    = 3,   // Trim
     SEQUENCER_TO_ENGINE    = 4,   // Meta log propagation
     SEQUENCER_TO_SEQUENCER = 5,   // Meta log progress
-    ENGINE_TO_STORAGE      = 6,   // Replicate
+    ENGINE_TO_STORAGE      = 6,   // Replicate, aux data
     STORAGE_TO_ENGINE      = 7,   // Read result
     SEQUENCER_TO_STORAGE   = 8,   // Meta log
     STORAGE_TO_SEQUENCER   = 9    // Meta log propagation
@@ -549,6 +550,14 @@ public:
     static SharedLogMessage NewReplicateMessage() {
         NEW_EMPTY_SHAREDLOG_MESSAGE(message);
         message.op_type = static_cast<uint16_t>(SharedLogOpType::REPLICATE);
+        return message;
+    }
+
+    static SharedLogMessage NewSetAuxDataMessage(uint64_t seqnum) {
+        NEW_EMPTY_SHAREDLOG_MESSAGE(message);
+        message.op_type = static_cast<uint16_t>(SharedLogOpType::SET_AUXDATA);
+        message.logspace_id = bits::HighHalf64(seqnum);
+        message.seqnum_lowhalf = bits::LowHalf64(seqnum);
         return message;
     }
 

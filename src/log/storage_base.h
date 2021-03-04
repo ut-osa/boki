@@ -5,6 +5,7 @@
 #include "log/view.h"
 #include "log/view_watcher.h"
 #include "log/db.h"
+#include "log/cache.h"
 #include "server/server_base.h"
 #include "server/ingress_connection.h"
 #include "server/egress_hub.h"
@@ -30,9 +31,14 @@ protected:
                                         std::span<const char> payload) = 0;
     virtual void OnRecvNewMetaLogs(const protocol::SharedLogMessage& message,
                                    std::span<const char> payload) = 0;
+    virtual void OnRecvLogAuxData(const protocol::SharedLogMessage& message,
+                                  std::span<const char> payload) = 0;
 
     virtual void BackgroundThreadMain() = 0;
     virtual void SendShardProgressIfNeeded() = 0;
+
+    void LogCachePutAuxData(uint64_t seqnum, std::span<const char> data);
+    std::optional<std::string> LogCacheGetAuxData(uint64_t seqnum);
 
     void MessageHandler(const protocol::SharedLogMessage& message,
                         std::span<const char> payload);
@@ -46,7 +52,8 @@ protected:
     bool SendEngineResponse(const protocol::SharedLogMessage& request,
                             protocol::SharedLogMessage* response,
                             std::span<const char> payload1 = EMPTY_CHAR_SPAN,
-                            std::span<const char> payload2 = EMPTY_CHAR_SPAN);
+                            std::span<const char> payload2 = EMPTY_CHAR_SPAN,
+                            std::span<const char> payload3 = EMPTY_CHAR_SPAN);
 
 private:
     const uint16_t node_id_;
@@ -65,6 +72,8 @@ private:
     absl::flat_hash_map</* id */ int, std::unique_ptr<server::EgressHub>>
         egress_hubs_ ABSL_GUARDED_BY(conn_mu_);
 
+    std::optional<LRUCache> log_cache_;
+
     void SetupDB();
     void SetupZKWatchers();
     void SetupTimers();
@@ -81,7 +90,8 @@ private:
     bool SendSharedLogMessage(protocol::ConnType conn_type, uint16_t dst_node_id,
                               const protocol::SharedLogMessage& message,
                               std::span<const char> payload1,
-                              std::span<const char> payload2 = EMPTY_CHAR_SPAN);
+                              std::span<const char> payload2 = EMPTY_CHAR_SPAN,
+                              std::span<const char> payload3 = EMPTY_CHAR_SPAN);
 
     server::EgressHub* CreateEgressHub(protocol::ConnType conn_type,
                                        uint16_t dst_node_id,

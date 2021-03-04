@@ -203,6 +203,13 @@ void Storage::OnRecvNewMetaLogs(const SharedLogMessage& message,
     }
 }
 
+void Storage::OnRecvLogAuxData(const protocol::SharedLogMessage& message,
+                               std::span<const char> payload) {
+    DCHECK(SharedLogMessageHelper::GetOpType(message) == SharedLogOpType::SET_AUXDATA);
+    uint64_t seqnum = bits::JoinTwo32(message.logspace_id, message.seqnum_lowhalf);
+    LogCachePutAuxData(seqnum, payload);
+}
+
 #undef ONHOLD_IF_FROM_FUTURE_VIEW
 #undef IGNORE_IF_FROM_PAST_VIEW
 
@@ -217,9 +224,9 @@ void Storage::ProcessReadResults(const LogStorage::ReadResultVec& results) {
             DCHECK_EQ(response.logspace_id, request.logspace_id);
             DCHECK_EQ(response.seqnum_lowhalf, request.seqnum_lowhalf);
             response.user_metalog_progress = request.user_metalog_progress;
-            SendEngineResponse(request, &response,
-                               VECTOR_AS_CHAR_SPAN(result.log_entry->user_tags),
-                               STRING_AS_SPAN(result.log_entry->data));
+            SendEngineLogResult(request, &response,
+                                VECTOR_AS_CHAR_SPAN(result.log_entry->user_tags),
+                                STRING_AS_SPAN(result.log_entry->data));
             break;
         case LogStorage::ReadResult::kLookupDB:
             ProcessReadFromDB(request);
@@ -257,14 +264,38 @@ void Storage::ProcessReadFromDB(const SharedLogMessage& request) {
     std::span<const char> user_tags_data(
         reinterpret_cast<const char*>(log_entry.user_tags().data()),
         static_cast<size_t>(log_entry.user_tags().size()) * sizeof(uint64_t));
-    SendEngineResponse(request, &response,
-                       user_tags_data, STRING_AS_SPAN(log_entry.data()));
+    SendEngineLogResult(request, &response, user_tags_data,
+                        STRING_AS_SPAN(log_entry.data()));
 }
 
 void Storage::ProcessRequests(const std::vector<SharedLogRequest>& requests) {
     for (const SharedLogRequest& request : requests) {
         MessageHandler(request.message, STRING_AS_SPAN(request.payload));
     }
+}
+
+void Storage::SendEngineLogResult(const protocol::SharedLogMessage& request,
+                                  protocol::SharedLogMessage* response,
+                                  std::span<const char> tags_data,
+                                  std::span<const char> log_data) {
+    uint64_t seqnum = bits::JoinTwo32(response->logspace_id, response->seqnum_lowhalf);
+    std::optional<std::string> cached_aux_data = LogCacheGetAuxData(seqnum);
+    std::span<const char> aux_data;
+    if (cached_aux_data.has_value()) {
+        size_t full_size = log_data.size() + tags_data.size() + cached_aux_data->size();
+        if (full_size <= MESSAGE_INLINE_DATA_SIZE) {
+            aux_data = STRING_AS_SPAN(*cached_aux_data);
+        } else {
+            HLOG(WARNING) << fmt::format("Inline buffer of message not large enough "
+                                         "for auxiliary data of log (seqnum {}): "
+                                         "log_size={}, num_tags={} aux_data_size={}",
+                                         bits::HexStr0x(seqnum), log_data.size(),
+                                         tags_data.size() / sizeof(uint64_t),
+                                         cached_aux_data->size());
+        }
+    }
+    response->aux_data_size = gsl::narrow_cast<uint16_t>(aux_data.size());
+    SendEngineResponse(request, response, tags_data, log_data, aux_data);
 }
 
 void Storage::BackgroundThreadMain() {

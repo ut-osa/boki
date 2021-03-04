@@ -72,12 +72,15 @@ protected:
     virtual void HandleLocalAppend(LocalOp* op) = 0;
     virtual void HandleLocalTrim(LocalOp* op) = 0;
     virtual void HandleLocalRead(LocalOp* op) = 0;
+    virtual void HandleLocalSetAuxData(LocalOp* op) = 0;
 
     void LocalOpHandler(LocalOp* op);
 
     void ReplicateLogEntry(const View* view, const LogMetaData& log_metadata,
                            std::span<const uint64_t> user_tags,
                            std::span<const char> log_data);
+    void PropagateAuxData(const View* view, const LogMetaData& log_metadata, 
+                          std::span<const char> aux_data);
 
     void FinishLocalOpWithResponse(LocalOp* op, protocol::Message* response,
                                    uint64_t metalog_progress);

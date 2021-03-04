@@ -30,10 +30,17 @@ private:
                                 std::span<const char> payload) override;
     void OnRecvNewMetaLogs(const protocol::SharedLogMessage& message,
                            std::span<const char> payload) override;
+    void OnRecvLogAuxData(const protocol::SharedLogMessage& message,
+                          std::span<const char> payload) override;
 
     void ProcessReadResults(const LogStorage::ReadResultVec& results);
     void ProcessReadFromDB(const protocol::SharedLogMessage& request);
     void ProcessRequests(const std::vector<SharedLogRequest>& requests);
+
+    void SendEngineLogResult(const protocol::SharedLogMessage& request,
+                             protocol::SharedLogMessage* response,
+                             std::span<const char> tags_data,
+                             std::span<const char> log_data);
 
     void BackgroundThreadMain() override;
     void SendShardProgressIfNeeded() override;

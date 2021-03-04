@@ -117,7 +117,7 @@ void EngineBase::LocalOpHandler(LocalOp* op) {
         HandleLocalTrim(op);
         break;
     case SharedLogOpType::SET_AUXDATA:
-        HandleSetAuxData(op);
+        HandleLocalSetAuxData(op);
         break;
     default:
         UNREACHABLE();
@@ -241,6 +241,22 @@ void EngineBase::ReplicateLogEntry(const View* view, const LogMetaData& log_meta
     }
 }
 
+void EngineBase::PropagateAuxData(const View* view, const LogMetaData& log_metadata, 
+                                  std::span<const char> aux_data) {
+    uint16_t engine_id = gsl::narrow_cast<uint16_t>(
+        bits::HighHalf64(log_metadata.localid));
+    DCHECK(view->contains_engine_node(engine_id));
+    const View::Engine* engine_node = view->GetEngineNode(engine_id);
+    SharedLogMessage message = SharedLogMessageHelper::NewSetAuxDataMessage(
+        log_metadata.seqnum);
+    message.origin_node_id = node_id_;
+    message.payload_size = gsl::narrow_cast<uint32_t>(aux_data.size());
+    for (uint16_t storage_id : engine_node->GetStorageNodes()) {
+        engine_->SendSharedLogMessage(protocol::ConnType::ENGINE_TO_STORAGE,
+                                      storage_id, message, aux_data);
+    }
+}
+
 void EngineBase::FinishLocalOpWithResponse(LocalOp* op, Message* response,
                                            uint64_t metalog_progress) {
     if (metalog_progress > 0) {
@@ -286,13 +302,6 @@ void EngineBase::LogCachePutAuxData(uint64_t seqnum, std::span<const char> data)
 
 std::optional<std::string> EngineBase::LogCacheGetAuxData(uint64_t seqnum) {
     return log_cache_.has_value() ? log_cache_->GetAuxData(seqnum) : std::nullopt;
-}
-
-void EngineBase::HandleSetAuxData(LocalOp* op) {
-    LogCachePutAuxData(op->seqnum, op->data.to_span());
-    Message response = MessageHelper::NewSharedLogOpSucceeded(
-        SharedLogResultType::AUXDATA_OK, op->seqnum);
-    FinishLocalOpWithResponse(op, &response, /* metalog_progress= */ 0);
 }
 
 bool EngineBase::SendIndexReadRequest(const View::Sequencer* sequencer_node,

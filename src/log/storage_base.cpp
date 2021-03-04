@@ -31,6 +31,7 @@ void StorageBase::StartInternal() {
     SetupDB();
     SetupZKWatchers();
     SetupTimers();
+    log_cache_.emplace(absl::GetFlag(FLAGS_slog_storage_cache_cap_mb));
     background_thread_.Start();
 }
 
@@ -90,6 +91,9 @@ void StorageBase::MessageHandler(const SharedLogMessage& message,
     case SharedLogOpType::METALOGS:
         OnRecvNewMetaLogs(message, payload);
         break;
+    case SharedLogOpType::SET_AUXDATA:
+        OnRecvLogAuxData(message, payload);
+        break;
     default:
         UNREACHABLE();
     }
@@ -128,6 +132,16 @@ void StorageBase::PutLogEntryToDB(const LogEntry& log_entry) {
     db_->Put(bits::HighHalf64(seqnum), bits::LowHalf64(seqnum), STRING_AS_SPAN(data));
 }
 
+void StorageBase::LogCachePutAuxData(uint64_t seqnum, std::span<const char> data) {
+    if (log_cache_.has_value()) {
+        log_cache_->PutAuxData(seqnum, data);
+    }
+}
+
+std::optional<std::string> StorageBase::LogCacheGetAuxData(uint64_t seqnum) {
+    return log_cache_.has_value() ? log_cache_->GetAuxData(seqnum) : std::nullopt;
+}
+
 void StorageBase::SendIndexData(const View* view,
                                 const IndexDataProto& index_data_proto) {
     uint32_t logspace_id = index_data_proto.logspace_id();
@@ -158,13 +172,16 @@ bool StorageBase::SendSequencerMessage(uint16_t sequencer_id,
 bool StorageBase::SendEngineResponse(const SharedLogMessage& request,
                                      SharedLogMessage* response,
                                      std::span<const char> payload1,
-                                     std::span<const char> payload2) {
+                                     std::span<const char> payload2,
+                                     std::span<const char> payload3) {
     response->origin_node_id = node_id_;
     response->hop_times = request.hop_times + 1;
-    response->payload_size = gsl::narrow_cast<uint32_t>(payload1.size() + payload2.size());
+    response->payload_size = gsl::narrow_cast<uint32_t>(
+        payload1.size() + payload2.size() + payload3.size());
     response->client_data = request.client_data;
     return SendSharedLogMessage(protocol::ConnType::STORAGE_TO_ENGINE,
-                                request.origin_node_id, *response, payload1, payload2);
+                                request.origin_node_id, *response,
+                                payload1, payload2, payload3);
 }
 
 void StorageBase::OnRecvSharedLogMessage(int conn_type, uint16_t src_node_id,
@@ -175,6 +192,7 @@ void StorageBase::OnRecvSharedLogMessage(int conn_type, uint16_t src_node_id,
         (conn_type == kSequencerIngressTypeId && op_type == SharedLogOpType::METALOGS)
      || (conn_type == kEngineIngressTypeId && op_type == SharedLogOpType::READ_AT)
      || (conn_type == kEngineIngressTypeId && op_type == SharedLogOpType::REPLICATE)
+     || (conn_type == kEngineIngressTypeId && op_type == SharedLogOpType::SET_AUXDATA)
     ) << fmt::format("Invalid combination: conn_type={:#x}, op_type={:#x}",
                      conn_type, message.op_type);
     MessageHandler(message, payload);
@@ -183,8 +201,9 @@ void StorageBase::OnRecvSharedLogMessage(int conn_type, uint16_t src_node_id,
 bool StorageBase::SendSharedLogMessage(protocol::ConnType conn_type, uint16_t dst_node_id,
                                        const SharedLogMessage& message,
                                        std::span<const char> payload1,
-                                       std::span<const char> payload2) {
-    DCHECK_EQ(size_t{message.payload_size}, payload1.size() + payload2.size());
+                                       std::span<const char> payload2,
+                                       std::span<const char> payload3) {
+    DCHECK_EQ(size_t{message.payload_size}, payload1.size() + payload2.size() + payload3.size());
     EgressHub* hub = CurrentIOWorkerChecked()->PickOrCreateConnection<EgressHub>(
         ServerBase::GetEgressHubTypeId(conn_type, dst_node_id),
         absl::bind_front(&StorageBase::CreateEgressHub, this, conn_type, dst_node_id));
@@ -193,7 +212,7 @@ bool StorageBase::SendSharedLogMessage(protocol::ConnType conn_type, uint16_t ds
     }
     std::span<const char> data(reinterpret_cast<const char*>(&message),
                                sizeof(SharedLogMessage));
-    hub->SendMessage(data, payload1, payload2);
+    hub->SendMessage(data, payload1, payload2, payload3);
     return true;
 }
 

@@ -40,6 +40,7 @@ private:
     void HandleLocalAppend(LocalOp* op) override;
     void HandleLocalTrim(LocalOp* op) override;
     void HandleLocalRead(LocalOp* op) override;
+    void HandleLocalSetAuxData(LocalOp* op) override;
 
     void HandleRemoteRead(const protocol::SharedLogMessage& request) override;
     void OnRecvNewMetaLogs(const protocol::SharedLogMessage& message,

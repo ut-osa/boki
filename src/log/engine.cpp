@@ -1,6 +1,7 @@
 #include "log/engine.h"
 
 #include "engine/engine.h"
+#include "log/flags.h"
 #include "utils/bits.h"
 
 namespace faas {
@@ -279,6 +280,27 @@ void Engine::HandleLocalRead(LocalOp* op) {
     }
 }
 
+void Engine::HandleLocalSetAuxData(LocalOp* op) {
+    uint64_t seqnum = op->seqnum;
+    LogCachePutAuxData(seqnum, op->data.to_span());
+    Message response = MessageHelper::NewSharedLogOpSucceeded(
+        SharedLogResultType::AUXDATA_OK, seqnum);
+    FinishLocalOpWithResponse(op, &response, /* metalog_progress= */ 0);
+    if (!absl::GetFlag(FLAGS_slog_engine_propagate_auxdata)) {
+        return;
+    }
+    if (auto log_entry = LogCacheGet(seqnum); log_entry.has_value()) {
+        std::optional<std::string> cached_aux_data = LogCacheGetAuxData(seqnum);
+        if (cached_aux_data.has_value()) {
+            uint16_t view_id = bits::HighHalf32(bits::HighHalf64(seqnum));
+            if (view_id < views_.size()) {
+                const View* view = views_.at(view_id);
+                PropagateAuxData(view, log_entry->metadata, *cached_aux_data);
+            }
+        }
+    }
+}
+
 #undef ONHOLD_IF_SEEN_FUTURE_VIEW
 
 // Start handlers for remote messages
@@ -472,7 +494,8 @@ void Engine::ProcessIndexFoundResult(const IndexQueryResult& query_result) {
     bool local_request = (query.origin_node_id == my_node_id());
     uint64_t seqnum = query_result.found_result.seqnum;
     if (auto cached_log_entry = LogCacheGet(seqnum); cached_log_entry.has_value()) {
-        HVLOG(1) << fmt::format("Cache hit for log entry (seqnum {})",
+        // Cache hits
+        HVLOG(1) << fmt::format("Cache hits for log entry (seqnum {})",
                                 bits::HexStr0x(seqnum));
         const LogEntry& log_entry = cached_log_entry.value();
         std::optional<std::string> cached_aux_data = LogCacheGetAuxData(seqnum);
@@ -509,6 +532,7 @@ void Engine::ProcessIndexFoundResult(const IndexQueryResult& query_result) {
                              STRING_AS_SPAN(log_entry.data), aux_data);
         }
     } else {
+        // Cache miss
         bool success = SendStorageReadRequest(query_result);
         if (!success) {
             HLOG(WARNING) << fmt::format("Failed to send read request for seqnum {} ",
