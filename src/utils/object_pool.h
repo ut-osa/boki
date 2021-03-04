@@ -8,7 +8,9 @@
 #endif
 
 #ifdef __FAAS_SRC
+__BEGIN_THIRD_PARTY_HEADERS
 #include <google/protobuf/arena.h>
+__END_THIRD_PARTY_HEADERS
 #endif
 
 namespace faas {

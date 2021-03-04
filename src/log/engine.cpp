@@ -293,6 +293,7 @@ void Engine::HandleLocalSetAuxData(LocalOp* op) {
         std::optional<std::string> cached_aux_data = LogCacheGetAuxData(seqnum);
         if (cached_aux_data.has_value()) {
             uint16_t view_id = bits::HighHalf32(bits::HighHalf64(seqnum));
+            absl::ReaderMutexLock view_lk(&view_mu_);
             if (view_id < views_.size()) {
                 const View* view = views_.at(view_id);
                 PropagateAuxData(view, log_entry->metadata, *cached_aux_data);
