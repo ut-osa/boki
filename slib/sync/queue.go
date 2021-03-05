@@ -24,8 +24,6 @@ type Queue struct {
 	consumed   uint64
 	tail       uint64
 	nextSeqNum uint64
-
-	nonce int
 }
 
 type QueueAuxData struct {
@@ -77,7 +75,6 @@ func NewQueue(ctx context.Context, env types.Environment, name string) (*Queue, 
 		consumed:   0,
 		tail:       0,
 		nextSeqNum: 0,
-		nonce:      0,
 	}
 	if err := q.syncToBackward(protocol.MaxLogSeqnum); err != nil {
 		return nil, err
@@ -105,11 +102,6 @@ func (q *Queue) Push(payload string) error {
 
 func (q *Queue) isEmpty() bool {
 	return q.consumed >= q.tail
-}
-
-func (q *Queue) coin() bool {
-	q.nonce++
-	return q.nonce%2 == 0
 }
 
 func (q *Queue) findNext(minSeqNum, maxSeqNum uint64) (*QueueLogEntry, error) {
