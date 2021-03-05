@@ -202,14 +202,12 @@ func (q *Queue) syncToBackward(tailSeqNum uint64) error {
 	for i := len(queueLogs) - 1; i >= 0; i-- {
 		queueLog := queueLogs[i]
 		q.applyLog(queueLog)
-		if q.coin() {
-			auxData := &QueueAuxData{
-				Consumed: q.consumed,
-				Tail:     q.tail,
-			}
-			if err := q.setAuxData(queueLog.seqNum, auxData); err != nil {
-				return err
-			}
+		auxData := &QueueAuxData{
+			Consumed: q.consumed,
+			Tail:     q.tail,
+		}
+		if err := q.setAuxData(queueLog.seqNum, auxData); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -233,7 +231,7 @@ func (q *Queue) syncToForward(tailSeqNum uint64) error {
 		queueLog := decodeQueueLogEntry(logEntry)
 		if queueLog.QueueName == q.name {
 			q.applyLog(queueLog)
-			if queueLog.auxData == nil && q.coin() {
+			if queueLog.auxData == nil {
 				auxData := &QueueAuxData{
 					Consumed: q.consumed,
 					Tail:     q.tail,
@@ -245,6 +243,10 @@ func (q *Queue) syncToForward(tailSeqNum uint64) error {
 		}
 	}
 	return nil
+}
+
+func (q *Queue) syncTo(tailSeqNum uint64) error {
+	return q.syncToBackward(tailSeqNum)
 }
 
 func (q *Queue) appendPopLogAndSync() error {
@@ -260,11 +262,7 @@ func (q *Queue) appendPopLogAndSync() error {
 	if seqNum, err := q.env.SharedLogAppend(q.ctx, tags, encoded); err != nil {
 		return err
 	} else {
-		if q.coin() {
-			return q.syncToForward(seqNum)
-		} else {
-			return q.syncToBackward(seqNum)
-		}
+		return q.syncTo(seqNum)
 	}
 }
 
@@ -279,7 +277,15 @@ func IsQueueTimeoutError(err error) bool {
 	return err == kQueueTimeoutError
 }
 
-func (q *Queue) popNonblocking() (string /* payload */, error) {
+func (q *Queue) Pop() (string /* payload */, error) {
+	if q.isEmpty() {
+		if err := q.syncTo(protocol.MaxLogSeqnum); err != nil {
+			return "", err
+		}
+		if q.isEmpty() {
+			return "", kQueueEmptyError
+		}
+	}
 	if err := q.appendPopLogAndSync(); err != nil {
 		return "", err
 	}
@@ -294,12 +300,14 @@ func (q *Queue) popNonblocking() (string /* payload */, error) {
 
 const kBlockingPopTimeout = 1 * time.Second
 
-func (q *Queue) popBlocking() (string /* payload */, error) {
+func (q *Queue) PopBlocking() (string /* payload */, error) {
 	tag := queuePushLogTag(q.nameHash)
 	startTime := time.Now()
 	for time.Since(startTime) < kBlockingPopTimeout {
-		if err := q.syncToForward(protocol.MaxLogSeqnum); err != nil {
-			return "", err
+		if q.isEmpty() {
+			if err := q.syncTo(protocol.MaxLogSeqnum); err != nil {
+				return "", err
+			}
 		}
 		if q.isEmpty() {
 			seqNum := q.nextSeqNum
@@ -320,24 +328,15 @@ func (q *Queue) popBlocking() (string /* payload */, error) {
 					return "", kQueueTimeoutError
 				}
 			}
-		} else {
-			if err := q.appendPopLogAndSync(); err != nil {
-				return "", err
-			}
-			if nextLog, err := q.findNext(q.consumed, q.tail); err != nil {
-				return "", err
-			} else if nextLog != nil {
-				return nextLog.Payload, nil
-			}
+		}
+		if err := q.appendPopLogAndSync(); err != nil {
+			return "", err
+		}
+		if nextLog, err := q.findNext(q.consumed, q.tail); err != nil {
+			return "", err
+		} else if nextLog != nil {
+			return nextLog.Payload, nil
 		}
 	}
 	return "", kQueueTimeoutError
-}
-
-func (q *Queue) Pop(blocking bool) (string /* payload */, error) {
-	if blocking {
-		return q.popBlocking()
-	} else {
-		return q.popNonblocking()
-	}
 }
