@@ -3,6 +3,7 @@ package statestore
 import (
 	"encoding/json"
 	"log"
+	"os"
 
 	"cs.utexas.edu/zjia/faas/slib/common"
 
@@ -11,6 +12,15 @@ import (
 
 	gabs "github.com/Jeffail/gabs/v2"
 )
+
+var FLAGS_DisableAuxData bool = false
+
+func init() {
+	if val, exists := os.LookupEnv("DISABLE_AUXDATA"); exists && val == "1" {
+		FLAGS_DisableAuxData = true
+		log.Printf("[INFO] AuxData disabled")
+	}
+}
 
 const (
 	LOG_NormalOp = iota
@@ -147,7 +157,9 @@ func (txnCommitLog *ObjectLogEntry) checkTxnCommitResult(env *envImpl) (bool, er
 		checkedTag[tag] = true
 	}
 	txnCommitLog.auxData["r"] = commitResult
-	env.setLogAuxData(txnCommitLog.seqNum, txnCommitLog.auxData)
+	if !FLAGS_DisableAuxData {
+		env.setLogAuxData(txnCommitLog.seqNum, txnCommitLog.auxData)
+	}
 	return commitResult, nil
 }
 
@@ -189,6 +201,9 @@ func (l *ObjectLogEntry) loadCachedObjectView(objName string) *ObjectView {
 }
 
 func (l *ObjectLogEntry) cacheObjectView(env *envImpl, view *ObjectView) {
+	if FLAGS_DisableAuxData {
+		return
+	}
 	if l.LogType == LOG_NormalOp {
 		if l.auxData == nil {
 			env.setLogAuxData(l.seqNum, view.contents.Data())
