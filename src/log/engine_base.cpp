@@ -312,6 +312,9 @@ bool EngineBase::SendIndexReadRequest(const View::Sequencer* sequencer_node,
     request->view_id = sequencer_node->view()->id();
     for (int i = 0; i < kMaxRetries; i++) {
         uint16_t engine_id = sequencer_node->PickIndexEngineNode();
+        if (engine_id == node_id_) {
+            continue;
+        }
         bool success = engine_->SendSharedLogMessage(
             protocol::ConnType::SLOG_ENGINE_TO_ENGINE, engine_id, *request);
         if (success) {

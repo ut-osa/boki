@@ -248,7 +248,7 @@ void Engine::HandleLocalRead(LocalOp* op) {
             index_ptr = index_collection_.GetLogSpaceChecked(logspace_id);
         }
     }
-    if (index_ptr != nullptr) {
+    if (index_ptr != nullptr && !absl::GetFlag(FLAGS_slog_engine_force_remote_index)) {
         // Use local index
         IndexQuery query = {
             .direction = IndexQuery::DirectionFromOp(op->type),
