@@ -116,10 +116,13 @@ void Controller::StartCommandHandler() {
         return;
     }
     CHECK_GT(metalog_replicas_, 0U);
-    if (sequencer_nodes_.size() < metalog_replicas_) {
+    CHECK_GT(num_phylogs_, 0U);
+    if (sequencer_nodes_.size() < metalog_replicas_
+          || sequencer_nodes_.size() < num_phylogs_) {
         HLOG(ERROR) << "Sequencer nodes not enough";
         return;
     }
+    HLOG(INFO) << fmt::format("Number of physical logs: {}", num_phylogs_);
     CHECK_GT(index_replicas_, 0U);
     if (engine_nodes_.size() < index_replicas_) {
         HLOG(ERROR) << "Engine nodes not enough";
@@ -154,8 +157,7 @@ void Controller::StartCommandHandler() {
     view_proto.set_log_space_hash_seed(hash::xxHash64(rnd_gen_()));
     std::vector<uint32_t> tokens(absl::GetFlag(FLAGS_slog_log_space_hash_tokens));
     for (size_t i = 0; i < tokens.size(); i++) {
-        tokens[i] = view_proto.sequencer_nodes(
-            static_cast<int>(i % sequencer_nodes_.size()));
+        tokens[i] = view_proto.sequencer_nodes(static_cast<int>(i % num_phylogs_));
     }
     std::shuffle(tokens.begin(), tokens.end(), rnd_gen_);
     for (size_t i = 0; i < tokens.size(); i++) {

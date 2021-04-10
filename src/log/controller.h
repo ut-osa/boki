@@ -21,6 +21,7 @@ public:
     void set_metalog_replicas(size_t value) { metalog_replicas_ = value; }
     void set_userlog_replicas(size_t value) { userlog_replicas_ = value; }
     void set_index_replicas(size_t value) { index_replicas_ = value; }
+    void set_num_phylogs(size_t value) { num_phylogs_ = value; }
 
     void Start();
     void ScheduleStop();
@@ -34,6 +35,7 @@ private:
     size_t metalog_replicas_;
     size_t userlog_replicas_;
     size_t index_replicas_;
+    size_t num_phylogs_;
 
     State state_;
 
