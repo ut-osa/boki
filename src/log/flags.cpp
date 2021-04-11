@@ -8,6 +8,7 @@ ABSL_FLAG(bool, slog_enable_statecheck, false, "");
 ABSL_FLAG(int, slog_statecheck_interval_sec, 10, "");
 
 ABSL_FLAG(bool, slog_engine_force_remote_index, false, "");
+ABSL_FLAG(float, slog_engine_prob_remote_index, 0.0f, "");
 ABSL_FLAG(bool, slog_engine_enable_cache, false, "");
 ABSL_FLAG(int, slog_engine_cache_cap_mb, 1024, "");
 ABSL_FLAG(bool, slog_engine_propagate_auxdata, false, "");

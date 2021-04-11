@@ -3,6 +3,7 @@
 #include "engine/engine.h"
 #include "log/flags.h"
 #include "utils/bits.h"
+#include "utils/random.h"
 
 namespace faas {
 namespace log {
@@ -248,7 +249,17 @@ void Engine::HandleLocalRead(LocalOp* op) {
             index_ptr = index_collection_.GetLogSpaceChecked(logspace_id);
         }
     }
-    if (index_ptr != nullptr && !absl::GetFlag(FLAGS_slog_engine_force_remote_index)) {
+    bool use_local_index = true;
+    if (absl::GetFlag(FLAGS_slog_engine_force_remote_index)) {
+        use_local_index = false;
+    }
+    if (absl::GetFlag(FLAGS_slog_engine_prob_remote_index) > 0.0f) {
+        float coin = utils::GetRandomFloat(0.0f, 1.0f);
+        if (coin < absl::GetFlag(FLAGS_slog_engine_prob_remote_index)) {
+            use_local_index = false;
+        }
+    }
+    if (index_ptr != nullptr && use_local_index) {
         // Use local index
         IndexQuery query = {
             .direction = IndexQuery::DirectionFromOp(op->type),
