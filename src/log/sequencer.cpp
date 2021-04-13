@@ -1,5 +1,6 @@
 #include "log/sequencer.h"
 
+#include "log/flags.h"
 #include "utils/bits.h"
 
 namespace faas {
@@ -53,19 +54,67 @@ void Sequencer::OnViewCreated(const View* view) {
     }
 }
 
+namespace {
+template<class T>
+void FreezeLogSpace(LockablePtr<T> logspace_ptr, MetaLogsProto* tail_metalogs) {
+    auto locked_logspace = logspace_ptr.Lock();
+    locked_logspace->Freeze();
+    tail_metalogs->set_logspace_id(locked_logspace->identifier());
+    uint32_t num_entries = gsl::narrow_cast<uint32_t>(
+        absl::GetFlag(FLAGS_slog_num_tail_metalog_entries));
+    uint32_t end_pos = locked_logspace->metalog_position();
+    uint32_t start_pos = end_pos - std::min(num_entries, end_pos);
+    for (uint32_t pos = start_pos; pos < end_pos; pos++) {
+        auto metalog = locked_logspace->GetMetaLog(pos);
+        CHECK(metalog.has_value());
+        tail_metalogs->add_metalogs()->CopyFrom(*metalog);
+    }
+}
+
+template<class T>
+void FinalizedLogSpace(LockablePtr<T> logspace_ptr, const FinalizedView* finalized_view) {
+    auto locked_logspace = logspace_ptr.Lock();
+    uint32_t logspace_id = locked_logspace->identifier();
+    bool success = locked_logspace->Finalize(
+        finalized_view->final_metalog_position(logspace_id),
+        finalized_view->tail_metalogs(logspace_id));
+    if (!success) {
+        LOG(FATAL) << fmt::format("Failed to finalize log space {}",
+                                  bits::HexStr0x(logspace_id));
+    }
+}
+}  // namespace
+
 void Sequencer::OnViewFrozen(const View* view) {
     DCHECK(zk_session()->WithinMyEventLoopThread());
     HLOG(INFO) << fmt::format("View {} frozen", view->id());
-    absl::MutexLock view_lk(&view_mu_);
-    // TODO: publish tail metalogs
-    DCHECK_EQ(view->id(), current_view_->id());
-    if (current_primary_ != nullptr) {
-        FreezeLogSpace<MetaLogPrimary>(current_primary_);
+    FrozenSequencerProto frozen_proto;
+    frozen_proto.set_view_id(view->id());
+    frozen_proto.set_sequencer_id(my_node_id());
+    {
+        absl::MutexLock view_lk(&view_mu_);
+        DCHECK_EQ(view->id(), current_view_->id());
+        if (current_primary_ != nullptr) {
+            FreezeLogSpace<MetaLogPrimary>(current_primary_, frozen_proto.add_tail_metalogs());
+        }
+        backup_collection_.ForEachActiveLogSpace(
+            view, [&frozen_proto] (uint32_t, LockablePtr<MetaLogBackup> logspace_ptr) {
+                FreezeLogSpace<MetaLogBackup>(std::move(logspace_ptr),
+                                            frozen_proto.add_tail_metalogs());
+            }
+        );
     }
-    backup_collection_.ForEachActiveLogSpace(
-        view,
-        [this] (uint32_t, LockablePtr<MetaLogBackup> logspace_ptr) {
-            FreezeLogSpace<MetaLogBackup>(std::move(logspace_ptr));
+    std::string serialized;
+    CHECK(frozen_proto.SerializeToString(&serialized));
+    zk_session()->Create(
+        fmt::format("freeze/{}", view->id()),
+        STRING_AS_SPAN(serialized),
+        zk::ZKCreateMode::kPersistentSequential,
+        [this] (zk::ZKStatus status, const zk::ZKResult& result, bool*) {
+            if (!status.ok()) {
+                HLOG(FATAL) << "Failed to publish freeze data: " << status.ToString();
+            }
+            HLOG(INFO) << fmt::format("Frozen at ZK path {}", result.path);
         }
     );
 }
@@ -80,7 +129,7 @@ void Sequencer::OnViewFinalized(const FinalizedView* finalized_view) {
     }
     backup_collection_.ForEachActiveLogSpace(
         finalized_view->view(),
-        [finalized_view, this] (uint32_t, LockablePtr<MetaLogBackup> logspace_ptr) {
+        [finalized_view] (uint32_t, LockablePtr<MetaLogBackup> logspace_ptr) {
             FinalizedLogSpace<MetaLogBackup>(std::move(logspace_ptr), finalized_view);
         }
     );

@@ -85,6 +85,13 @@ message MetaLogsProto {
     repeated MetaLogProto metalogs = 2;
 }
 
+message FrozenSequencerProto {
+    uint32 view_id      = 1;
+    uint32 sequencer_id = 2;
+
+    repeated MetaLogsProto tail_metalogs = 3;
+}
+
 message FinalizedViewProto {
     uint32 view_id = 1;
 

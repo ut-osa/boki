@@ -43,6 +43,9 @@ private:
     server::NodeWatcher node_watcher_;
     std::optional<zk_utils::DirWatcher> cmd_watcher_;
 
+    uint64_t log_space_hash_seed_;
+    std::vector<uint32_t> log_space_hash_tokens_;
+
     std::set</* node_id */ uint16_t> sequencer_nodes_;
     std::set</* node_id */ uint16_t> engine_nodes_;
     std::set</* node_id */ uint16_t> storage_nodes_;
@@ -54,6 +57,11 @@ private:
     }
 
     void InstallNewView(const ViewProto& view_proto);
+
+    using NodeIdVec = std::vector<uint16_t>;
+    void ReconfigView(const NodeIdVec& sequencer_nodes,
+                      const NodeIdVec& engine_nodes,
+                      const NodeIdVec& storage_nodes);
 
     void OnNodeOnline(server::NodeWatcher::NodeType node_type, uint16_t node_id);
     void OnNodeOffline(server::NodeWatcher::NodeType node_type, uint16_t node_id);

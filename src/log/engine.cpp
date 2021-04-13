@@ -49,16 +49,6 @@ void Engine::OnViewCreated(const View* view) {
         current_view_ = view;
         if (contains_myself) {
             current_view_active_ = true;
-            std::vector<std::pair<uint64_t, LocalOp*>> appends;
-            pending_appends_.PollAllSorted(&appends);
-            for (const auto& [op_id, op] : appends) {
-                LogMetaData log_metadata = MetaDataFromAppendOp(op);
-                uint32_t logspace_id = view->LogSpaceIdentifier(op->user_logspace);
-                log_metadata.seqnum = bits::JoinTwo32(logspace_id, 0);
-                auto producer_ptr = producer_collection_.GetLogSpaceChecked(logspace_id);
-                producer_ptr.Lock()->LocalAppend(op, &log_metadata.localid);
-                new_appends.push_back(std::make_pair(log_metadata, op));
-            }
         }
         views_.push_back(view);
         log_header_ = fmt::format("LogEngine[{}-{}]: ", my_node_id(), view->id());
@@ -120,18 +110,6 @@ void Engine::OnViewFinalized(const FinalizedView* finalized_view) {
                 append_results.insert(append_results.end(), tmp.begin(), tmp.end());
             }
         );
-        if (!append_results.empty()) {
-            LogProducer::AppendResultVec tmp;
-            for (const LogProducer::AppendResult& result : append_results) {
-                if (result.seqnum == kInvalidLogSeqNum) {
-                    LocalOp* op = reinterpret_cast<LocalOp*>(result.caller_data);
-                    pending_appends_.PutChecked(op->id, op);
-                } else {
-                    tmp.push_back(result);
-                }
-            }
-            append_results = std::move(tmp);
-        }
         index_collection_.ForEachActiveLogSpace(
             finalized_view->view(),
             [finalized_view, &query_results, this] (uint32_t logspace_id,
@@ -150,8 +128,20 @@ void Engine::OnViewFinalized(const FinalizedView* finalized_view) {
             }
         );
     }
-    ProcessAppendResults(append_results);
-    ProcessIndexQueryResults(query_results);
+    if (!append_results.empty()) {
+        SomeIOWorker()->ScheduleFunction(
+            nullptr, [this, results = std::move(append_results)] {
+                ProcessAppendResults(results);
+            }
+        );
+    }
+    if (!query_results.empty()) {
+        SomeIOWorker()->ScheduleFunction(
+            nullptr, [this, results = std::move(query_results)] {
+                ProcessIndexQueryResults(results);
+            }
+        );
+    }
 }
 
 namespace {
@@ -201,7 +191,7 @@ void Engine::HandleLocalAppend(LocalOp* op) {
         absl::ReaderMutexLock view_lk(&view_mu_);
         if (!current_view_active_) {
             HLOG(WARNING) << "Current view not active";
-            pending_appends_.PutChecked(op->id, op);
+            FinishLocalOpWithFailure(op, SharedLogResultType::DATA_LOST);
             return;
         }
         view = current_view_;
@@ -490,13 +480,17 @@ void Engine::ProcessAppendResults(const LogProducer::AppendResultVec& results) {
     for (const LogProducer::AppendResult& result : results) {
         DCHECK_NE(result.seqnum, kInvalidLogSeqNum);
         LocalOp* op = reinterpret_cast<LocalOp*>(result.caller_data);
-        LogMetaData log_metadata = MetaDataFromAppendOp(op);
-        log_metadata.seqnum = result.seqnum;
-        log_metadata.localid = result.localid;
-        LogCachePut(log_metadata, VECTOR_AS_SPAN(op->user_tags), op->data.to_span());
-        Message response = MessageHelper::NewSharedLogOpSucceeded(
-            SharedLogResultType::APPEND_OK, result.seqnum);
-        FinishLocalOpWithResponse(op, &response, result.metalog_progress);
+        if (result.seqnum != kInvalidLogSeqNum) {
+            LogMetaData log_metadata = MetaDataFromAppendOp(op);
+            log_metadata.seqnum = result.seqnum;
+            log_metadata.localid = result.localid;
+            LogCachePut(log_metadata, VECTOR_AS_SPAN(op->user_tags), op->data.to_span());
+            Message response = MessageHelper::NewSharedLogOpSucceeded(
+                SharedLogResultType::APPEND_OK, result.seqnum);
+            FinishLocalOpWithResponse(op, &response, result.metalog_progress);
+        } else {
+            FinishLocalOpWithFailure(op, SharedLogResultType::DISCARDED);
+        }
     }
 }
 
