@@ -35,7 +35,7 @@ std::optional<MetaLogProto> LogSpaceBase::GetMetaLog(uint32_t pos) const {
 }
 
 bool LogSpaceBase::ProvideMetaLog(const MetaLogProto& meta_log) {
-    DCHECK(state_ == kNormal);
+    DCHECK(state_ == kNormal || state_ == kFrozen);
     if (mode_ == kLiteMode && meta_log.type() == MetaLogProto::TRIM) {
         HLOG(WARNING) << fmt::format("Trim log (seqnum={}) is simply ignore in lite mode",
                                      meta_log.metalog_seqnum());

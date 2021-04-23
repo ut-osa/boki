@@ -471,7 +471,6 @@ void Engine::OnRecvResponse(const SharedLogMessage& message,
 
 void Engine::ProcessAppendResults(const LogProducer::AppendResultVec& results) {
     for (const LogProducer::AppendResult& result : results) {
-        DCHECK_NE(result.seqnum, kInvalidLogSeqNum);
         LocalOp* op = reinterpret_cast<LocalOp*>(result.caller_data);
         if (result.seqnum != kInvalidLogSeqNum) {
             LogMetaData log_metadata = MetaDataFromAppendOp(op);

@@ -384,6 +384,13 @@ void Controller::ReconfigCommandHandler(std::string inputs) {
             configuration.sequencer_nodes.push_back(
                 gsl::narrow_cast<uint16_t>(ParseIntChecked(parts[i])));
         }
+        for (size_t i = 0; i < configuration.log_space_hash_tokens.size(); i++) {
+            configuration.log_space_hash_tokens[i] = configuration.sequencer_nodes.at(
+                i % configuration.num_phylogs);
+        }
+        std::shuffle(configuration.log_space_hash_tokens.begin(),
+                     configuration.log_space_hash_tokens.end(),
+                     rnd_gen_);
     }
 
     ReconfigView(configuration);
