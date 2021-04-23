@@ -37,6 +37,9 @@ void Engine::OnViewCreated(const View* view) {
         if (contains_myself) {
             const View::Engine* engine_node = view->GetEngineNode(my_node_id());
             for (uint16_t sequencer_id : view->GetSequencerNodes()) {
+                if (!view->is_active_phylog(sequencer_id)) {
+                    continue;
+                }
                 producer_collection_.InstallLogSpace(std::make_unique<LogProducer>(
                     my_node_id(), view, sequencer_id));
                 if (engine_node->HasIndexFor(sequencer_id)) {
@@ -95,16 +98,11 @@ void Engine::OnViewFinalized(const FinalizedView* finalized_view) {
         DCHECK_EQ(finalized_view->view()->id(), current_view_->id());
         producer_collection_.ForEachActiveLogSpace(
             finalized_view->view(),
-            [finalized_view, &append_results, this] (uint32_t logspace_id,
-                                                     LockablePtr<LogProducer> producer_ptr) {
+            [finalized_view, &append_results] (uint32_t logspace_id,
+                                               LockablePtr<LogProducer> producer_ptr) {
+                log_utils::FinalizedLogSpace<LogProducer>(
+                    producer_ptr, finalized_view);
                 auto locked_producer = producer_ptr.Lock();
-                bool success = locked_producer->Finalize(
-                    finalized_view->final_metalog_position(logspace_id),
-                    finalized_view->tail_metalogs(logspace_id));
-                if (!success) {
-                    HLOG(FATAL) << fmt::format("Failed to finalize log space {}",
-                                                bits::HexStr0x(logspace_id));
-                }
                 LogProducer::AppendResultVec tmp;
                 locked_producer->PollAppendResults(&tmp);
                 append_results.insert(append_results.end(), tmp.begin(), tmp.end());
@@ -112,16 +110,11 @@ void Engine::OnViewFinalized(const FinalizedView* finalized_view) {
         );
         index_collection_.ForEachActiveLogSpace(
             finalized_view->view(),
-            [finalized_view, &query_results, this] (uint32_t logspace_id,
-                                                    LockablePtr<Index> index_ptr) {
+            [finalized_view, &query_results] (uint32_t logspace_id,
+                                              LockablePtr<Index> index_ptr) {
+                log_utils::FinalizedLogSpace<Index>(
+                    index_ptr, finalized_view);
                 auto locked_index = index_ptr.Lock();
-                bool success = locked_index->Finalize(
-                    finalized_view->final_metalog_position(logspace_id),
-                    finalized_view->tail_metalogs(logspace_id));
-                if (!success) {
-                    HLOG(FATAL) << fmt::format("Failed to finalize log space {}",
-                                                bits::HexStr0x(logspace_id));
-                }
                 Index::QueryResultVec tmp;
                 locked_index->PollQueryResults(&tmp);
                 query_results.insert(query_results.end(), tmp.begin(), tmp.end());

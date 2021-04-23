@@ -22,6 +22,7 @@ public:
     size_t metalog_replicas() const { return metalog_replicas_; }
     size_t userlog_replicas() const { return userlog_replicas_; }
     size_t index_replicas() const { return index_replicas_; }
+    size_t num_phylogs() const { return num_phylogs_; }
 
     size_t num_engine_nodes() const { return engine_node_ids_.size(); }
     size_t num_sequencer_nodes() const { return sequencer_node_ids_.size(); }
@@ -40,6 +41,9 @@ public:
     }
     bool contains_storage_node(uint16_t node_id) const {
         return storage_nodes_.contains(node_id);
+    }
+    bool is_active_phylog(uint16_t sequencer_node_id) const {
+        return active_phylogs_.contains(sequencer_node_id);
     }
 
     uint32_t LogSpaceIdentifier(uint32_t user_logspace) const {
@@ -183,10 +187,13 @@ private:
     size_t metalog_replicas_;
     size_t userlog_replicas_;
     size_t index_replicas_;
+    size_t num_phylogs_;
 
     NodeIdVec engine_node_ids_;
     NodeIdVec sequencer_node_ids_;
     NodeIdVec storage_node_ids_;
+
+    absl::flat_hash_set<uint16_t> active_phylogs_;
 
     absl::InlinedVector<Engine, 16>    engines_;
     absl::InlinedVector<Sequencer, 16> sequencers_;

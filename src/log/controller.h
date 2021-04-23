@@ -28,7 +28,7 @@ public:
     void WaitForFinish();
 
 private:
-    enum State { kCreated, kViewActive, kViewFrozen };
+    enum State { kCreated, kNormal, kReconfiguring, kFrozen };
 
     std::mt19937 rnd_gen_;
 
@@ -42,6 +42,7 @@ private:
     zk::ZKSession zk_session_;
     server::NodeWatcher node_watcher_;
     std::optional<zk_utils::DirWatcher> cmd_watcher_;
+    std::optional<zk_utils::DirWatcher> freeze_watcher_;
 
     uint64_t log_space_hash_seed_;
     std::vector<uint32_t> log_space_hash_tokens_;
@@ -52,21 +53,42 @@ private:
 
     std::vector<std::unique_ptr<View>> views_;
 
+    using NodeIdVec = std::vector<uint16_t>;
+    struct Configuration {
+        uint64_t              log_space_hash_seed;
+        std::vector<uint32_t> log_space_hash_tokens;
+
+        size_t    num_phylogs;
+        NodeIdVec sequencer_nodes;
+        NodeIdVec engine_nodes;
+        NodeIdVec storage_nodes;
+    };
+    std::optional<Configuration> pending_reconfig_;
+
+    struct OngoingSeal {
+        const View* view;
+        std::vector<uint16_t> phylogs;
+        absl::flat_hash_map<std::pair<uint16_t, uint16_t>,
+                            MetaLogsProto>
+            tail_metalogs;
+    };
+    std::optional<OngoingSeal> ongoing_seal_;
+
     inline uint16_t next_view_id() const {
         return gsl::narrow_cast<uint16_t>(views_.size());
     }
 
     void InstallNewView(const ViewProto& view_proto);
+    void ReconfigView(const Configuration& configuration);
+    void FreezeView(const View* view);
 
-    using NodeIdVec = std::vector<uint16_t>;
-    void ReconfigView(const NodeIdVec& sequencer_nodes,
-                      const NodeIdVec& engine_nodes,
-                      const NodeIdVec& storage_nodes);
+    std::optional<FinalizedViewProto> CheckAllSealed(const OngoingSeal& seal);
 
     void OnNodeOnline(server::NodeWatcher::NodeType node_type, uint16_t node_id);
     void OnNodeOffline(server::NodeWatcher::NodeType node_type, uint16_t node_id);
 
     void OnCmdZNodeCreated(std::string_view path, std::span<const char> contents);
+    void OnFreezeZNodeCreated(std::string_view path, std::span<const char> contents);
 
     void StartCommandHandler();
 

@@ -8,6 +8,7 @@ View::View(const ViewProto& view_proto)
       metalog_replicas_(view_proto.metalog_replicas()),
       userlog_replicas_(view_proto.userlog_replicas()),
       index_replicas_(view_proto.index_replicas()),
+      num_phylogs_(view_proto.num_phylogs()),
       engine_node_ids_(static_cast<size_t>(view_proto.engine_nodes_size())),
       sequencer_node_ids_(static_cast<size_t>(view_proto.sequencer_nodes_size())),
       storage_node_ids_(static_cast<size_t>(view_proto.storage_nodes_size())),
@@ -21,6 +22,9 @@ View::View(const ViewProto& view_proto)
     for (size_t i = 0; i < sequencer_node_ids_.size(); i++) {
         sequencer_node_ids_[i] = gsl::narrow_cast<uint16_t>(
             view_proto.sequencer_nodes(static_cast<int>(i)));
+        if (i < num_phylogs_) {
+            active_phylogs_.insert(sequencer_node_ids_[i]);
+        }
     }
     for (size_t i = 0; i < storage_node_ids_.size(); i++) {
         storage_node_ids_[i] = gsl::narrow_cast<uint16_t>(

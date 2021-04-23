@@ -10,6 +10,7 @@ message ViewProto {
     uint32 metalog_replicas = 2;
     uint32 userlog_replicas = 3;
     uint32 index_replicas   = 4;
+    uint32 num_phylogs      = 12;
 
     // [Participant Nodes: Sequencer, Engine, and Storage]
     // All nodes have globally unique IDs (even across views)

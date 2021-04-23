@@ -1,6 +1,7 @@
 #include "log/storage.h"
 
 #include "log/flags.h"
+#include "log/utils.h"
 #include "utils/bits.h"
 #include "utils/io.h"
 #include "utils/timerfd.h"
@@ -31,6 +32,9 @@ void Storage::OnViewCreated(const View* view) {
         absl::MutexLock view_lk(&view_mu_);
         if (contains_myself) {
             for (uint16_t sequencer_id : view->GetSequencerNodes()) {
+                if (!view->is_active_phylog(sequencer_id)) {
+                    continue;
+                }
                 storage_collection_.InstallLogSpace(std::make_unique<LogStorage>(
                     my_node_id(), view, sequencer_id));
             }
@@ -61,14 +65,8 @@ void Storage::OnViewFinalized(const FinalizedView* finalized_view) {
             finalized_view->view(),
             [&, finalized_view] (uint32_t logspace_id,
                                  LockablePtr<LogStorage> storage_ptr) {
+                log_utils::FinalizedLogSpace<LogStorage>(storage_ptr, finalized_view);
                 auto locked_storage = storage_ptr.Lock();
-                bool success = locked_storage->Finalize(
-                    finalized_view->final_metalog_position(logspace_id),
-                    finalized_view->tail_metalogs(logspace_id));
-                if (!success) {
-                    HLOG(FATAL) << fmt::format("Failed to finalize log space {}",
-                                                bits::HexStr0x(logspace_id));
-                }
                 LogStorage::ReadResultVec tmp;
                 locked_storage->PollReadResults(&tmp);
                 results.insert(results.end(), tmp.begin(), tmp.end());

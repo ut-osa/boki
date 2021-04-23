@@ -28,9 +28,14 @@ void Sequencer::OnViewCreated(const View* view) {
     {
         absl::MutexLock view_lk(&view_mu_);
         if (contains_myself) {
-            primary_collection_.InstallLogSpace(
-                std::make_unique<MetaLogPrimary>(view, my_node_id()));
+            if (view->is_active_phylog(my_node_id())) {
+                primary_collection_.InstallLogSpace(
+                    std::make_unique<MetaLogPrimary>(view, my_node_id()));
+            }
             for (uint16_t id : view->GetSequencerNodes()) {
+                if (!view->is_active_phylog(id)) {
+                    continue;
+                }
                 if (view->GetSequencerNode(id)->IsReplicaSequencerNode(my_node_id())) {
                     backup_collection_.InstallLogSpace(
                         std::make_unique<MetaLogBackup>(view, id));
@@ -39,7 +44,6 @@ void Sequencer::OnViewCreated(const View* view) {
         }
         current_primary_ = primary_collection_.GetLogSpace(
             bits::JoinTwo16(view->id(), my_node_id()));
-        DCHECK(!contains_myself || current_primary_ != nullptr);
         future_requests_.OnNewView(view, contains_myself ? &ready_requests : nullptr);
         current_view_ = view;
         log_header_ = fmt::format("Sequencer[{}-{}]: ", my_node_id(), view->id());
@@ -70,19 +74,6 @@ void FreezeLogSpace(LockablePtr<T> logspace_ptr, MetaLogsProto* tail_metalogs) {
         tail_metalogs->add_metalogs()->CopyFrom(*metalog);
     }
 }
-
-template<class T>
-void FinalizedLogSpace(LockablePtr<T> logspace_ptr, const FinalizedView* finalized_view) {
-    auto locked_logspace = logspace_ptr.Lock();
-    uint32_t logspace_id = locked_logspace->identifier();
-    bool success = locked_logspace->Finalize(
-        finalized_view->final_metalog_position(logspace_id),
-        finalized_view->tail_metalogs(logspace_id));
-    if (!success) {
-        LOG(FATAL) << fmt::format("Failed to finalize log space {}",
-                                  bits::HexStr0x(logspace_id));
-    }
-}
 }  // namespace
 
 void Sequencer::OnViewFrozen(const View* view) {
@@ -100,14 +91,17 @@ void Sequencer::OnViewFrozen(const View* view) {
         backup_collection_.ForEachActiveLogSpace(
             view, [&frozen_proto] (uint32_t, LockablePtr<MetaLogBackup> logspace_ptr) {
                 FreezeLogSpace<MetaLogBackup>(std::move(logspace_ptr),
-                                            frozen_proto.add_tail_metalogs());
+                                              frozen_proto.add_tail_metalogs());
             }
         );
+    }
+    if (frozen_proto.tail_metalogs().empty()) {
+        return;
     }
     std::string serialized;
     CHECK(frozen_proto.SerializeToString(&serialized));
     zk_session()->Create(
-        fmt::format("freeze/{}", view->id()),
+        fmt::format("freeze/{}-{}", view->id(), my_node_id()),
         STRING_AS_SPAN(serialized),
         zk::ZKCreateMode::kPersistentSequential,
         [this] (zk::ZKStatus status, const zk::ZKResult& result, bool*) {
@@ -125,12 +119,12 @@ void Sequencer::OnViewFinalized(const FinalizedView* finalized_view) {
     absl::MutexLock view_lk(&view_mu_);
     DCHECK_EQ(finalized_view->view()->id(), current_view_->id());
     if (current_primary_ != nullptr) {
-        FinalizedLogSpace<MetaLogPrimary>(current_primary_, finalized_view);
+        log_utils::FinalizedLogSpace<MetaLogPrimary>(current_primary_, finalized_view);
     }
     backup_collection_.ForEachActiveLogSpace(
         finalized_view->view(),
         [finalized_view] (uint32_t, LockablePtr<MetaLogBackup> logspace_ptr) {
-            FinalizedLogSpace<MetaLogBackup>(std::move(logspace_ptr), finalized_view);
+            log_utils::FinalizedLogSpace<MetaLogBackup>(std::move(logspace_ptr), finalized_view);
         }
     );
 }

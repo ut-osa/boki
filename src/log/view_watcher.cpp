@@ -89,22 +89,27 @@ void ViewWatcher::OnZNodeCreated(std::string_view path, std::span<const char> co
 FinalizedView::FinalizedView(const View* view,
                              const FinalizedViewProto& finalized_view_proto)
     : view_(view) {
-    const View::NodeIdVec& sequencer_node_ids = view_->GetSequencerNodes();
     DCHECK_EQ(gsl::narrow_cast<size_t>(finalized_view_proto.metalog_positions_size()),
-              sequencer_node_ids.size());
+              view->num_phylogs());
     DCHECK_EQ(gsl::narrow_cast<size_t>(finalized_view_proto.tail_metalogs_size()),
-              sequencer_node_ids.size());
-    for (size_t i = 0; i < sequencer_node_ids.size(); i++) {
-        uint32_t logspace_id = bits::JoinTwo16(view_->id(), sequencer_node_ids[i]);
+              view->num_phylogs());
+    size_t idx = 0;
+    for (uint16_t sequencer_id : view->GetSequencerNodes()) {
+        if (!view->is_active_phylog(sequencer_id)) {
+            continue;
+        }
+        uint32_t logspace_id = bits::JoinTwo16(view_->id(), sequencer_id);
         final_metalog_positions_[logspace_id] = finalized_view_proto.metalog_positions(
-            static_cast<int>(i));
+            static_cast<int>(idx));
         std::vector<MetaLogProto> metalogs;
         const auto& tail_metalog_proto = finalized_view_proto.tail_metalogs(
-            static_cast<int>(i));
+            static_cast<int>(idx));
+        DCHECK_EQ(logspace_id, tail_metalog_proto.logspace_id());
         for (const MetaLogProto& metalog : tail_metalog_proto.metalogs()) {
             metalogs.push_back(metalog);
         }
         tail_metalogs_[logspace_id] = std::move(metalogs);
+        idx++;
     }
 }
 

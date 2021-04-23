@@ -2,6 +2,8 @@
 
 #include "log/common.h"
 #include "log/view.h"
+#include "log/view_watcher.h"
+#include "utils/lockable_ptr.h"
 
 namespace faas {
 namespace log_utils {
@@ -147,6 +149,20 @@ void ThreadedMap<T>::PollAllSorted(std::vector<std::pair<uint64_t, T*>>* values)
             return lhs.first < rhs.first;
         }
     );
+}
+
+template<class T>
+void FinalizedLogSpace(LockablePtr<T> logspace_ptr,
+                       const log::FinalizedView* finalized_view) {
+    auto locked_logspace = logspace_ptr.Lock();
+    uint32_t logspace_id = locked_logspace->identifier();
+    bool success = locked_logspace->Finalize(
+        finalized_view->final_metalog_position(logspace_id),
+        finalized_view->tail_metalogs(logspace_id));
+    if (!success) {
+        LOG(FATAL) << fmt::format("Failed to finalize log space {}",
+                                  bits::HexStr0x(logspace_id));
+    }
 }
 
 }  // namespace log_utils

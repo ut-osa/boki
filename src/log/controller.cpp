@@ -38,6 +38,11 @@ void Controller::Start() {
     cmd_watcher_->SetNodeCreatedCallback(
         absl::bind_front(&Controller::OnCmdZNodeCreated, this));
     cmd_watcher_->Start();
+    // Setup freeze watcher
+    cmd_watcher_.emplace(&zk_session_, "freeze");
+    cmd_watcher_->SetNodeCreatedCallback(
+        absl::bind_front(&Controller::OnFreezeZNodeCreated, this));
+    cmd_watcher_->Start();
 }
 
 void Controller::ScheduleStop() {
@@ -66,27 +71,35 @@ void Controller::InstallNewView(const ViewProto& view_proto) {
                                       view->id(), result.path);
         }
     );
+    state_ = kNormal;
 }
 
-void Controller::ReconfigView(const NodeIdVec& sequencer_nodes,
-                              const NodeIdVec& engine_nodes,
-                              const NodeIdVec& storage_nodes) {
-    if (sequencer_nodes.size() < metalog_replicas_
-          || sequencer_nodes.size() < num_phylogs_) {
+void Controller::ReconfigView(const Configuration& configuration) {
+    if (configuration.sequencer_nodes.size() < metalog_replicas_
+          || configuration.sequencer_nodes.size() < num_phylogs_) {
         HLOG(ERROR) << "Sequencer nodes not enough";
         return;
     }
-    if (engine_nodes.size() < index_replicas_) {
+    if (configuration.engine_nodes.size() < index_replicas_) {
         HLOG(ERROR) << "Engine nodes not enough";
         return;
     }
-    if (storage_nodes.size() < userlog_replicas_) {
+    if (configuration.storage_nodes.size() < userlog_replicas_) {
         HLOG(ERROR) << "Storage nodes not enough";
         return;
     }
 
-    if (!views_.empty()) {
-        // TODO: freeze current view before making new view
+    if (state_ == kNormal) {
+        DCHECK(!views_.empty());
+        DCHECK(!pending_reconfig_.has_value());
+        pending_reconfig_ = configuration;
+        FreezeView(views_.back().get());
+        return;
+    }
+
+    if (state_ == kReconfiguring) {
+        HLOG(ERROR) << "A reconfiguration is ongoing";
+        return;
     }
 
     ViewProto view_proto;
@@ -94,29 +107,102 @@ void Controller::ReconfigView(const NodeIdVec& sequencer_nodes,
     view_proto.set_metalog_replicas(gsl::narrow_cast<uint32_t>(metalog_replicas_));
     view_proto.set_userlog_replicas(gsl::narrow_cast<uint32_t>(userlog_replicas_));
     view_proto.set_index_replicas(gsl::narrow_cast<uint32_t>(index_replicas_));
-    for (uint16_t node_id : sequencer_nodes) {
+    view_proto.set_num_phylogs(gsl::narrow_cast<uint32_t>(configuration.num_phylogs));
+    for (uint16_t node_id : configuration.sequencer_nodes) {
         view_proto.add_sequencer_nodes(node_id);
     }
-    for (uint16_t node_id : engine_nodes) {
+    for (uint16_t node_id : configuration.engine_nodes) {
         view_proto.add_engine_nodes(node_id);
     }
-    for (uint16_t node_id : storage_nodes) {
+    for (uint16_t node_id : configuration.storage_nodes) {
         view_proto.add_storage_nodes(node_id);
     }
 
-    view_proto.set_log_space_hash_seed(log_space_hash_seed_);
-    for (size_t i = 0; i < log_space_hash_tokens_.size(); i++) {
-        view_proto.add_log_space_hash_tokens(log_space_hash_tokens_[i]);
+    view_proto.set_log_space_hash_seed(configuration.log_space_hash_seed);
+    for (uint32_t token : configuration.log_space_hash_tokens) {
+        view_proto.add_log_space_hash_tokens(token);
     }
 
-    for (size_t i = 0; i < engine_nodes.size() * userlog_replicas_; i++) {
-        view_proto.add_storage_plan(storage_nodes.at(i % storage_nodes.size()));
+    size_t num_sequencers = configuration.sequencer_nodes.size();
+    size_t num_engines = configuration.engine_nodes.size();
+    size_t num_storages = configuration.storage_nodes.size();
+
+    for (size_t i = 0; i < num_engines * userlog_replicas_; i++) {
+        view_proto.add_storage_plan(configuration.storage_nodes.at(i % num_storages));
     }
-    for (size_t i = 0; i < sequencer_nodes.size() * index_replicas_; i++) {
-        view_proto.add_index_plan(engine_nodes.at(i % storage_nodes.size()));
+    for (size_t i = 0; i < num_sequencers * index_replicas_; i++) {
+        view_proto.add_index_plan(configuration.engine_nodes.at(i % num_engines));
     }
 
     InstallNewView(view_proto);
+}
+
+void Controller::FreezeView(const View* view) {
+    OngoingSeal seal;
+    seal.view = view;
+    seal.phylogs.clear();
+    for (uint16_t sequencer_id : view->GetSequencerNodes()) {
+        if (view->is_active_phylog(sequencer_id)) {
+            seal.phylogs.push_back(sequencer_id);
+        }
+    }
+    seal.tail_metalogs.clear();
+    ongoing_seal_ = seal;
+
+    std::string data = fmt::format("{}", view->id());
+    zk_session_.Create(
+        "view/freeze", STRING_AS_SPAN(data),
+        zk::ZKCreateMode::kPersistentSequential,
+        [view] (zk::ZKStatus status, const zk::ZKResult& result, bool*) {
+            if (!status.ok()) {
+                HLOG(FATAL) << "Failed to freeze the view: " << status.ToString();
+            }
+            HLOG(INFO) << fmt::format("View {} freeze cmd is published as {}",
+                                      view->id(), result.path);
+        }
+    );
+    state_ = kReconfiguring;
+}
+
+namespace {
+void BuildFinalTailMetalog(const std::vector<MetaLogsProto> tail_metalogs,
+                           uint32_t* final_position, MetaLogsProto* final_tail) {
+    std::map<uint32_t, MetaLogProto> entries;
+    for (const MetaLogsProto& metalogs : tail_metalogs) {
+        DCHECK_EQ(metalogs.logspace_id(), final_tail->logspace_id());
+        for (const MetaLogProto& metalog : metalogs.metalogs()) {
+            entries[metalog.metalog_seqnum()] = metalog;
+        }
+    }
+    *final_position = 0;
+    for (const auto& [metalog_seqnum, metalog] : entries) {
+        final_tail->add_metalogs()->CopyFrom(metalog);
+        *final_position = metalog_seqnum + 1;
+    }
+}
+}  // namespace
+
+std::optional<FinalizedViewProto> Controller::CheckAllSealed(const OngoingSeal& seal) {
+    FinalizedViewProto finalized_view_proto;
+    finalized_view_proto.set_view_id(seal.view->id());
+    for (uint16_t sequencer_id : seal.phylogs) {
+        std::vector<MetaLogsProto> collected;
+        for (const auto& [key, value] : seal.tail_metalogs) {
+            if (key.first == sequencer_id) {
+                collected.push_back(value);
+            }
+        }
+        size_t quorum = (seal.view->metalog_replicas() + 1) / 2;
+        if (collected.size() < quorum) {
+            return std::nullopt;
+        }
+        uint32_t final_position;
+        MetaLogsProto* final_tail = finalized_view_proto.add_tail_metalogs();
+        final_tail->set_logspace_id(bits::JoinTwo16(seal.view->id(), sequencer_id));
+        BuildFinalTailMetalog(collected, &final_position, final_tail);
+        finalized_view_proto.add_metalog_positions(final_position);
+    }
+    return finalized_view_proto;
 }
 
 void Controller::OnNodeOnline(NodeWatcher::NodeType node_type, uint16_t node_id) {
@@ -192,7 +278,55 @@ void Controller::StartCommandHandler() {
                               sequencer_nodes.size(),
                               engine_nodes.size(),
                               storage_nodes.size());
-    ReconfigView(sequencer_nodes, engine_nodes, storage_nodes);
+    Configuration configuration = {
+        .log_space_hash_seed   = log_space_hash_seed_,
+        .log_space_hash_tokens = log_space_hash_tokens_,
+        .num_phylogs     = num_phylogs_,
+        .sequencer_nodes = std::move(sequencer_nodes),
+        .engine_nodes    = std::move(engine_nodes),
+        .storage_nodes   = std::move(storage_nodes),
+    };
+    ReconfigView(configuration);
+}
+
+void Controller::OnFreezeZNodeCreated(std::string_view path,
+                                      std::span<const char> contents) {
+    DCHECK(ongoing_seal_.has_value());
+    const View* view = ongoing_seal_->view;
+    FrozenSequencerProto frozen_proto;
+    if (!frozen_proto.ParseFromArray(contents.data(),
+                                     static_cast<int>(contents.size()))) {
+        HLOG(FATAL) << "Failed to parse FrozenSequencerProto";
+    }
+    if (frozen_proto.view_id() != view->id()) {
+        return;
+    }
+    for (const auto& tail_metalogs : frozen_proto.tail_metalogs()) {
+        auto key = std::make_pair(tail_metalogs.logspace_id(), frozen_proto.sequencer_id());
+        ongoing_seal_->tail_metalogs[key] = tail_metalogs;
+    }
+    auto sealed = CheckAllSealed(*ongoing_seal_);
+    if (!sealed.has_value()) {
+        return;
+    }
+    FinalizedViewProto finalized_view = *sealed;
+    std::string serialized;
+    CHECK(finalized_view.SerializeToString(&serialized));
+    zk_session_.Create(
+        "view/finalize", STRING_AS_SPAN(serialized),
+        zk::ZKCreateMode::kPersistentSequential,
+        [view, this] (zk::ZKStatus status, const zk::ZKResult& result, bool*) {
+            if (!status.ok()) {
+                HLOG(FATAL) << "Failed to publish the new finalized view: " << status.ToString();
+            }
+            HLOG(INFO) << fmt::format("Finalized view {} is published as {}",
+                                      view->id(), result.path);
+            state_ = kFrozen;
+            Configuration configuration = *pending_reconfig_;
+            pending_reconfig_.reset();
+            ReconfigView(configuration);
+        }
+    );
 }
 
 }  // namespace log
