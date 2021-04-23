@@ -61,14 +61,26 @@ void LogSpaceBase::Freeze() {
 bool LogSpaceBase::Finalize(uint32_t final_metalog_position,
                             const std::vector<MetaLogProto>& tail_metalogs) {
     DCHECK(state_ == kNormal || state_ == kFrozen);
+    HLOG(INFO) << fmt::format("Finalize log space, final_position={}, provided_tails={}",
+                              final_metalog_position, tail_metalogs.size());
     for (const MetaLogProto& meta_log : tail_metalogs) {
         ProvideMetaLog(meta_log);
     }
-    if (metalog_position_ == final_metalog_position) {
+    if (metalog_position_ >= final_metalog_position) {
+        if (metalog_position_ > final_metalog_position + 1) {
+            HLOG(FATAL) << fmt::format("See the future: current_position={}, "
+                                       "expected_position={}",
+                                       metalog_position_, final_metalog_position);
+        } else {
+            // TODO: try fix this
+            HLOG(WARNING) << "Fine, the problem with primary sequencer";
+        }
         state_ = kFinalized;
         OnFinalized(metalog_position_);
         return true;
     } else {
+        HLOG(ERROR) << fmt::format("current_position={}, expected_position={}",
+                                   metalog_position_, final_metalog_position);
         return false;
     }
 }

@@ -184,7 +184,7 @@ void Engine::HandleLocalAppend(LocalOp* op) {
         absl::ReaderMutexLock view_lk(&view_mu_);
         if (!current_view_active_) {
             HLOG(WARNING) << "Current view not active";
-            FinishLocalOpWithFailure(op, SharedLogResultType::DATA_LOST);
+            FinishLocalOpWithFailure(op, SharedLogResultType::DISCARDED);
             return;
         }
         view = current_view_;

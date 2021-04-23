@@ -551,31 +551,36 @@ func (w *FuncWorker) SharedLogAppend(ctx context.Context, tags []uint64, data []
 		return 0, fmt.Errorf("Data too larger (size=%d, num_tags=%d), expect no more than %d bytes", len(data), len(tags), protocol.MessageInlineDataSize)
 	}
 
-	id := atomic.AddUint64(&w.nextLogOpId, 1)
-	currentCallId := atomic.LoadUint64(&w.currentCall)
-	message := protocol.NewSharedLogAppendMessage(currentCallId, w.clientId, uint16(len(tags)), id)
-	if len(tags) == 0 {
-		protocol.FillInlineDataInMessage(message, data)
-	} else {
-		tagBuffer := protocol.BuildLogTagsBuffer(tags)
-		protocol.FillInlineDataInMessage(message, bytes.Join([][]byte{tagBuffer, data}, nil /* sep */))
-	}
+	for {
+		id := atomic.AddUint64(&w.nextLogOpId, 1)
+		currentCallId := atomic.LoadUint64(&w.currentCall)
+		message := protocol.NewSharedLogAppendMessage(currentCallId, w.clientId, uint16(len(tags)), id)
+		if len(tags) == 0 {
+			protocol.FillInlineDataInMessage(message, data)
+		} else {
+			tagBuffer := protocol.BuildLogTagsBuffer(tags)
+			protocol.FillInlineDataInMessage(message, bytes.Join([][]byte{tagBuffer, data}, nil /* sep */))
+		}
 
-	w.mux.Lock()
-	outputChan := make(chan []byte, 1)
-	w.outgoingLogOps[id] = outputChan
-	_, err = w.outputPipe.Write(message)
-	w.mux.Unlock()
-	if err != nil {
-		return 0, err
-	}
+		w.mux.Lock()
+		outputChan := make(chan []byte, 1)
+		w.outgoingLogOps[id] = outputChan
+		_, err = w.outputPipe.Write(message)
+		w.mux.Unlock()
+		if err != nil {
+			return 0, err
+		}
 
-	response := <-outputChan
-	result := protocol.GetSharedLogResultTypeFromMessage(response)
-	if result == protocol.SharedLogResultType_APPEND_OK {
-		return protocol.GetLogSeqNumFromMessage(response), nil
-	} else {
-		return 0, fmt.Errorf("Failed to append log")
+		response := <-outputChan
+		result := protocol.GetSharedLogResultTypeFromMessage(response)
+		if result == protocol.SharedLogResultType_APPEND_OK {
+			return protocol.GetLogSeqNumFromMessage(response), nil
+		} else if result == protocol.SharedLogResultType_DISCARDED {
+			log.Printf("[ERROR] Append discarded, will retry")
+			continue
+		} else {
+			return 0, fmt.Errorf("Failed to append log")
+		}
 	}
 }
 
