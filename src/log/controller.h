@@ -77,6 +77,9 @@ private:
     inline uint16_t next_view_id() const {
         return gsl::narrow_cast<uint16_t>(views_.size());
     }
+    inline const View* current_view() const {
+        return views_.empty() ? nullptr : views_.back().get();
+    }
 
     void InstallNewView(const ViewProto& view_proto);
     void ReconfigView(const Configuration& configuration);
@@ -91,6 +94,8 @@ private:
     void OnFreezeZNodeCreated(std::string_view path, std::span<const char> contents);
 
     void StartCommandHandler();
+    void InfoCommandHandler();
+    void ReconfigCommandHandler(std::string inputs);
 
     DISALLOW_COPY_AND_ASSIGN(Controller);
 };

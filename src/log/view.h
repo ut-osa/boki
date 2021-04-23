@@ -53,6 +53,9 @@ public:
         return bits::JoinTwo16(id_, node_id);
     }
 
+    uint64_t log_space_hash_seed() const { return log_space_hash_seed_; }
+    const NodeIdVec& log_space_hash_tokens() const { return log_space_hash_tokens_; }
+
     class Engine {
     public:
         Engine(Engine&& other) = default;

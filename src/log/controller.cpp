@@ -39,10 +39,11 @@ void Controller::Start() {
         absl::bind_front(&Controller::OnCmdZNodeCreated, this));
     cmd_watcher_->Start();
     // Setup freeze watcher
-    cmd_watcher_.emplace(&zk_session_, "freeze");
-    cmd_watcher_->SetNodeCreatedCallback(
+    freeze_watcher_.emplace(&zk_session_, "freeze",
+                            /* sequential_znodes= */ true);
+    freeze_watcher_->SetNodeCreatedCallback(
         absl::bind_front(&Controller::OnFreezeZNodeCreated, this));
-    cmd_watcher_->Start();
+    freeze_watcher_->Start();
 }
 
 void Controller::ScheduleStop() {
@@ -93,7 +94,7 @@ void Controller::ReconfigView(const Configuration& configuration) {
         DCHECK(!views_.empty());
         DCHECK(!pending_reconfig_.has_value());
         pending_reconfig_ = configuration;
-        FreezeView(views_.back().get());
+        FreezeView(current_view());
         return;
     }
 
@@ -138,6 +139,7 @@ void Controller::ReconfigView(const Configuration& configuration) {
 }
 
 void Controller::FreezeView(const View* view) {
+    HLOG(INFO) << fmt::format("Start sealing for view {}", view->id());
     OngoingSeal seal;
     seal.view = view;
     seal.phylogs.clear();
@@ -241,8 +243,10 @@ void Controller::OnCmdZNodeCreated(std::string_view path,
                                    std::span<const char> contents) {
     if (path == "start") {
         StartCommandHandler();
+    } else if (path == "info") {
+        InfoCommandHandler();
     } else if (path == "reconfig") {
-        
+        ReconfigCommandHandler(std::string(contents.data(), contents.size()));
     } else {
         HLOG(ERROR) << "Unknown command: " << path;
     }
@@ -289,9 +293,107 @@ void Controller::StartCommandHandler() {
     ReconfigView(configuration);
 }
 
+void Controller::InfoCommandHandler() {
+    std::stringstream stream;
+
+    stream << "Current state: ";
+    switch (state_) {
+    case kCreated:
+        stream << "Created";
+        break;
+    case kNormal:
+        stream << "Normal";
+        break;
+    case kReconfiguring:
+        stream << "Reconfiguring";
+        break;
+    case kFrozen:
+        stream << "Frozen";
+        break;
+    default:
+        UNREACHABLE();
+    }
+    stream << "\n";
+
+    if (!views_.empty()) {
+        const View* view = current_view();
+        stream << fmt::format("Current view[{}]:", view->id()) << "\n";
+        stream << "  MetaLogReplica = " << view->metalog_replicas() << "\n";
+        stream << "  UserLogReplica = " << view->userlog_replicas() << "\n";
+        stream << "  IndexReplica = " << view->index_replicas() << "\n";
+        stream << "  NumPhyLogs = " << view->num_phylogs() << "\n";
+        stream << "  Sequencers = [";
+        for (uint16_t sequencer_id : view->GetSequencerNodes()) {
+            stream << sequencer_id << ", ";
+        }
+        stream << "]\n";
+        stream << "  Engines = [";
+        for (uint16_t engine_id : view->GetEngineNodes()) {
+            stream << engine_id << ", ";
+        }
+        stream << "]\n";
+        stream << "  Storages = [";
+        for (uint16_t storage_id : view->GetStorageNodes()) {
+            stream << storage_id << ", ";
+        }
+        stream << "]\n";
+    }
+
+    LOG(INFO) << "\n[START PRINTING INFO]\n"
+              << stream.str()
+              << "[END PRINTING INFO]";
+}
+
+namespace {
+int ParseIntChecked(std::string_view s) {
+    int parsed;
+    if (!absl::SimpleAtoi(s, &parsed)) {
+        LOG(FATAL) << "Failed to parse: " << s;
+    }
+    return parsed;
+}
+}  // namespace
+
+void Controller::ReconfigCommandHandler(std::string inputs) {
+    if (state_ != kNormal) {
+        HLOG(ERROR) << "Not in normal state, cannot reconfigure";
+        return;
+    }
+
+    const View* view = current_view();
+    Configuration configuration;
+    configuration.log_space_hash_seed = view->log_space_hash_seed();
+    configuration.log_space_hash_tokens.assign(
+        view->log_space_hash_tokens().begin(),
+        view->log_space_hash_tokens().end());
+    configuration.num_phylogs = view->num_phylogs();
+    configuration.sequencer_nodes.assign(
+        view->GetSequencerNodes().begin(),
+        view->GetSequencerNodes().end());
+    configuration.engine_nodes.assign(
+        view->GetEngineNodes().begin(),
+        view->GetEngineNodes().end());
+    configuration.storage_nodes.assign(
+        view->GetStorageNodes().begin(),
+        view->GetStorageNodes().end());
+    
+    std::vector<std::string_view> parts = absl::StrSplit(inputs, ' ');
+    if (parts[0] == "seq") {
+        configuration.sequencer_nodes.clear();
+        for (size_t i = 1; i < parts.size(); i++) {
+            configuration.sequencer_nodes.push_back(
+                gsl::narrow_cast<uint16_t>(ParseIntChecked(parts[i])));
+        }
+    }
+
+    ReconfigView(configuration);
+}
+
 void Controller::OnFreezeZNodeCreated(std::string_view path,
                                       std::span<const char> contents) {
-    DCHECK(ongoing_seal_.has_value());
+    if (!ongoing_seal_.has_value()) {
+        return;
+    }
     const View* view = ongoing_seal_->view;
     FrozenSequencerProto frozen_proto;
     if (!frozen_proto.ParseFromArray(contents.data(),
@@ -301,6 +403,8 @@ void Controller::OnFreezeZNodeCreated(std::string_view path,
     if (frozen_proto.view_id() != view->id()) {
         return;
     }
+    HLOG(INFO) << fmt::format("Receive seal response from sequencer {} for view {}",
+                              frozen_proto.sequencer_id(), view->id());
     for (const auto& tail_metalogs : frozen_proto.tail_metalogs()) {
         auto key = std::make_pair(tail_metalogs.logspace_id(), frozen_proto.sequencer_id());
         ongoing_seal_->tail_metalogs[key] = tail_metalogs;
@@ -309,6 +413,8 @@ void Controller::OnFreezeZNodeCreated(std::string_view path,
     if (!sealed.has_value()) {
         return;
     }
+    ongoing_seal_.reset();
+    HLOG(INFO) << fmt::format("Finish sealing for view {}", view->id());
     FinalizedViewProto finalized_view = *sealed;
     std::string serialized;
     CHECK(finalized_view.SerializeToString(&serialized));
