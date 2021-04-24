@@ -1,7 +1,9 @@
 package statestore
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 
@@ -11,14 +13,27 @@ import (
 	"cs.utexas.edu/zjia/faas/types"
 
 	gabs "github.com/Jeffail/gabs/v2"
+	redis "github.com/go-redis/redis/v8"
 )
 
 var FLAGS_DisableAuxData bool = false
+var FLAGS_RedisForAuxData bool = false
+
+var redisClient *redis.Client
 
 func init() {
 	if val, exists := os.LookupEnv("DISABLE_AUXDATA"); exists && val == "1" {
 		FLAGS_DisableAuxData = true
 		log.Printf("[INFO] AuxData disabled")
+	}
+	if val, exists := os.LookupEnv("AUXDATA_REDIS_URL"); exists {
+		FLAGS_RedisForAuxData = true
+		log.Printf("[INFO] Use Redis for AuxData")
+		opt, err := redis.ParseURL(val)
+		if err != nil {
+			log.Fatalf("[FATAL] Failed to parse Redis URL %s: %v", val, err)
+		}
+		redisClient = redis.NewClient(opt)
 	}
 }
 
@@ -67,8 +82,22 @@ func decodeLogEntry(logEntry *types.LogEntry) *ObjectLogEntry {
 	if err != nil {
 		panic(err)
 	}
-	if len(logEntry.AuxData) > 0 {
-		reader, err := common.DecompressReader(logEntry.AuxData)
+	var auxData []byte
+	if FLAGS_RedisForAuxData {
+		key := fmt.Sprintf("%#016x", logEntry.SeqNum)
+		val, err := redisClient.Get(context.Background(), key).Bytes()
+		if err != nil {
+			if err != redis.Nil {
+				log.Fatalf("[FATAL] Failed to get AuxData from Redis: %v", err)
+			}
+		} else {
+			auxData = val
+		}
+	} else {
+		auxData = logEntry.AuxData
+	}
+	if len(auxData) > 0 {
+		reader, err := common.DecompressReader(auxData)
 		if err != nil {
 			panic(err)
 		}
@@ -394,7 +423,16 @@ func (env *envImpl) setLogAuxData(seqNum uint64, data interface{}) error {
 	if err != nil {
 		panic(err)
 	}
-	err = env.faasEnv.SharedLogSetAuxData(env.faasCtx, seqNum, common.CompressData(encoded))
+	compressed := common.CompressData(encoded)
+	if FLAGS_RedisForAuxData {
+		key := fmt.Sprintf("%#016x", seqNum)
+		result := redisClient.Set(context.Background(), key, compressed, 0)
+		if result.Err() != nil {
+			log.Fatalf("[FATAL] Failed to set AuxData in Redis: %v", result.Err())
+		}
+		return nil
+	}
+	err = env.faasEnv.SharedLogSetAuxData(env.faasCtx, seqNum, compressed)
 	if err != nil {
 		return newRuntimeError(err.Error())
 	} else {
