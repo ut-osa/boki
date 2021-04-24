@@ -16,7 +16,8 @@ using protocol::SharedLogOpType;
 Storage::Storage(uint16_t node_id)
     : StorageBase(node_id),
       log_header_(fmt::format("Storage[{}-N]: ", node_id)),
-      current_view_(nullptr) {}
+      current_view_(nullptr),
+      view_finalized_(false) {}
 
 Storage::~Storage() {}
 
@@ -41,6 +42,7 @@ void Storage::OnViewCreated(const View* view) {
         }
         future_requests_.OnNewView(view, contains_myself ? &ready_requests : nullptr);
         current_view_ = view;
+        view_finalized_ = false;
         log_header_ = fmt::format("Storage[{}-{}]: ", my_node_id(), view->id());
     }
     if (!ready_requests.empty()) {
@@ -75,6 +77,7 @@ void Storage::OnViewFinalized(const FinalizedView* finalized_view) {
                 }
             }
         );
+        view_finalized_ = true;
     }
     if (!results.empty()) {
         SomeIOWorker()->ScheduleFunction(
@@ -210,6 +213,7 @@ void Storage::OnRecvLogAuxData(const protocol::SharedLogMessage& message,
 
 #undef ONHOLD_IF_FROM_FUTURE_VIEW
 #undef IGNORE_IF_FROM_PAST_VIEW
+#undef RETURN_IF_LOGSPACE_FINALIZED
 
 void Storage::ProcessReadResults(const LogStorage::ReadResultVec& results) {
     for (const LogStorage::ReadResult& result : results) {
@@ -322,7 +326,7 @@ void Storage::SendShardProgressIfNeeded() {
     std::vector<std::pair<uint32_t, std::vector<uint32_t>>> progress_to_send;
     {
         absl::ReaderMutexLock view_lk(&view_mu_);
-        if (current_view_ == nullptr) {
+        if (current_view_ == nullptr || view_finalized_) {
             return;
         }
         storage_collection_.ForEachActiveLogSpace(
@@ -330,10 +334,11 @@ void Storage::SendShardProgressIfNeeded() {
             [&progress_to_send, this] (uint32_t logspace_id,
                                        LockablePtr<LogStorage> storage_ptr) {
                 auto locked_storage = storage_ptr.Lock();
-                RETURN_IF_LOGSPACE_FINALIZED(locked_storage);
-                auto progress = locked_storage->GrabShardProgressForSending();
-                if (progress.has_value()) {
-                    progress_to_send.emplace_back(logspace_id, std::move(*progress));
+                if (!locked_storage->frozen() && !locked_storage->finalized()) {
+                    auto progress = locked_storage->GrabShardProgressForSending();
+                    if (progress.has_value()) {
+                        progress_to_send.emplace_back(logspace_id, std::move(*progress));
+                    }
                 }
             }
         );
@@ -345,8 +350,6 @@ void Storage::SendShardProgressIfNeeded() {
                              VECTOR_AS_CHAR_SPAN(entry.second));
     }
 }
-
-#undef RETURN_IF_LOGSPACE_FINALIZED
 
 void Storage::FlushLogEntries() {
     std::vector<std::shared_ptr<const LogEntry>> log_entires;

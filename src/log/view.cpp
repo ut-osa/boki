@@ -26,6 +26,7 @@ View::View(const ViewProto& view_proto)
             active_phylogs_.insert(sequencer_node_ids_[i]);
         }
     }
+    LOG(INFO) << fmt::format("View {} has {} physical logs", id_, active_phylogs_.size());
     for (size_t i = 0; i < storage_node_ids_.size(); i++) {
         storage_node_ids_[i] = gsl::narrow_cast<uint16_t>(
             view_proto.storage_nodes(static_cast<int>(i)));

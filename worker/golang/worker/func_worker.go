@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"time"
 	"strconv"
 	"strings"
 	"sync"
@@ -551,6 +552,9 @@ func (w *FuncWorker) SharedLogAppend(ctx context.Context, tags []uint64, data []
 		return 0, fmt.Errorf("Data too larger (size=%d, num_tags=%d), expect no more than %d bytes", len(data), len(tags), protocol.MessageInlineDataSize)
 	}
 
+	sleepDuration := 5 * time.Millisecond
+	remainingRetries := 4
+
 	for {
 		id := atomic.AddUint64(&w.nextLogOpId, 1)
 		currentCallId := atomic.LoadUint64(&w.currentCall)
@@ -577,7 +581,14 @@ func (w *FuncWorker) SharedLogAppend(ctx context.Context, tags []uint64, data []
 			return protocol.GetLogSeqNumFromMessage(response), nil
 		} else if result == protocol.SharedLogResultType_DISCARDED {
 			log.Printf("[ERROR] Append discarded, will retry")
-			continue
+			if remainingRetries > 0 {
+				time.Sleep(sleepDuration)
+				sleepDuration *= 2
+				remainingRetries--
+				continue
+			} else {
+				return 0, fmt.Errorf("Failed to append log")
+			}
 		} else {
 			return 0, fmt.Errorf("Failed to append log")
 		}

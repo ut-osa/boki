@@ -57,10 +57,13 @@ void StorageBase::SetupDB() {
 void StorageBase::SetupZKWatchers() {
     view_watcher_.SetViewCreatedCallback(
         [this] (const View* view) {
-            for (uint16_t sequencer_id : view->GetSequencerNodes()) {
-                db_->InstallLogSpace(bits::JoinTwo16(view->id(), sequencer_id));
-            }
             this->OnViewCreated(view);
+            // TODO: This is not always safe, try fix it
+            for (uint16_t sequencer_id : view->GetSequencerNodes()) {
+                if (view->is_active_phylog(sequencer_id)) {
+                    db_->InstallLogSpace(bits::JoinTwo16(view->id(), sequencer_id));
+                }
+            }
         }
     );
     view_watcher_.SetViewFinalizedCallback(

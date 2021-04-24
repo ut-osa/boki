@@ -91,7 +91,8 @@ std::optional<std::string> RocksDBBackend::Get(uint32_t logspace_id, uint32_t ke
 void RocksDBBackend::Put(uint32_t logspace_id, uint32_t key, std::span<const char> data) {
     rocksdb::ColumnFamilyHandle* cf_handle = GetCFHandle(logspace_id);
     if (cf_handle == nullptr) {
-        LOG(FATAL) << fmt::format("Log space {} not created", bits::HexStr0x(logspace_id));
+        LOG(ERROR) << fmt::format("Log space {} not created", bits::HexStr0x(logspace_id));
+        return;
     }
     std::string key_str = bits::HexStr(key);
     auto status = db_->Put(
