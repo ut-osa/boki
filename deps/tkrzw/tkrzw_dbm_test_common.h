@@ -11,6 +11,8 @@
  * and limitations under the License.
  *************************************************************************************************/
 
+#include "tkrzw_sys_config.h"
+
 #include "gtest/gtest.h"
 #include "gmock/gmock.h"
 
@@ -20,7 +22,6 @@
 #include "tkrzw_file_util.h"
 #include "tkrzw_lib_common.h"
 #include "tkrzw_str_util.h"
-#include "tkrzw_sys_config.h"
 
 using namespace testing;
 
@@ -69,7 +70,7 @@ inline void CommonDBMTest::FileTest(tkrzw::DBM* dbm, const std::string& path) {
   EXPECT_EQ("CCCC", dbm->GetSimple("ccc"));
   EXPECT_EQ("DDDDD", dbm->GetSimple("dddd"));
   EXPECT_EQ(tkrzw::Status::SUCCESS, dbm->Set("eeeee", "EEEEEE"));
-  EXPECT_EQ(tkrzw::Status::SUCCESS, dbm->CopyFile(copy_path));
+  EXPECT_EQ(tkrzw::Status::SUCCESS, dbm->CopyFileData(copy_path));
   EXPECT_EQ(tkrzw::Status::SUCCESS, dbm->Close());
   EXPECT_EQ(tkrzw::GetFileSize(path), tkrzw::GetFileSize(copy_path));
   EXPECT_EQ(tkrzw::Status::SUCCESS, dbm->Open(copy_path, true, tkrzw::File::OPEN_NO_CREATE));
@@ -553,8 +554,21 @@ inline void CommonDBMTest::ProcessTest(tkrzw::DBM* dbm) {
   EXPECT_EQ(2, count);
   EXPECT_EQ(0, dbm->CountSimple());
   EXPECT_EQ(tkrzw::Status::NOT_FOUND_ERROR, iter->Get());
-  const tkrzw::Status status = second_iter->Get();
+  tkrzw::Status status = second_iter->Get();
   EXPECT_TRUE(status == tkrzw::Status::SUCCESS || status == tkrzw::Status::NOT_FOUND_ERROR);
+  EXPECT_EQ(tkrzw::Status::SUCCESS, dbm->Set("98765", "apple", true));
+  EXPECT_EQ(tkrzw::Status::DUPLICATION_ERROR, dbm->Set("98765", "orange", false));
+  std::string old_value;
+  EXPECT_EQ(tkrzw::Status::DUPLICATION_ERROR, dbm->Set("98765", "orange", false, &old_value));
+  EXPECT_EQ("apple", old_value);
+  old_value = "";
+  EXPECT_EQ(tkrzw::Status::SUCCESS, dbm->Set("98765", "orange", true, &old_value));
+  EXPECT_EQ("apple", old_value);
+  EXPECT_EQ(tkrzw::Status::SUCCESS, dbm->Set("98765", "strawberry", true, &old_value));
+  EXPECT_EQ("orange", old_value);
+  EXPECT_EQ(tkrzw::Status::SUCCESS, dbm->Remove("98765", &old_value));
+  EXPECT_EQ("strawberry", old_value);
+  EXPECT_EQ(tkrzw::Status::NOT_FOUND_ERROR, dbm->Remove("98765", &old_value));
   EXPECT_EQ(tkrzw::Status::SUCCESS, dbm->Append("1234", "foo", ","));
   EXPECT_EQ("foo", dbm->GetSimple("1234"));
   EXPECT_EQ(tkrzw::Status::SUCCESS, dbm->Append("1234", "bar", ","));
@@ -582,6 +596,74 @@ inline void CommonDBMTest::ProcessTest(tkrzw::DBM* dbm) {
   EXPECT_EQ(std::string("\x7F\xFF\x00\x00\x88\x88\x00\x66", 8), dbm->GetSimple("b"));
   EXPECT_EQ(100, dbm->IncrementSimple("ccc", tkrzw::INT64MIN, 100));
   EXPECT_EQ(tkrzw::Status::NOT_FOUND_ERROR, dbm->Get("ccc"));
+  const std::string expected = "tokyo";
+  status = dbm->Process("japan",
+                        [=](std::string_view key,
+                            std::string_view value) -> std::string_view {
+                          EXPECT_EQ("japan", key);
+                          EXPECT_EQ(tkrzw::DBM::RecordProcessor::NOOP, value);
+                          return expected;
+                        }, true);
+  EXPECT_EQ(tkrzw::Status::SUCCESS, status);
+  status = dbm->Process("japan",
+                        [=](std::string_view key,
+                            std::string_view value) -> std::string_view {
+                          EXPECT_EQ("japan", key);
+                          EXPECT_EQ(expected, value);
+                          return tkrzw::DBM::RecordProcessor::NOOP;
+                        }, false);
+  status = dbm->Process("japan",
+                        [&](std::string_view key,
+                            std::string_view value) -> std::string_view {
+                          EXPECT_EQ("japan", key);
+                          EXPECT_EQ(expected, value);
+                          actual = expected;
+                          return tkrzw::DBM::RecordProcessor::REMOVE;
+                        }, true);
+  EXPECT_EQ(tkrzw::Status::SUCCESS, status);
+  EXPECT_EQ(expected, actual);
+  EXPECT_EQ(tkrzw::Status::NOT_FOUND_ERROR, dbm->Get("japan"));
+  EXPECT_EQ(tkrzw::Status::SUCCESS, dbm->Clear());
+  EXPECT_EQ(tkrzw::Status::SUCCESS, dbm->SetMulti({{"a", "AA"}, {"b", "BB"}}));
+  EXPECT_EQ(tkrzw::Status::SUCCESS, iter->First());
+  std::map<std::string, std::string> recs;
+  while (true) {
+    std::string new_value;
+    status = iter->Process([&](std::string_view key,
+                               std::string_view value) -> std::string_view {
+                             recs[std::string(key)] = std::string(value);
+                             new_value = tkrzw::StrCat(value, ":", value);
+                             return new_value;
+                           }, true);
+    if (status != tkrzw::Status::SUCCESS) {
+      EXPECT_EQ(tkrzw::Status::NOT_FOUND_ERROR, status);
+      break;
+    }
+    EXPECT_EQ(tkrzw::Status::SUCCESS, iter->Next());
+  }
+  EXPECT_EQ(2, recs.size());
+  EXPECT_EQ("AA", recs["a"]);
+  EXPECT_EQ("BB", recs["b"]);
+  recs.clear();
+  int32_t empty_count = 0;
+  std::string new_value;
+  status = dbm->ProcessEach([&](std::string_view key,
+                                std::string_view value) -> std::string_view {
+                              if (key.data() == tkrzw::DBM::RecordProcessor::NOOP.data()) {
+                                empty_count++;
+                                return tkrzw::DBM::RecordProcessor::NOOP;
+                              }
+                              recs[std::string(key)] = std::string(value);
+                              new_value = tkrzw::StrCat(value, ":", value);
+                              return new_value;
+                            }, true);
+  EXPECT_EQ(tkrzw::Status::SUCCESS, status);
+  EXPECT_EQ(2, recs.size());
+  EXPECT_EQ("AA:AA", recs["a"]);
+  EXPECT_EQ("BB:BB", recs["b"]);
+  EXPECT_EQ(2, empty_count);
+  EXPECT_EQ("AA:AA:AA:AA", dbm->GetSimple("a"));
+  EXPECT_EQ("BB:BB:BB:BB", dbm->GetSimple("b"));
 }
 
 inline void CommonDBMTest::ProcessEachTest(tkrzw::DBM* dbm) {

@@ -42,7 +42,7 @@ static void PrintUsageAndDie() {
   P("  --verbose : Prints verbose reports.\n");
   P("  --path path : The path of the file to write or read.\n");
   P("  --file impl : The name of a file implementation:"
-    " mmap-para, mmap-atom, pos-para, pos-atom. (default: mmap-para)\n");
+    " std, mmap-para, mmap-atom, pos-para, pos-atom. (default: mmap-para)\n");
   P("  --no_wait : Fails if the file is locked by another process.\n");
   P("  --no_lock : Omits file locking.\n");
   P("  --alloc_init num : The initial allocation size. (default: %lld)\n",
@@ -1106,14 +1106,17 @@ static int32_t ProcessWicked(int32_t argc, const char** args) {
           break;
         }
       } else if (op_dist(misc_mt) % 3 == 0) {
-        const Status status = dbm->Set(key, value);
-        if (status != Status::SUCCESS) {
+        const bool overwrite = op_dist(misc_mt) % 3 != 0;
+        std::string old_value;
+        const Status status = dbm->Set(key, value, overwrite, &old_value);
+        if (status != Status::SUCCESS && status != Status::DUPLICATION_ERROR) {
           EPrintL("Set failed: ", status);
           has_error = true;
           break;
         }
       } else {
-        const Status status = dbm->Set(key, value);
+        std::string rec_value;
+        const Status status = dbm->Get(key, &rec_value);
         if (status != Status::SUCCESS && status != Status::NOT_FOUND_ERROR) {
           EPrintL("Get failed: ", status);
           has_error = true;
@@ -1410,16 +1413,21 @@ int main(int argc, char** argv) {
     tkrzw::PrintUsageAndDie();
   }
   int32_t rv = 0;
-  if (std::strcmp(args[1], "sequence") == 0) {
-    rv = tkrzw::ProcessSequence(argc - 1, args + 1);
-  } else if (std::strcmp(args[1], "parallel") == 0) {
-    rv = tkrzw::ProcessParallel(argc - 1, args + 1);
-  } else if (std::strcmp(args[1], "wicked") == 0) {
-    rv = tkrzw::ProcessWicked(argc - 1, args + 1);
-  } else if (std::strcmp(args[1], "index") == 0) {
-    rv = tkrzw::ProcessIndex(argc - 1, args + 1);
-  } else {
-    tkrzw::PrintUsageAndDie();
+  try {
+    if (std::strcmp(args[1], "sequence") == 0) {
+      rv = tkrzw::ProcessSequence(argc - 1, args + 1);
+    } else if (std::strcmp(args[1], "parallel") == 0) {
+      rv = tkrzw::ProcessParallel(argc - 1, args + 1);
+    } else if (std::strcmp(args[1], "wicked") == 0) {
+      rv = tkrzw::ProcessWicked(argc - 1, args + 1);
+    } else if (std::strcmp(args[1], "index") == 0) {
+      rv = tkrzw::ProcessIndex(argc - 1, args + 1);
+    } else {
+      tkrzw::PrintUsageAndDie();
+    }
+  } catch (const std::runtime_error& e) {
+    std::cerr << e.what() << std::endl;
+    rv = 1;
   }
   return rv;
 }

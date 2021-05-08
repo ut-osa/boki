@@ -225,8 +225,22 @@ class MemoryMapParallelFile final : public File {
   Status LockMemory(size_t size);
 
   /**
+   * Gets the path of the file.
+   * @param path The pointer to a string object to store the path.
+   * @return The result status.
+   */
+  Status GetPath(std::string* path) override;
+
+  /**
+   * Renames the file.
+   * @param new_path A new path of the file.
+   * @return The result status.
+   */
+  Status Rename(const std::string& new_path) override;
+
+  /**
    * Checks whether operations are done by memory mapping.
-   * @return True if operations are done by memory mapping, or false if not.
+   * @return Always true.  This is fast, but the file size cannot exceed the virtual memory.
    */
   bool IsMemoryMapping() const override {
     return true;
@@ -453,8 +467,22 @@ class MemoryMapAtomicFile final : public File {
   Status LockMemory(size_t size);
 
   /**
+   * Gets the path of the file.
+   * @param path The pointer to a string object to store the path.
+   * @return The result status.
+   */
+  Status GetPath(std::string* path) override;
+
+  /**
+   * Renames the file.
+   * @param new_path A new path of the file.
+   * @return The result status.
+   */
+  Status Rename(const std::string& new_path) override;
+
+  /**
    * Checks whether operations are done by memory mapping.
-   * @return True if operations are done by memory mapping, or false if not.
+   * @return Always true.  This is fast, but the file size cannot exceed the virtual memory.
    */
   bool IsMemoryMapping() const override {
     return true;

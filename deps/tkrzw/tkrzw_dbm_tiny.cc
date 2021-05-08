@@ -11,16 +11,18 @@
  * and limitations under the License.
  *************************************************************************************************/
 
+#include "tkrzw_sys_config.h"
+
 #include "tkrzw_dbm.h"
 #include "tkrzw_dbm_common_impl.h"
 #include "tkrzw_dbm_tiny.h"
 #include "tkrzw_file.h"
 #include "tkrzw_file_mmap.h"
 #include "tkrzw_file_pos.h"
+#include "tkrzw_file_std.h"
 #include "tkrzw_file_util.h"
 #include "tkrzw_lib_common.h"
 #include "tkrzw_str_util.h"
-#include "tkrzw_sys_config.h"
 #include "tkrzw_thread_util.h"
 
 namespace tkrzw {
@@ -178,15 +180,14 @@ char* TinyRecord::ReserializeAppend(
 
 void TinyRecord::Deserialize(const char* ptr) {
   const char* rp = ptr;
-  constexpr int32_t dummy_size = 1 << 28;
   std::memcpy(&child, rp, sizeof(child));
   rp += sizeof(child);
   uint64_t num = 0;
-  rp += ReadVarNum(rp, dummy_size, &num);
+  rp += ReadVarNum(rp, &num);
   key_size = num;
   key_ptr = rp;
   rp += key_size;
-  rp += ReadVarNum(rp, dummy_size, &num);
+  rp += ReadVarNum(rp, &num);
   value_size = num;
   value_ptr = rp;
 }
@@ -220,7 +221,8 @@ Status TinyDBMImpl::Open(const std::string& path, bool writable, int32_t options
   if (open_) {
     return Status(Status::PRECONDITION_ERROR, "opened database");
   }
-  Status status = file_->Open(path, writable, options);
+  const std::string norm_path = NormalizePath(path);
+  Status status = file_->Open(norm_path, writable, options);
   if (status != Status::SUCCESS) {
     return status;
   }
@@ -231,7 +233,7 @@ Status TinyDBMImpl::Open(const std::string& path, bool writable, int32_t options
   }
   open_ = true;
   writable_ = writable;
-  path_ = path;
+  path_ = norm_path;
   return Status(Status::SUCCESS);
 }
 
@@ -463,7 +465,7 @@ Status TinyDBMImpl::ImportRecords() {
       }
       return Status(Status::BROKEN_DATA_ERROR, "odd number of records");
     }
-    DBM::RecordProcessorSet setter(&status, value, true);
+    DBM::RecordProcessorSet setter(&status, value, true, nullptr);
     ScopedHashLock record_lock(record_mutex_, key_store, true);
     const int64_t bucket_index = record_lock.GetBucketIndex();
     ProcessImpl(key_store, bucket_index, &setter, true);

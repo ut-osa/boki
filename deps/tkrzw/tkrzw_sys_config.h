@@ -21,61 +21,73 @@
 #if defined(__linux__)
 
 #define _SYS_LINUX_
+#define _SYS_POSIX_
 #define _TKRZW_OSNAME     "Linux"
 
 #elif defined(__FreeBSD__)
 
 #define _SYS_FREEBSD_
+#define _SYS_POSIX_
 #define _TKRZW_OSNAME     "FreeBSD"
 
 #elif defined(__NetBSD__)
 
 #define _SYS_NETBSD_
+#define _SYS_POSIX_
 #define _TKRZW_OSNAME     "NetBSD"
 
 #elif defined(__OpenBSD__)
 
 #define _SYS_OPENBSD_
+#define _SYS_POSIX_
 #define _TKRZW_OSNAME     "OpenBSD"
 
 #elif defined(__sun__) || defined(__sun)
 
 #define _SYS_SUNOS_
+#define _SYS_POSIX_
 #define _TKRZW_OSNAME     "SunOS"
 
 #elif defined(__hpux)
 
 #define _SYS_HPUX_
+#define _SYS_POSIX_
 #define _TKRZW_OSNAME     "HP-UX"
 
 #elif defined(__osf)
 
 #define _SYS_TRU64_
+#define _SYS_POSIX_
 #define _TKRZW_OSNAME     "Tru64"
 
 #elif defined(_AIX)
 
 #define _SYS_AIX_
+#define _SYS_POSIX_
 #define _TKRZW_OSNAME     "AIX"
 
 #elif defined(__APPLE__) && defined(__MACH__)
 
 #define _SYS_MACOSX_
+#define _SYS_POSIX_
 #define _TKRZW_OSNAME     "Mac OS X"
 
 #elif defined(_MSC_VER)
 
 #define _SYS_MSVC_
+#define _SYS_WINDOWS_
 #define _TKRZW_OSNAME     "Windows (VC++)"
 
 #elif defined(_WIN32)
 
 #define _SYS_MINGW_
+#define _SYS_WINDOWS_
 #define _TKRZW_OSNAME     "Windows (MinGW)"
 
 #elif defined(__CYGWIN__)
 
 #define _SYS_CYGWIN_
+#define _SYS_WINDOWS_
 #define _TKRZW_OSNAME     "Windows (Cygwin)"
 
 #else
@@ -85,9 +97,38 @@
 
 #endif
 
+#if !defined(_TKRZW_PREFIX)
+#define _TKRZW_PREFIX       "/"
+#endif
+#if !defined(_TKRZW_INCLUDEDIR)
+#define _TKRZW_INCLUDEDIR   "/"
+#endif
+#if !defined(_TKRZW_LIBDIR)
+#define _TKRZW_LIBDIR       "/"
+#endif
+#if !defined(_TKRZW_BINDIR)
+#define _TKRZW_BINDIR       "/"
+#endif
+#if !defined(_TKRZW_LIBEXECDIR)
+#define _TKRZW_LIBEXECDIR   "/"
+#endif
+#if !defined(_TKRZW_APPINC)
+#define _TKRZW_APPINC       ""
+#endif
+#if !defined(_TKRZW_APPLIBS)
+#define _TKRZW_APPLIBS      ""
+#endif
+#if !defined(_TKRZW_PKG_VERSION)
+#define _TKRZW_PKG_VERSION  "0.0.0"
+#endif
+#if !defined(_TKRZW_LIB_VERSION)
+#define _TKRZW_LIB_VERSION  "0.0.0"
+#endif
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <filesystem>
 #include <fstream>
 #include <functional>
 #include <initializer_list>
@@ -121,6 +162,8 @@
 #include <cstdint>
 #include <cstring>
 
+#if defined(_SYS_POSIX_)
+
 extern "C" {
 #include <unistd.h>
 #include <sys/param.h>
@@ -134,6 +177,21 @@ extern "C" {
 #include <fcntl.h>
 #include <dirent.h>
 }  // extern "C"
+
+#endif
+
+#if defined(_SYS_WINDOWS_)
+
+#define NOMINMAX
+#include <windows.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <direct.h>
+#include <io.h>
+#include <process.h>
+
+#endif
 
 namespace tkrzw {
 
@@ -230,10 +288,24 @@ size_t WriteVarNum(void* buf, uint64_t num);
 size_t ReadVarNum(const void* buf, size_t size, uint64_t* np);
 
 /**
+ * Reads a number in variable length format from a buffer, without size checking.
+ * @param buf The source buffer.
+ * @param np The pointer to the variable into which the read number is assigned.
+ * @return The length of the read region.
+ */
+size_t ReadVarNum(const void* buf, uint64_t* np);
+
+/**
  * Checks the size of variable length format of a number.
  * @return The size of variable length format.
  */
 size_t SizeVarNum(uint64_t num);
+
+#if defined(_SYS_POSIX_)
+constexpr bool _IS_POSIX = true;
+#else
+constexpr bool _IS_POSIX = false;
+#endif
 
 #if defined(_TKRWX_BIGEND)
 constexpr bool _IS_BIG_ENDIAN = true;
@@ -406,6 +478,20 @@ inline size_t ReadVarNum(const void* buf, size_t size, uint64_t* np) {
       *np = 0;
       return 0;
     }
+    c = *rp;
+    num = (num << 7) + (c & 0x7f);
+    rp++;
+  } while (c >= 0x80);
+  *np = num;
+  return rp - (const unsigned char*)buf;
+}
+
+inline size_t ReadVarNum(const void* buf, uint64_t* np) {
+  assert(buf != nullptr && np != nullptr);
+  const unsigned char* rp = (const unsigned char*)buf;
+  uint64_t num = 0;
+  uint32_t c;
+  do {
     c = *rp;
     num = (num << 7) + (c & 0x7f);
     rp++;

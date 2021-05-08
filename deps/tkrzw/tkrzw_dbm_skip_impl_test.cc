@@ -11,6 +11,8 @@
  * and limitations under the License.
  *************************************************************************************************/
 
+#include "tkrzw_sys_config.h"
+
 #include "gtest/gtest.h"
 #include "gmock/gmock.h"
 
@@ -19,10 +21,10 @@
 #include "tkrzw_file.h"
 #include "tkrzw_file_mmap.h"
 #include "tkrzw_file_pos.h"
+#include "tkrzw_file_std.h"
 #include "tkrzw_file_util.h"
 #include "tkrzw_lib_common.h"
 #include "tkrzw_str_util.h"
-#include "tkrzw_sys_config.h"
 
 using namespace testing;
 
@@ -201,7 +203,7 @@ TEST(DBMSkipImplTest, RecordSorter) {
   const std::string base_path = tmp_dir.MakeUniquePath();
   const std::string skip_path = tmp_dir.MakeUniquePath();
   constexpr int32_t num_records = 100;
-  tkrzw::RecordSorter sorter(base_path, 100);
+  tkrzw::RecordSorter sorter(base_path, 100, true);
   EXPECT_FALSE(sorter.IsUpdated());
   std::map<std::string, std::string> map;
   for (int32_t i = 1; i <= num_records; ++i) {

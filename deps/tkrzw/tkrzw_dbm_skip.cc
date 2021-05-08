@@ -11,6 +11,8 @@
  * and limitations under the License.
  *************************************************************************************************/
 
+#include "tkrzw_sys_config.h"
+
 #include "tkrzw_dbm.h"
 #include "tkrzw_dbm_common_impl.h"
 #include "tkrzw_dbm_skip.h"
@@ -18,10 +20,10 @@
 #include "tkrzw_file.h"
 #include "tkrzw_file_mmap.h"
 #include "tkrzw_file_pos.h"
+#include "tkrzw_file_std.h"
 #include "tkrzw_file_util.h"
 #include "tkrzw_lib_common.h"
 #include "tkrzw_str_util.h"
-#include "tkrzw_sys_config.h"
 #include "tkrzw_thread_util.h"
 
 namespace tkrzw {
@@ -193,6 +195,7 @@ Status SkipDBMImpl::Open(const std::string& path, bool writable,
   if (open_) {
     return Status(Status::PRECONDITION_ERROR, "opened database");
   }
+  const std::string norm_path = NormalizePath(path);
   if (tuning_params.offset_width >= 0) {
     offset_width_ = std::min(std::max(static_cast<uint32_t>(
         tuning_params.offset_width), MIN_OFFSET_WIDTH), MAX_OFFSET_WIDTH);
@@ -214,7 +217,7 @@ Status SkipDBMImpl::Open(const std::string& path, bool writable,
     max_cached_records_ = std::min(std::max(
         tuning_params.max_cached_records, MIN_MAX_CACHED_RECORDS), MAX_MAX_CACHED_RECORDS);
   }
-  Status status = file_->Open(path, writable, options);
+  Status status = file_->Open(norm_path, writable, options);
   if (status != Status::SUCCESS) {
     return status;
   }
@@ -239,7 +242,7 @@ Status SkipDBMImpl::Open(const std::string& path, bool writable,
   if (file_size_ != file_->GetSizeSimple()) {
     healthy = false;
   }
-  path_ = path;
+  path_ = norm_path;
   if (writable) {
     status = PrepareStorage();
     if (status != Status::SUCCESS) {
@@ -636,8 +639,13 @@ Status SkipDBMImpl::Rebuild(const SkipDBM::TuningParameters& tuning_params) {
     CleanUp();
     return status;
   }
-  status |= RenameFile(rebuild_path, path_);
-  status |= file_->Close();
+  if (IS_POSIX) {
+    status |= rebuild_file->Rename(path_);
+    status |= file_->Close();
+  } else {
+    status |= file_->Close();
+    status |= rebuild_file->Rename(path_);
+  }
   file_ = std::move(rebuild_file);
   const uint32_t db_type = db_type_;
   const std::string opaque = opaque_;
@@ -944,7 +952,8 @@ Status SkipDBMImpl::LoadMetadata() {
 
 Status SkipDBMImpl::PrepareStorage() {
   const std::string sorter_path = path_ + SORTER_FILE_SUFFIX;
-  record_sorter_ = std::make_unique<RecordSorter>(sorter_path, sort_mem_size_);
+  const bool use_mmap = file_->IsMemoryMapping();
+  record_sorter_ = std::make_unique<RecordSorter>(sorter_path, sort_mem_size_, use_mmap);
   if (insert_in_order_) {
     const std::string sorted_path = path_ + SORTED_FILE_SUFFIX;
     sorted_file_ = file_->MakeFile();
@@ -972,7 +981,10 @@ Status SkipDBMImpl::FinishStorage(SkipDBM::ReducerType reducer) {
   if (reducer == nullptr && sorted_file_ != nullptr &&
       file_->GetSizeSimple() == static_cast<int64_t>(METADATA_SIZE) &&
       !record_sorter_->IsUpdated()) {
-    status = RenameFile(sorted_path, path_);
+    if (!IS_POSIX) {
+      file_->Close();
+    }
+    status = sorted_file_->Rename(path_);
     if (status != Status::SUCCESS) {
       return status;
     }
@@ -980,7 +992,7 @@ Status SkipDBMImpl::FinishStorage(SkipDBM::ReducerType reducer) {
   } else {
     std::unique_ptr<File> swap_file(nullptr);
     if (file_->GetSizeSimple() > static_cast<int64_t>(METADATA_SIZE)) {
-      status = RenameFile(path_, swap_path);
+      status = file_->Rename(swap_path);
       if (status != Status::SUCCESS) {
         return status;
       }
@@ -988,7 +1000,7 @@ Status SkipDBMImpl::FinishStorage(SkipDBM::ReducerType reducer) {
       file_ = swap_file->MakeFile();
       status = file_->Open(path_, true, File::OPEN_TRUNCATE);
       if (status != Status::SUCCESS) {
-        RenameFile(swap_path, path_);
+        swap_file->Rename(path_);
         return status;
       }
       file_->Truncate(METADATA_SIZE);
@@ -1360,7 +1372,7 @@ Status SkipDBMIteratorImpl::Process(DBM::RecordProcessor* proc, bool writable) {
     if (status != Status::SUCCESS) {
       return status;
     }
-    if (new_value.data() == DBM::RecordProcessor::REMOVE) {
+    if (new_value.data() == DBM::RecordProcessor::REMOVE.data()) {
       record_offset_ += record_size_;
       record_index_++;
       record_size_ = 0;
@@ -1452,15 +1464,19 @@ Status SkipDBM::Process(std::string_view key, RecordProcessor* proc, bool writab
   return impl_->Process(key, proc, writable);
 }
 
-Status SkipDBM::Set(std::string_view key, std::string_view value, bool overwrite) {
-  if (overwrite) {
+Status SkipDBM::Set(std::string_view key, std::string_view value, bool overwrite,
+                    std::string* old_value) {
+  if (overwrite && old_value == nullptr) {
     return impl_->Insert(key, value);
   }
-  return DBM::Set(key, value, false);
+  return DBM::Set(key, value, false, old_value);
 }
 
-Status SkipDBM::Remove(std::string_view key) {
-  return impl_->Insert(key, RecordProcessor::REMOVE);
+Status SkipDBM::Remove(std::string_view key, std::string* old_value) {
+  if (old_value == nullptr) {
+    return impl_->Insert(key, RecordProcessor::REMOVE);
+  }
+  return DBM::Remove(key, old_value);
 }
 
 Status SkipDBM::GetByIndex(int64_t index, std::string* key, std::string* value) {

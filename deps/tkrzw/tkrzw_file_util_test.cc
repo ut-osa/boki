@@ -11,12 +11,13 @@
  * and limitations under the License.
  *************************************************************************************************/
 
+#include "tkrzw_sys_config.h"
+
 #include "gtest/gtest.h"
 #include "gmock/gmock.h"
 
 #include "tkrzw_file_util.h"
 #include "tkrzw_lib_common.h"
-#include "tkrzw_sys_config.h"
 
 using namespace testing;
 
@@ -58,6 +59,7 @@ TEST(FileUtilTest, NormalizePath) {
   EXPECT_EQ("a", tkrzw::NormalizePath("a/b/c/../.."));
   EXPECT_EQ("/a/d", tkrzw::NormalizePath("/a/./b/./c/../../d"));
   EXPECT_EQ("/d", tkrzw::NormalizePath("/a/../b/../c/../../d"));
+  EXPECT_EQ("c:/tako/uni/kani", tkrzw::NormalizePath("c:/tako/ika/../uni/./kani"));
 }
 
 TEST(FileUtilTest, PathToBaseName) {
@@ -145,8 +147,10 @@ TEST(FileUtilTest, FileOperations) {
   std::string content;
   EXPECT_EQ(tkrzw::Status::SUCCESS, tkrzw::ReadFile(file_path, &content));
   EXPECT_EQ("abc\ndef\n", content);
+  EXPECT_EQ("abc\ndef\n", tkrzw::ReadFileSimple(file_path));
   EXPECT_EQ(tkrzw::Status::SUCCESS, tkrzw::RemoveFile(file_path));
   EXPECT_EQ(tkrzw::Status::NOT_FOUND_ERROR, tkrzw::ReadFile(file_path, &content));
+  EXPECT_EQ("miss", tkrzw::ReadFileSimple(file_path, "miss"));
   const std::string& new_file_path =
       tkrzw::JoinPath(base_dir, "tkrzw-test-" + tkrzw::MakeTemporaryName());
   EXPECT_EQ(tkrzw::Status::SUCCESS, tkrzw::WriteFile(file_path, "abc\ndef\nefg\n"));
@@ -157,16 +161,22 @@ TEST(FileUtilTest, FileOperations) {
   EXPECT_EQ(tkrzw::Status::SUCCESS, tkrzw::ReadFile(new_file_path, &content));
   EXPECT_EQ("abc\n", content);
   EXPECT_EQ(tkrzw::Status::SUCCESS, tkrzw::RemoveFile(new_file_path));
+  EXPECT_EQ(tkrzw::Status::SUCCESS, tkrzw::WriteFile(file_path, "old"));
+  EXPECT_EQ(tkrzw::Status::SUCCESS, tkrzw::WriteFile(new_file_path, "new"));
+  EXPECT_EQ(tkrzw::Status::SUCCESS, tkrzw::RenameFile(file_path, new_file_path));
+  EXPECT_FALSE(tkrzw::PathIsFile(file_path));
+  EXPECT_EQ("old", tkrzw::ReadFileSimple(new_file_path));
+  EXPECT_EQ(tkrzw::Status::SUCCESS, tkrzw::RemoveFile(new_file_path));
 }
 
-TEST(FileUtilTest, CopyFile) {
+TEST(FileUtilTest, CopyFileData) {
   const std::string& base_dir = tkrzw::GetPathToTemporaryDirectory();
   const std::string& src_path =
       tkrzw::JoinPath(base_dir, "tkrzw-test-" + tkrzw::MakeTemporaryName());
   const std::string& dest_path =
       tkrzw::JoinPath(base_dir, "tkrzw-test-" + tkrzw::MakeTemporaryName());
   EXPECT_EQ(tkrzw::Status::SUCCESS, tkrzw::WriteFile(src_path, "abcd0123"));
-  EXPECT_EQ(tkrzw::Status::SUCCESS, tkrzw::CopyFile(src_path, dest_path));
+  EXPECT_EQ(tkrzw::Status::SUCCESS, tkrzw::CopyFileData(src_path, dest_path));
   std::string content;
   EXPECT_EQ(tkrzw::Status::SUCCESS, tkrzw::ReadFile(dest_path, &content));
   EXPECT_EQ("abcd0123", content);
@@ -175,7 +185,7 @@ TEST(FileUtilTest, CopyFile) {
     src_content.append("0123456789");
   }
   EXPECT_EQ(tkrzw::Status::SUCCESS, tkrzw::WriteFile(src_path, src_content));
-  EXPECT_EQ(tkrzw::Status::SUCCESS, tkrzw::CopyFile(src_path, dest_path));
+  EXPECT_EQ(tkrzw::Status::SUCCESS, tkrzw::CopyFileData(src_path, dest_path));
   std::string dest_content;
   EXPECT_EQ(tkrzw::Status::SUCCESS, tkrzw::ReadFile(dest_path, &dest_content));
   EXPECT_EQ(src_content, dest_content);
@@ -206,6 +216,16 @@ TEST(FileUtilTest, DirectoryOperation) {
   EXPECT_EQ(tkrzw::Status::INFEASIBLE_ERROR, tkrzw::RemoveDirectory(dir_path));
   EXPECT_EQ(tkrzw::Status::SUCCESS, tkrzw::RemoveDirectory(dir_path, true));
   EXPECT_EQ(tkrzw::Status::NOT_FOUND_ERROR, tkrzw::RemoveDirectory(dir_path, true));
+  const std::string& new_dir_path =
+      tkrzw::JoinPath(base_dir, "tkrzw-test-" + tkrzw::MakeTemporaryName());
+  EXPECT_EQ(tkrzw::Status::SUCCESS, tkrzw::MakeDirectory(dir_path));
+  EXPECT_EQ(tkrzw::Status::SUCCESS, tkrzw::WriteFile(tkrzw::JoinPath(dir_path, "child"), ""));
+  EXPECT_EQ(tkrzw::Status::SUCCESS, tkrzw::MakeDirectory(new_dir_path));
+  EXPECT_EQ(tkrzw::Status::SUCCESS, tkrzw::RenameFile(dir_path, new_dir_path));
+  EXPECT_FALSE(tkrzw::PathIsDirectory(dir_path));
+  child_names.clear();
+  EXPECT_EQ(tkrzw::Status::SUCCESS, tkrzw::ReadDirectory(new_dir_path, &child_names));
+  EXPECT_THAT(child_names, UnorderedElementsAre("child"));
 }
 
 TEST(FileUtilTest, TemporaryDirectory) {

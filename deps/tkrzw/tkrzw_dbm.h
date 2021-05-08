@@ -14,6 +14,7 @@
 #ifndef _TKRZW_DBM_H
 #define _TKRZW_DBM_H
 
+#include <functional>
 #include <initializer_list>
 #include <memory>
 #include <string>
@@ -39,9 +40,17 @@ class DBM {
    */
   class RecordProcessor {
    public:
-    /** The special string indicating no operation. */
+    /**
+     * The special string indicating no operation.
+     * The uniqueness comes from the address of the data region.  So, checking should be done
+     * like your_value.data() == NOOP.data().
+     */
     static const std::string_view NOOP;
-    /** The special string indicating removing operation. */
+    /**
+     * The special string indicating removing operation.
+     * The uniqueness comes from the address of the data region.  So, checking should be done
+     * like your_value.data() == REMOVE.data().
+     */
     static const std::string_view REMOVE;
 
     /**
@@ -63,14 +72,52 @@ class DBM {
 
     /**
      * Processes an empty record space.
-     * @param key The key of the existing record.
-     * @return A string reference to NOOP, REMOVE, or a strint of new value.
+     * @param key The key specified by the caller.
+     * @return A string reference to NOOP, REMOVE, or the new value.
      * @details The memory referred to by the return value must be alive until the end of
      * the life-span of this object or until this function is called next time.
      */
     virtual std::string_view ProcessEmpty(std::string_view key) {
       return NOOP;
     }
+  };
+
+  /**
+   * Lambda function type to process a record.
+   * @details The first parameter is the key of the record.  The second parameter is the value
+   * of the existing record, or NOOP if it the record doesn't exist.  The return value is a
+   * string reference to NOOP, REMOVE, or the new record value.
+   */
+  typedef std::function<std::string_view(std::string_view, std::string_view)> RecordLambdaType;
+
+  /**
+   * Record processor to implement DBM::Process with a lambda function.
+   */
+  class RecordProcessorLambda final : public RecordProcessor {
+   public:
+    /**
+     * Constructor.
+     * @param proc_lambda A lambda function to process a record.
+     */
+    explicit RecordProcessorLambda(RecordLambdaType proc_lambda) : proc_lambda_(proc_lambda) {}
+
+    /**
+     * Processes an existing record.
+     */
+    std::string_view ProcessFull(std::string_view key, std::string_view value) override {
+      return proc_lambda_(key, value);
+    }
+
+    /**
+     * Processes an empty record space.
+     */
+    std::string_view ProcessEmpty(std::string_view key) override {
+      return proc_lambda_(key, NOOP);
+    }
+
+   private:
+    // Lambda function to process a record.
+    RecordLambdaType proc_lambda_;
   };
 
   /**
@@ -119,15 +166,20 @@ class DBM {
      * Constructor.
      * @param status The pointer to a status object to contain the result status.
      * @param value A string of the value to set.
-     * @param overwrite Whether to overwrite the existing value
+     * @param overwrite Whether to overwrite the existing value.
+     * @param old_value The pointer to a string object to contain the existing value.
      */
-    RecordProcessorSet(Status* status, std::string_view value, bool overwrite)
-        : status_(status), value_(value), overwrite_(overwrite) {}
+    RecordProcessorSet(Status* status, std::string_view value, bool overwrite,
+                       std::string* old_value)
+        : status_(status), value_(value), overwrite_(overwrite), old_value_(old_value) {}
 
     /**
      * Processes an existing record.
      */
     std::string_view ProcessFull(std::string_view key, std::string_view value) override {
+      if (old_value_ != nullptr) {
+        *old_value_ = value;
+      }
       if (overwrite_) {
         return value_;
       }
@@ -149,6 +201,46 @@ class DBM {
     std::string_view value_;
     /** True to overwrite the existing value. */
     bool overwrite_;
+    /** String to store the old value. */
+    std::string* old_value_;
+  };
+
+  /**
+   * Record processor to implement DBM::Remove.
+   */
+  class RecordProcessorRemove final : public RecordProcessor {
+   public:
+    /**
+     * Constructor.
+     * @param status The pointer to a status object to contain the result status.
+     * @param old_value The pointer to a string object to contain the existing value.
+     */
+    explicit RecordProcessorRemove(Status* status, std::string* old_value)
+        : status_(status), old_value_(old_value) {}
+
+    /**
+     * Processes an existing record.
+     */
+    std::string_view ProcessFull(std::string_view key, std::string_view value) override {
+      if (old_value_ != nullptr) {
+        *old_value_ = value;
+      }
+      return REMOVE;
+    }
+
+    /**
+     * Processes an empty record space.
+     */
+    std::string_view ProcessEmpty(std::string_view key) override {
+      status_->Set(Status::NOT_FOUND_ERROR);
+      return NOOP;
+    }
+
+   private:
+    /** Status to report. */
+    Status* status_;
+    /** String to store the old value. */
+    std::string* old_value_;
   };
 
   /**
@@ -306,37 +398,6 @@ class DBM {
     int64_t initial_;
     /** The new string value. */
     std::string value_;
-  };
-
-  /**
-   * Record processor to implement DBM::Remove.
-   */
-  class RecordProcessorRemove final : public RecordProcessor {
-   public:
-    /**
-     * Constructor.
-     * @param status The pointer to a status object to contain the result status.
-     */
-    explicit RecordProcessorRemove(Status* status) : status_(status) {}
-
-    /**
-     * Processes an existing record.
-     */
-    std::string_view ProcessFull(std::string_view key, std::string_view value) override {
-      return REMOVE;
-    }
-
-    /**
-     * Processes an empty record space.
-     */
-    std::string_view ProcessEmpty(std::string_view key) override {
-      status_->Set(Status::NOT_FOUND_ERROR);
-      return NOOP;
-    }
-
-   private:
-    /** Status to report. */
-    Status* status_;
   };
 
   /**
@@ -515,6 +576,19 @@ class DBM {
     virtual Status Process(RecordProcessor* proc, bool writable) = 0;
 
     /**
+     * Processes the current record with a lambda function.
+     * @param rec_lambda The lambda function to process a record.  The first parameter is the key
+     * of the record.  The second parameter is the value of the existing record.  The return
+     * value is a string reference to NOOP, REMOVE, or the new record value.
+     * @param writable True if the processor can edit the record.
+     * @return The result status.
+     */
+    virtual Status Process(RecordLambdaType rec_lambda, bool writable) {
+      RecordProcessorLambda proc(rec_lambda);
+      return Process(&proc, writable);
+    }
+
+    /**
      * Gets the key and the value of the current record of the iterator.
      * @param key The pointer to a string object to contain the record key.  If it is nullptr,
      * the key data is ignored.
@@ -586,16 +660,16 @@ class DBM {
   };
 
   /**
-   * File processor to implement DBM::CopyFile.
+   * File processor to implement DBM::CopyFileData.
    */
-  class FileProcessorCopyFile : public FileProcessor {
+  class FileProcessorCopyFileData : public FileProcessor {
    public:
     /**
      * Constructor.
      * @param status The pointer to a status object to contain the result status.
      * @param dest_path The destination path for copying.
      */
-    FileProcessorCopyFile(Status* status, const std::string dest_path);
+    FileProcessorCopyFileData(Status* status, const std::string dest_path);
 
     /**
      * Process a file.
@@ -639,6 +713,21 @@ class DBM {
    * Otherwise, the ProcessEmpty of the processor is called.
    */
   virtual Status Process(std::string_view key, RecordProcessor* proc, bool writable) = 0;
+
+  /**
+   * Processes a record with a lambda function.
+   * @param key The key of the record.
+   * @param rec_lambda The lambda function to process a record.  The first parameter is the key
+   * of the record.  The second parameter is the value of the existing record, or NOOP if it the
+   * record doesn't exist.  The return value is a string reference to NOOP, REMOVE, or the new
+   * record value.
+   * @param writable True if the processor can edit the record.
+   * @return The result status.
+   */
+  virtual Status Process(std::string_view key, RecordLambdaType rec_lambda, bool writable) {
+    RecordProcessorLambda proc(rec_lambda);
+    return Process(key, &proc, writable);
+  }
 
   /**
    * Gets the value of a record of a key.
@@ -708,11 +797,14 @@ class DBM {
    * @param overwrite Whether to overwrite the existing value if there's a record with the same
    * key.  If true, the existing value is overwritten by the new value.  If false, the operation
    * is given up and an error status is returned.
+   * @param old_value The pointer to a string object to contain the old value.  Assignment is done
+   * even on the duplication error.  If it is nullptr, it is ignored.
    * @return The result status.
    */
-  virtual Status Set(std::string_view key, std::string_view value, bool overwrite = true) {
+  virtual Status Set(std::string_view key, std::string_view value, bool overwrite = true,
+                     std::string* old_value = nullptr) {
     Status impl_status(Status::SUCCESS);
-    RecordProcessorSet proc(&impl_status, value, overwrite);
+    RecordProcessorSet proc(&impl_status, value, overwrite, old_value);
     const Status status = Process(key, &proc, true);
     if (status != Status::SUCCESS) {
       return status;
@@ -762,11 +854,14 @@ class DBM {
   /**
    * Removes a record of a key.
    * @param key The key of the record.
+   * @param old_value The pointer to a string object to contain the old value.  If it is nullptr,
+   * it is ignored.
+   * even on the duplication error.
    * @return The result status.
    */
-  virtual Status Remove(std::string_view key) {
+  virtual Status Remove(std::string_view key, std::string* old_value = nullptr) {
     Status impl_status(Status::SUCCESS);
-    RecordProcessorRemove proc(&impl_status);
+    RecordProcessorRemove proc(&impl_status, old_value);
     const Status status = Process(key, &proc, true);
     if (status != Status::SUCCESS) {
       return status;
@@ -852,6 +947,22 @@ class DBM {
    * iteration.
    */
   virtual Status ProcessEach(RecordProcessor* proc, bool writable) = 0;
+
+  /**
+   * Processes each and every record in the database with a lambda function.
+   * @param rec_lambda The lambda function to process a record.  The first parameter is the key
+   * of the record.  The second parameter is the value of the existing record, or NOOP if it the
+   * record doesn't exist.  The return value is a string reference to NOOP, REMOVE, or the new
+   * record value.
+   * @param writable True if the processor can edit the record.
+   * @return The result status.
+   * @details The lambda function is called repeatedly for each record.  It is also called once
+   * before the iteration and once after the iteration with both the key and the value being NOOP.
+   */
+  virtual Status ProcessEach(RecordLambdaType rec_lambda, bool writable) {
+    RecordProcessorLambda proc(rec_lambda);
+    return ProcessEach(&proc, writable);
+  }
 
   /**
    * Gets the number of records.
@@ -946,9 +1057,9 @@ class DBM {
    * @details Copying is done while the content is synchronized and stable.  So, this method is
    * suitable for making a backup file while running a database service.
    */
-  virtual Status CopyFile(const std::string& dest_path) {
+  virtual Status CopyFileData(const std::string& dest_path) {
     Status impl_status(Status::SUCCESS);
-    FileProcessorCopyFile proc(&impl_status, dest_path);
+    FileProcessorCopyFileData proc(&impl_status, dest_path);
     if (IsWritable()) {
       const Status status = Synchronize(false, &proc);
       if (status != Status::SUCCESS) {

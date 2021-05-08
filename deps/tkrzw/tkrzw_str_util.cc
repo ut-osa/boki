@@ -11,11 +11,49 @@
  * and limitations under the License.
  *************************************************************************************************/
 
-#include "tkrzw_lib_common.h"
-#include "tkrzw_str_util.h"
 #include "tkrzw_sys_config.h"
 
+#include "tkrzw_lib_common.h"
+#include "tkrzw_str_util.h"
+
 namespace tkrzw {
+
+#if defined(_SYS_POSIX_) && !defined(_TKRZW_STDONLY)
+
+inline void* tkrzw_memmem(const void* haystack, size_t haystacklen,
+                          const void* needle, size_t needlelen) {
+  return memmem(haystack, haystacklen, needle, needlelen);
+}
+
+#else
+
+inline void* tkrzw_memmem(const void* haystack, size_t haystacklen,
+                          const void* needle, size_t needlelen) {
+  if (needlelen > haystacklen) {
+    return nullptr;
+  }
+  const char* haystack_pivot = static_cast<const char*>(haystack);
+  const char* haystack_end = haystack_pivot + haystacklen - needlelen + 1;
+  const char* needle_end = static_cast<const char*>(needle) + needlelen;
+  while (haystack_pivot < haystack_end) {
+    const char* haystack_cursor = haystack_pivot;
+    const char* needle_cursor = static_cast<const char*>(needle);
+    bool match = true;
+    while (needle_cursor < needle_end) {
+      if (*(haystack_cursor++) != *(needle_cursor++)) {
+        match = false;
+        break;
+      }
+    }
+    if (match) {
+      return static_cast<void*>(const_cast<char*>(haystack_pivot));
+    }
+    haystack_pivot++;
+  }
+  return nullptr;
+}
+
+#endif
 
 int64_t StrToInt(std::string_view str, int64_t defval) {
   const unsigned char* rp = reinterpret_cast<const unsigned char*>(str.data());
@@ -358,6 +396,18 @@ void VSPrintF(std::string* dest, const char* format, va_list ap) {
   }
 }
 
+std::string ToString(double data) {
+  char buf[NUM_BUFFER_SIZE];
+  int32_t size = std::sprintf(buf, "%.6f", data);
+  while (size > 0 && buf[size - 1] == '0') {
+    buf[size--] = '\0';
+  }
+  if (size > 0 && buf[size - 1] == '.') {
+    buf[size--] = '\0';
+  }
+  return std::string(buf, size);
+}
+
 bool StrToBool(std::string_view str, bool defval) {
   const std::string& lower = StrLowerCase(StrStripSpace(str));
   if (lower == "true" || lower == "t" || lower == "yes" || lower == "y" || lower == "1") {
@@ -503,8 +553,38 @@ std::string StrLowerCase(std::string_view str) {
   return converted;
 }
 
+std::string StrReplace(std::string_view str, std::string_view before, std::string_view after) {
+  if (before.size() > str.size() || before.empty()) {
+    return std::string(str);
+  }
+  std::string result;
+  result.reserve(str.size());
+  const size_t end = str.size() - before.size() + 1;
+  size_t i = 0;
+  while (i < end) {
+    bool match = true;
+    for (size_t j = 0; j < before.size(); j++) {
+      if (str[i + j] != before[j]) {
+        match = false;
+        break;
+      }
+    }
+    if (match) {
+      result.append(after);
+      i += before.size();
+    } else {
+      result.append(1, str[i]);
+      i++;
+    }
+  }
+  if (i < str.size()) {
+    result.append(str.substr(i));
+  }
+  return result;
+}
+
 bool StrContains(std::string_view text, std::string_view pattern) {
-  return memmem(text.data(), text.size(), pattern.data(), pattern.size()) != nullptr;
+  return tkrzw_memmem(text.data(), text.size(), pattern.data(), pattern.size()) != nullptr;
 }
 
 bool StrBeginsWith(std::string_view text, std::string_view pattern) {
@@ -523,7 +603,7 @@ bool StrEndsWith(std::string_view text, std::string_view pattern) {
 }
 
 int32_t StrCaseCompare(std::string_view a, std::string_view b) {
-  int32_t length = std::min(a.size(), b.size());
+  const int32_t length = std::min(a.size(), b.size());
   for (int32_t i = 0; i < length; i++) {
     int32_t ac = static_cast<unsigned char>(a[i]);
     if (ac >= 'A' && ac <= 'Z') {
@@ -595,7 +675,7 @@ int32_t StrSearchMemchr(std::string_view text, std::string_view pattern) {
 
 int32_t StrSearchMemmem(std::string_view text, std::string_view pattern) {
   const void* result =
-      memmem(text.data(), text.size(), pattern.data(), pattern.size());
+      tkrzw_memmem(text.data(), text.size(), pattern.data(), pattern.size());
   if (result == nullptr) {
     return -1;
   }
@@ -1058,13 +1138,15 @@ std::string StrSqueezeAndStripSpace(std::string_view str) {
   return converted;
 }
 
-std::string StrTrimForTSV(std::string_view str) {
+std::string StrTrimForTSV(std::string_view str, bool keep_tab) {
   std::string converted;
   converted.reserve(str.size());
   for (size_t i = 0; i < str.size(); i++) {
     int32_t c = static_cast<unsigned char>(str[i]);
     if (c <= ' ' || c == 0x7f) {
-      c = ' ';
+      if (c != '\t' || !keep_tab) {
+        c = ' ';
+      }
     }
     converted.push_back(c);
   }

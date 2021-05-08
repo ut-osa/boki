@@ -1,5 +1,5 @@
 /*************************************************************************************************
- * Sharding datatabase manager adapter
+ * Sharding database manager adapter
  *
  * Copyright 2020 Google LLC
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file
@@ -251,7 +251,7 @@ class ShardDBM final : public ParamDBM {
    */
   Status OpenAdvanced(const std::string& path, bool writable,
                       int32_t options = File::OPEN_DEFAULT,
-                      const std::map<std::string, std::string>& params = {});
+                      const std::map<std::string, std::string>& params = {}) override;
 
   /**
    * Closes the database file.
@@ -286,16 +286,21 @@ class ShardDBM final : public ParamDBM {
    * @param overwrite Whether to overwrite the existing value if there's a record with the same
    * key.  If true, the existing value is overwritten by the new value.  If false, the operation
    * is given up and an error status is returned.
+   * @param old_value The pointer to a string object to contain the old value.  Assignment is done
+   * even on the duplication error.  If it is nullptr, it is ignored.
    * @return The result status.
    */
-  Status Set(std::string_view key, std::string_view value, bool overwrite = true) override;
+  Status Set(std::string_view key, std::string_view value, bool overwrite = true,
+             std::string* old_value = nullptr) override;
 
   /**
    * Removes a record of a key.
    * @param key The key of the record.
+   * @param old_value The pointer to a string object to contain the old value.  If it is nullptr,
+   * it is ignored.
    * @return The result status.
    */
-  Status Remove(std::string_view key) override;
+  Status Remove(std::string_view key, std::string* old_value = nullptr) override;
 
   /**
    * Appends data at the end of a record of a key.
@@ -360,7 +365,7 @@ class ShardDBM final : public ParamDBM {
    * @return The result status.
    * @details The parameters work in the same way as with PolyDBM::RebuildAdvanced.
    */
-  Status RebuildAdvanced(const std::map<std::string, std::string>& params = {});
+  Status RebuildAdvanced(const std::map<std::string, std::string>& params = {}) override;
 
   /**
    * Checks whether the database should be rebuilt.
@@ -392,7 +397,7 @@ class ShardDBM final : public ParamDBM {
    * @details The parameters work in the same way as with PolyDBM::OpenAdvanced.
    */
   Status SynchronizeAdvanced(bool hard, FileProcessor* proc = nullptr,
-                             const std::map<std::string, std::string>& params = {});
+                             const std::map<std::string, std::string>& params = {}) override;
 
   /**
    * Copies the content of the database files to other files.
@@ -402,7 +407,7 @@ class ShardDBM final : public ParamDBM {
    * suitable for making a backup file while running a database service.  Each shard file is
    * copied and the destination file also has the same suffix.
    */
-  Status CopyFile(const std::string& dest_path) override;
+  Status CopyFileData(const std::string& dest_path) override;
 
   /**
    * Inspects the database.

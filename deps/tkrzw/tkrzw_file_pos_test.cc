@@ -11,6 +11,8 @@
  * and limitations under the License.
  *************************************************************************************************/
 
+#include "tkrzw_sys_config.h"
+
 #include "gtest/gtest.h"
 #include "gmock/gmock.h"
 
@@ -19,7 +21,6 @@
 #include "tkrzw_file_pos.h"
 #include "tkrzw_file_util.h"
 #include "tkrzw_lib_common.h"
-#include "tkrzw_sys_config.h"
 
 using namespace testing;
 
@@ -80,6 +81,10 @@ TEST_F(PositionalParallelFileTest, FlatRecord) {
   FlatRecordTest();
 }
 
+TEST_F(PositionalParallelFileTest, Rename) {
+  RenameTest();
+}
+
 class PositionalAtomicFileTest : public PositionalFileTest<tkrzw::PositionalAtomicFile> {};
 
 TEST_F(PositionalAtomicFileTest, Attributes) {
@@ -126,6 +131,10 @@ TEST_F(PositionalAtomicFileTest, FileReader) {
 
 TEST_F(PositionalAtomicFileTest, FlatRecord) {
   FlatRecordTest();
+}
+
+TEST_F(PositionalAtomicFileTest, Rename) {
+  RenameTest();
 }
 
 // END OF FILE

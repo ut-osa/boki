@@ -11,20 +11,33 @@
  * and limitations under the License.
  *************************************************************************************************/
 
-#include "tkrzw_lib_common.h"
 #include "tkrzw_sys_config.h"
+
+#include "tkrzw_lib_common.h"
 
 namespace tkrzw {
 
-const int32_t PAGE_SIZE = sysconf(_SC_PAGESIZE);
+#if defined(_SYS_WINDOWS_)
 
+const int32_t PAGE_SIZE = 4096;
 const char* const PACKAGE_VERSION = _TKRZW_PKG_VERSION;;
-
 const char* const LIBRARY_VERSION = _TKRZW_LIB_VERSION;;
-
 const char* const OS_NAME = _TKRZW_OSNAME;
-
+const bool IS_POSIX = _IS_POSIX;
 const bool IS_BIG_ENDIAN = _IS_BIG_ENDIAN;
+
+constexpr int32_t EDQUOT = 10001;
+
+#else
+
+const int32_t PAGE_SIZE = sysconf(_SC_PAGESIZE);
+const char* const PACKAGE_VERSION = _TKRZW_PKG_VERSION;;
+const char* const LIBRARY_VERSION = _TKRZW_LIB_VERSION;;
+const char* const OS_NAME = _TKRZW_OSNAME;
+const bool IS_POSIX = _IS_POSIX;
+const bool IS_BIG_ENDIAN = _IS_BIG_ENDIAN;
+
+#endif
 
 const Status& Status::OrDie() const {
   if (code_ != SUCCESS) {
@@ -131,8 +144,8 @@ Status GetErrnoStatus(const char* call_name, int32_t sys_err_num) {
     case EISDIR: return Status(Status::INFEASIBLE_ERROR, msg("duplicated directory"));
     case ELOOP: return Status(Status::INFEASIBLE_ERROR, msg("looped path"));
     case EFBIG: return Status(Status::INFEASIBLE_ERROR, msg("too big file"));
-    case ENOSPC: return Status(Status::SYSTEM_ERROR, msg("no enough space"));
-    case ENOMEM: return Status(Status::SYSTEM_ERROR, msg("no enough memory"));
+    case ENOSPC: return Status(Status::INFEASIBLE_ERROR, msg("no enough space"));
+    case ENOMEM: return Status(Status::INFEASIBLE_ERROR, msg("no enough memory"));
     case EEXIST: return Status(Status::DUPLICATION_ERROR, msg("already exist"));
     case ENOTEMPTY: return Status(Status::INFEASIBLE_ERROR, msg("not empty"));
     case EBADF: return Status(Status::SYSTEM_ERROR, msg("bad file descriptor"));

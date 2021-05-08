@@ -25,6 +25,35 @@
 
 namespace tkrzw {
 
+/** Disable macros to avoid possible name confliction. */
+#undef INT8MIN
+#undef INT8MAX
+#undef UINT8MAX
+#undef INT16MIN
+#undef INT16MAX
+#undef UINT16MAX
+#undef INT32MIN
+#undef INT32MAX
+#undef UINT32MAX
+#undef INT64MIN
+#undef INT64MAX
+#undef UINT64MAX
+#undef SIZEMAX
+#undef FLOATMIN
+#undef FLOATMAX
+#undef DOUBLEMIN
+#undef DOUBLEMAX
+#undef DOUBLENAN
+#undef DOUBLEINF
+#undef NUM_BUFFER_SIZE
+#undef MAX_MEMORY_SIZE
+#undef PAGE_SIZE
+#undef PACKAGE_VERSION
+#undef LIBRARY_VERSION
+#undef OS_NAME
+#undef IS_POSIX
+#undef IS_BIG_ENDIAN
+
 /** The minimum value of int8_t. */
 constexpr int8_t INT8MIN = std::numeric_limits<int8_t>::min();
 
@@ -99,6 +128,9 @@ extern const char* const LIBRARY_VERSION;
 
 /** The recognized OS name. */
 extern const char* const OS_NAME;
+
+/** True if the OS is conforming to POSIX. */
+extern const bool IS_POSIX;
 
 /** True if the byte order is big endian. */
 extern const bool IS_BIG_ENDIAN;
@@ -391,6 +423,14 @@ class StatusException final : public std::runtime_error {
    */
   Status GetStatus() const {
     return status_;
+  }
+
+  /**
+   * Gets a string expression of the status.
+   * @return The string expression
+   */
+  operator std::string() const {
+    return std::string(status_);
   }
 
  private:

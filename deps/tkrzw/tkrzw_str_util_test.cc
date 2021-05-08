@@ -11,12 +11,13 @@
  * and limitations under the License.
  *************************************************************************************************/
 
+#include "tkrzw_sys_config.h"
+
 #include "gtest/gtest.h"
 #include "gmock/gmock.h"
 
 #include "tkrzw_lib_common.h"
 #include "tkrzw_str_util.h"
-#include "tkrzw_sys_config.h"
 
 using namespace testing;
 
@@ -292,6 +293,19 @@ TEST(StrUtilTest, StrLowerCase) {
   EXPECT_EQ("aあいうえおz", tkrzw::StrLowerCase("AあいうえおZ"));
 }
 
+TEST(StrUtilTest, StrReplace) {
+  EXPECT_EQ("bcbc", tkrzw::StrReplace("abcabc", "a", ""));
+  EXPECT_EQ("xbcxbc", tkrzw::StrReplace("abcabc", "a", "x"));
+  EXPECT_EQ("xybcxybc", tkrzw::StrReplace("abcabc", "a", "xy"));
+  EXPECT_EQ("xcxc", tkrzw::StrReplace("abcabc", "ab", "x"));
+  EXPECT_EQ("abxabx", tkrzw::StrReplace("abcabc", "c", "x"));
+  EXPECT_EQ("axax", tkrzw::StrReplace("abcabc", "bc", "x"));
+  EXPECT_EQ("xx", tkrzw::StrReplace("abcabc", "abc", "x"));
+  EXPECT_EQ("abcabc", tkrzw::StrReplace("abcabc", "abcdefg", "x"));
+  EXPECT_EQ("abcabc", tkrzw::StrReplace("abcabc", "", "x"));
+  EXPECT_EQ("あいxえお", tkrzw::StrReplace("あいうえお", "う", "x"));
+}
+
 TEST(StrUtilTest, StrContains) {
   EXPECT_TRUE(tkrzw::StrContains("", ""));
   EXPECT_TRUE(tkrzw::StrContains("abc", ""));
@@ -299,6 +313,8 @@ TEST(StrUtilTest, StrContains) {
   EXPECT_TRUE(tkrzw::StrContains("abc", "ab"));
   EXPECT_TRUE(tkrzw::StrContains("abc", "abc"));
   EXPECT_TRUE(tkrzw::StrContains("abcd", "bc"));
+  EXPECT_TRUE(tkrzw::StrContains("abcd", "cd"));
+  EXPECT_TRUE(tkrzw::StrContains("abcd", "d"));
   EXPECT_FALSE(tkrzw::StrContains("abc", "abcd"));
   EXPECT_FALSE(tkrzw::StrContains("abc", "xa"));
   EXPECT_FALSE(tkrzw::StrContains("abc", "ac"));
@@ -639,7 +655,9 @@ TEST(StrUtilTest, StrTrimForTSV) {
   EXPECT_EQ(" ", tkrzw::StrTrimForTSV(std::string("\x00", 1)));
   EXPECT_EQ("  ABC  ", tkrzw::StrTrimForTSV("\n\rABC\t\x7F"));
   EXPECT_EQ("A  B C", tkrzw::StrTrimForTSV("A\n\tB C"));
+  EXPECT_EQ("A \tB C", tkrzw::StrTrimForTSV("A\n\tB C", true));
   EXPECT_EQ("あ  い  う", tkrzw::StrTrimForTSV("あ\t\tい\r\nう"));
+  EXPECT_EQ("あ\t\tい  う", tkrzw::StrTrimForTSV("あ\t\tい\r\nう", true));
 }
 
 TEST(StrUtilTest, StrEscapeC) {

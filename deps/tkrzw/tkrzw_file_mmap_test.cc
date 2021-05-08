@@ -11,6 +11,8 @@
  * and limitations under the License.
  *************************************************************************************************/
 
+#include "tkrzw_sys_config.h"
+
 #include "gtest/gtest.h"
 #include "gmock/gmock.h"
 
@@ -19,7 +21,6 @@
 #include "tkrzw_file_mmap.h"
 #include "tkrzw_file_util.h"
 #include "tkrzw_lib_common.h"
-#include "tkrzw_sys_config.h"
 
 using namespace testing;
 
@@ -154,6 +155,10 @@ TEST_F(MemoryMapParallelFileTest, FlatRecord) {
   FlatRecordTest();
 }
 
+TEST_F(MemoryMapParallelFileTest, Rename) {
+  RenameTest();
+}
+
 TEST_F(MemoryMapParallelFileTest, Zone) {
   ZoneTest();
 }
@@ -208,6 +213,10 @@ TEST_F(MemoryMapAtomicFileTest, FileReader) {
 
 TEST_F(MemoryMapAtomicFileTest, FlatRecord) {
   FlatRecordTest();
+}
+
+TEST_F(MemoryMapAtomicFileTest, Rename) {
+  RenameTest();
 }
 
 TEST_F(MemoryMapAtomicFileTest, Zone) {

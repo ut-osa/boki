@@ -11,6 +11,8 @@
  * and limitations under the License.
  *************************************************************************************************/
 
+#include "tkrzw_sys_config.h"
+
 #include "tkrzw_cmd_util.h"
 
 namespace tkrzw {
@@ -72,21 +74,37 @@ static int32_t ProcessConfig(int32_t argc, const char** args) {
              info["mem_total"].c_str(), info["mem_free"].c_str(),
              info["mem_cached"].c_str());
     }
-    PrintF("prefix: %s\n", _TKRZW_PREFIX);
-    PrintF("includedir: %s\n", _TKRZW_INCLUDEDIR);
-    PrintF("libdir: %s\n", _TKRZW_LIBDIR);
-    PrintF("bindir: %s\n", _TKRZW_BINDIR);
-    PrintF("libexecdir: %s\n", _TKRZW_LIBEXECDIR);
-    PrintF("appinc: %s\n", _TKRZW_APPINC);
-    PrintF("applibs: %s\n", _TKRZW_APPLIBS);
+    if (*_TKRZW_PREFIX != '\0') {
+      PrintF("prefix: %s\n", _TKRZW_PREFIX);
+    }
+    if (*_TKRZW_INCLUDEDIR != '\0') {
+      PrintF("includedir: %s\n", _TKRZW_INCLUDEDIR);
+    }
+    if (*_TKRZW_LIBDIR != '\0') {
+      PrintF("libdir: %s\n", _TKRZW_LIBDIR);
+    }
+    if (*_TKRZW_BINDIR != '\0') {
+      PrintF("bindir: %s\n", _TKRZW_BINDIR);
+    }
+    if (*_TKRZW_BINDIR != '\0') {
+      PrintF("libexecdir: %s\n", _TKRZW_LIBEXECDIR);
+    }
+    if (*_TKRZW_APPINC) {
+      PrintF("appinc: %s\n", _TKRZW_APPINC);
+    }
+    if (*_TKRZW_APPLIBS) {
+      PrintF("applibs: %s\n", _TKRZW_APPLIBS);
+    }
   }
   return 0;
 }
 
 // Prints the version information.
 void PrintVersion() {
-  PrintF("Tkrzw %s (library %s) on %s (%s endian)\n",
-         PACKAGE_VERSION, LIBRARY_VERSION, OS_NAME, IS_BIG_ENDIAN ? "big" : "little");
+  PrintF("Tkrzw %s (library %s) on %s (%s) (%s endian)\n",
+         PACKAGE_VERSION, LIBRARY_VERSION, OS_NAME,
+         IS_POSIX ? "POSIX" : "non-POSIX",
+         IS_BIG_ENDIAN ? "big" : "little");
 }
 
 }  // namespace tkrzw
@@ -98,12 +116,17 @@ int main(int argc, char** argv) {
     tkrzw::PrintUsageAndDie();
   }
   int32_t rv = 0;
-  if (std::strcmp(args[1], "config") == 0) {
-    rv = tkrzw::ProcessConfig(argc - 1, args + 1);
-  } else if (std::strcmp(args[1], "version") == 0 || std::strcmp(args[1], "--version") == 0) {
-    tkrzw::PrintVersion();
-  } else {
-    tkrzw::PrintUsageAndDie();
+  try {
+    if (std::strcmp(args[1], "config") == 0) {
+      rv = tkrzw::ProcessConfig(argc - 1, args + 1);
+    } else if (std::strcmp(args[1], "version") == 0 || std::strcmp(args[1], "--version") == 0) {
+      tkrzw::PrintVersion();
+    } else {
+      tkrzw::PrintUsageAndDie();
+    }
+  } catch (const std::runtime_error& e) {
+    std::cerr << e.what() << std::endl;
+    rv = 1;
   }
   return rv;
 }

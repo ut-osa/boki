@@ -1,5 +1,5 @@
 /*************************************************************************************************
- * Polymorphic datatabase manager adapter
+ * Polymorphic database manager adapter
  *
  * Copyright 2020 Google LLC
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file
@@ -10,6 +10,8 @@
  * either express or implied.  See the License for the specific language governing permissions
  * and limitations under the License.
  *************************************************************************************************/
+
+#include "tkrzw_sys_config.h"
 
 #include "tkrzw_dbm.h"
 #include "tkrzw_dbm_baby.h"
@@ -25,10 +27,10 @@
 #include "tkrzw_file.h"
 #include "tkrzw_file_mmap.h"
 #include "tkrzw_file_pos.h"
+#include "tkrzw_file_std.h"
 #include "tkrzw_file_util.h"
 #include "tkrzw_lib_common.h"
 #include "tkrzw_str_util.h"
-#include "tkrzw_sys_config.h"
 
 namespace tkrzw {
 
@@ -123,22 +125,23 @@ Status ShardDBM::Get(std::string_view key, std::string* value) {
   return dbm->Get(key, value);
 }
 
-Status ShardDBM::Set(std::string_view key, std::string_view value, bool overwrite) {
+Status ShardDBM::Set(std::string_view key, std::string_view value, bool overwrite,
+                     std::string* old_value) {
   if (!open_) {
     return Status(Status::PRECONDITION_ERROR, "not opened database");
   }
   const int32_t shard_index = SecondaryHash(key, dbms_.size());
   auto dbm = dbms_[shard_index];
-  return dbm->Set(key, value, overwrite);
+  return dbm->Set(key, value, overwrite, old_value);
 }
 
-Status ShardDBM::Remove(std::string_view key) {
+Status ShardDBM::Remove(std::string_view key, std::string* old_value) {
   if (!open_) {
     return Status(Status::PRECONDITION_ERROR, "not opened database");
   }
   const int32_t shard_index = SecondaryHash(key, dbms_.size());
   auto dbm = dbms_[shard_index];
-  return dbm->Remove(key);
+  return dbm->Remove(key, old_value);
 }
 
 Status ShardDBM::Append(std::string_view key, std::string_view value, std::string_view delim) {
@@ -266,14 +269,14 @@ Status ShardDBM::SynchronizeAdvanced(
   return status;
 }
 
-Status ShardDBM::CopyFile(const std::string& dest_path) {
+Status ShardDBM::CopyFileData(const std::string& dest_path) {
   if (!open_) {
     return Status(Status::PRECONDITION_ERROR, "not opened database");
   }
   for (int32_t i = 0; i < static_cast<int32_t>(dbms_.size()); i++) {
     const std::string shard_path = StrCat(dest_path, SPrintF(
         "-%05d-of-%05d", i, static_cast<int32_t>(dbms_.size())));
-    const Status status = dbms_[i]->CopyFile(shard_path);
+    const Status status = dbms_[i]->CopyFileData(shard_path);
     if (status != Status::SUCCESS) {
       return status;
     }

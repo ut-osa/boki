@@ -123,17 +123,7 @@ inline std::string ToString(T data) {
  * @param data The real number to convert.
  * @return The converted string.
  */
-inline std::string ToString(double data) {
-  char buf[NUM_BUFFER_SIZE];
-  int32_t size = std::sprintf(buf, "%.6f", data);
-  while (size > 0 && buf[size - 1] == '0') {
-    buf[size--] = '\0';
-  }
-  if (size > 0 && buf[size - 1] == '.') {
-    buf[size--] = '\0';
-  }
-  return std::string(buf, size);
-}
+std::string ToString(double data);
 
 /**
  * Converts a real number to a decimal string.
@@ -296,6 +286,15 @@ std::string StrUpperCase(std::string_view str);
  * @return The converted string.
  */
 std::string StrLowerCase(std::string_view str);
+
+/**
+ * Converts a string by replacing substrings to diffent substrings.
+ * @param str The string to convert.
+ * @param before The substring before replacement.
+ * @param after The substring after replacement.
+ * @return The converted string.
+ */
+std::string StrReplace(std::string_view str, std::string_view before, std::string_view after);
 
 /**
  * Checks whether a text contains a pattern.
@@ -501,9 +500,10 @@ std::string StrSqueezeAndStripSpace(std::string_view str);
 /**
  * Trims a string for TSV by normalizing space and control characters.
  * @param str The string to convert.
+ * @param keep_tab If true, tab is kept and not escaped.
  * @return The converted string.
  */
-std::string StrTrimForTSV(std::string_view str);
+std::string StrTrimForTSV(std::string_view str, bool keep_tab = false);
 
 /**
  * Escapes C-style meta characters in a string.

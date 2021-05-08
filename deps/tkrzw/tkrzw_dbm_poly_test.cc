@@ -11,19 +11,21 @@
  * and limitations under the License.
  *************************************************************************************************/
 
+#include "tkrzw_sys_config.h"
+
 #include "gtest/gtest.h"
 #include "gmock/gmock.h"
 
 #include "tkrzw_file.h"
 #include "tkrzw_file_mmap.h"
 #include "tkrzw_file_pos.h"
+#include "tkrzw_file_std.h"
 #include "tkrzw_file_util.h"
 #include "tkrzw_dbm.h"
 #include "tkrzw_dbm_poly.h"
 #include "tkrzw_dbm_test_common.h"
 #include "tkrzw_lib_common.h"
 #include "tkrzw_str_util.h"
-#include "tkrzw_sys_config.h"
 
 using namespace testing;
 
@@ -46,14 +48,17 @@ TEST_F(PolyDBMTest, BasicTest) {
   };
   const std::vector<Config> configs = {
     {"HashDBM", "casket",
-     {{"dbm", "hash"}, {"num_buckets", "50"}}, {}, {{"offset_width", "3"}}},
+     {{"dbm", "hash"}, {"file", "mmap-para"}, {"num_buckets", "50"}},
+     {}, {{"offset_width", "3"}}},
     {"HashDBM", "casket.tkh",
-     {{"update_mode", "update_appending"}, {"offset_width", "3"},
+     {{"file", "mmap-atom"}, {"update_mode", "update_appending"}, {"offset_width", "3"},
       {"align_pow", "1"}, {"num_buckets", "50"}, {"lock_mem_buckets", "true"}}, {}, {}},
     {"TreeDBM", "casket",
-     {{"dbm", "tree"}, {"key_comparator", "decimal"}}, {}, {{"max_page_size", "512"}}},
+     {{"dbm", "tree"}, {"file", "pos-para"}, {"key_comparator", "decimal"}},
+     {}, {{"max_page_size", "512"}}},
     {"TreeDBM", "casket.tkt",
-     {{"update_mode", "update_appending"}, {"key_comparator", "realnumber"}}, {}, {}},
+     {{"file", "pos-atom"}, {"update_mode", "update_appending"},
+      {"key_comparator", "realnumber"}}, {}, {}},
     {"SkipDBM", "casket",
      {{"dbm", "skip"}, {"step_unit", "3"}}, {{"reducer", "last"}}, {{"max_level", "5"}}},
     {"SkipDBM", "casket.tks",
@@ -153,7 +158,7 @@ TEST_F(PolyDBMTest, BasicTest) {
       }
       const std::string dest_path =
           tkrzw::JoinPath(tmp_dir.Path(), tkrzw::StrCat("copy-", config.path));
-      EXPECT_EQ(tkrzw::Status::SUCCESS, dbm.CopyFile(dest_path));
+      EXPECT_EQ(tkrzw::Status::SUCCESS, dbm.CopyFileData(dest_path));
       EXPECT_EQ(tkrzw::Status::SUCCESS, dbm.Close());
       EXPECT_EQ(tkrzw::Status::SUCCESS, dbm.OpenAdvanced(
           dest_path, false, tkrzw::File::OPEN_DEFAULT, config.open_params));

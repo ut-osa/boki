@@ -11,16 +11,18 @@
  * and limitations under the License.
  *************************************************************************************************/
 
+#include "tkrzw_sys_config.h"
+
 #include "tkrzw_dbm.h"
 #include "tkrzw_dbm_common_impl.h"
 #include "tkrzw_dbm_cache.h"
 #include "tkrzw_file.h"
 #include "tkrzw_file_mmap.h"
 #include "tkrzw_file_pos.h"
+#include "tkrzw_file_std.h"
 #include "tkrzw_file_util.h"
 #include "tkrzw_lib_common.h"
 #include "tkrzw_str_util.h"
-#include "tkrzw_sys_config.h"
 #include "tkrzw_thread_util.h"
 
 namespace tkrzw {
@@ -177,7 +179,6 @@ char* CacheRecord::Reserialize(char* ptr, int32_t old_value_size) const {
 
 void CacheRecord::Deserialize(const char* ptr) {
   const char* rp = ptr;
-  constexpr int32_t dummy_size = 1 << 28;
   std::memcpy(&child, rp, sizeof(child));
   rp += sizeof(child);
   std::memcpy(&prev, rp, sizeof(prev));
@@ -185,11 +186,11 @@ void CacheRecord::Deserialize(const char* ptr) {
   std::memcpy(&next, rp, sizeof(next));
   rp += sizeof(next);
   uint64_t num = 0;
-  rp += ReadVarNum(rp, dummy_size, &num);
+  rp += ReadVarNum(rp, &num);
   key_size = num;
   key_ptr = rp;
   rp += key_size;
-  rp += ReadVarNum(rp, dummy_size, &num);
+  rp += ReadVarNum(rp, &num);
   value_size = num;
   value_ptr = rp;
 }
@@ -548,7 +549,8 @@ Status CacheDBMImpl::Open(const std::string& path, bool writable, int32_t option
   if (open_) {
     return Status(Status::PRECONDITION_ERROR, "opened database");
   }
-  Status status = file_->Open(path, writable, options);
+  const std::string norm_path = NormalizePath(path);
+  Status status = file_->Open(norm_path, writable, options);
   if (status != Status::SUCCESS) {
     return status;
   }
@@ -559,7 +561,7 @@ Status CacheDBMImpl::Open(const std::string& path, bool writable, int32_t option
   }
   open_ = true;
   writable_ = writable;
-  path_ = path;
+  path_ = norm_path;
   return Status(Status::SUCCESS);
 }
 
@@ -774,7 +776,7 @@ Status CacheDBMImpl::ImportRecords() {
     uint64_t hash = PrimaryHash(key_store, UINT64MAX);
     const int32_t slot_index = (hash & 0xff) % NUM_CACHE_SLOTS;
     hash >>= 8;
-    DBM::RecordProcessorSet setter(&status, value, true);
+    DBM::RecordProcessorSet setter(&status, value, true, nullptr);
     slots_[slot_index].Process(key_store, hash, &setter, true);
   }
   return Status(Status::SUCCESS);

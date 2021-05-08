@@ -11,14 +11,50 @@
  * and limitations under the License.
  *************************************************************************************************/
 
+#include "tkrzw_sys_config.h"
+
 #include "tkrzw_file.h"
 #include "tkrzw_file_util.h"
 #include "tkrzw_lib_common.h"
 #include "tkrzw_str_util.h"
-#include "tkrzw_sys_config.h"
 #include "tkrzw_thread_util.h"
 
 namespace tkrzw {
+
+#if defined(_SYS_WINDOWS_)
+
+const char DIR_SEP_CHR = '\\';
+const char* const DIR_SEP_STR = "\\";
+const char EXT_SEP_CHR = '.';
+const char* const EXT_SEP_STR = ".";
+const char* const CURRENT_DIR_NAME = ".";
+const char* const PARENT_DIR_NAME = "..";
+const char* const TMP_DIR_CANDIDATES[] = {
+  "\\tmp", "\\temp", "\\var\\tmp", "\\",
+};
+
+#define getpid _getpid
+#define open _open
+#define close _close
+#define read _read
+#define write _write
+#define unlink _unlink
+#define mkdir(a,b) _mkdir(a)
+#define rmdir _rmdir
+
+#else
+
+const char DIR_SEP_CHR = '/';
+const char* const DIR_SEP_STR = "/";
+const char EXT_SEP_CHR = '.';
+const char* const EXT_SEP_STR = ".";
+const char* const CURRENT_DIR_NAME = ".";
+const char* const PARENT_DIR_NAME = "..";
+const char* const TMP_DIR_CANDIDATES[] = {
+  "/tmp", "/temp", "/var/tmp", "/",
+};
+
+#endif
 
 std::string MakeTemporaryName() {
   static std::atomic_uint32_t count(0);
@@ -36,15 +72,15 @@ std::string JoinPath(const std::string& base_path, const std::string& child_name
   if (child_name.empty()) {
     return base_path;
   }
-  if (child_name.front() == '/') {
+  if (child_name.front() == DIR_SEP_CHR) {
     return child_name;
   }
   std::string joined_path = base_path;
   if (joined_path.empty()) {
-    joined_path = "/";
+    joined_path = DIR_SEP_STR;
   }
-  if (joined_path.back() != '/') {
-    joined_path += "/";
+  if (joined_path.back() != DIR_SEP_CHR) {
+    joined_path += DIR_SEP_STR;
   }
   joined_path += child_name;
   return joined_path;
@@ -54,14 +90,20 @@ std::string NormalizePath(const std::string& path) {
   if (path.empty()) {
     return "";
   }
-  const bool is_absolute = path.front() == '/';
-  const auto& input_elems = StrSplit(path, '/', true);
+  std::string norm_path;
+  if (!IS_POSIX && DIR_SEP_CHR == '\\') {
+    norm_path = StrReplace(path, "/", DIR_SEP_STR);
+  } else {
+    norm_path = path;
+  }
+  const bool is_absolute = path.front() == DIR_SEP_CHR;
+  const auto& input_elems = StrSplit(path, DIR_SEP_CHR, true);
   std::vector<std::string> output_elems;
   for (const auto& elem : input_elems) {
-    if (elem == ".") {
+    if (elem == CURRENT_DIR_NAME) {
       continue;
     }
-    if (elem == "..") {
+    if (elem == PARENT_DIR_NAME) {
       if (!output_elems.empty()) {
         output_elems.pop_back();
       }
@@ -69,14 +111,14 @@ std::string NormalizePath(const std::string& path) {
     }
     output_elems.emplace_back(elem);
   }
-  std::string norm_path;
+  norm_path.clear();
   if (is_absolute) {
-    norm_path += "/";
+    norm_path += DIR_SEP_STR;
   }
   for (int32_t i = 0; i < static_cast<int32_t>(output_elems.size()); i++) {
     norm_path += output_elems[i];
     if (i != static_cast<int32_t>(output_elems.size()) - 1) {
-      norm_path += "/";
+      norm_path += DIR_SEP_STR;
     }
   }
   return norm_path;
@@ -84,14 +126,14 @@ std::string NormalizePath(const std::string& path) {
 
 std::string PathToBaseName(const std::string& path) {
   size_t size = path.size();
-  while (size > 1 && path[size - 1] == '/') {
+  while (size > 1 && path[size - 1] == DIR_SEP_CHR) {
     size--;
   }
   const std::string tmp_path = path.substr(0, size);
-  if (tmp_path == "/") {
+  if (tmp_path == DIR_SEP_STR) {
     return tmp_path;
   }
-  const size_t pos = tmp_path.rfind('/');
+  const size_t pos = tmp_path.rfind(DIR_SEP_CHR);
   if (pos == std::string::npos) {
     return tmp_path;
   }
@@ -100,23 +142,23 @@ std::string PathToBaseName(const std::string& path) {
 
 std::string PathToDirectoryName(const std::string& path) {
   size_t size = path.size();
-  while (size > 1 && path[size - 1] == '/') {
+  while (size > 1 && path[size - 1] == DIR_SEP_CHR) {
     size--;
   }
   const std::string tmp_path = path.substr(0, size);
-  if (tmp_path == "/") {
+  if (tmp_path == DIR_SEP_STR) {
     return tmp_path;
   }
-  const size_t pos = tmp_path.rfind('/');
+  const size_t pos = tmp_path.rfind(DIR_SEP_CHR);
   if (pos == std::string::npos) {
-    return ".";
+    return CURRENT_DIR_NAME;
   }
   return tmp_path.substr(0, pos);
 }
 
 std::string PathToExtension(const std::string& path) {
   const std::string& base_name = PathToBaseName(path);
-  const size_t pos = base_name.rfind('.');
+  const size_t pos = base_name.rfind(EXT_SEP_CHR);
   if (pos == std::string::npos) {
     return "";
   }
@@ -124,6 +166,27 @@ std::string PathToExtension(const std::string& path) {
 }
 
 Status GetRealPath(const std::string& path, std::string* real_path) {
+#if defined(_SYS_WINDOWS_)
+  assert(real_path != nullptr);
+  char buf[4096];
+  DWORD size = GetFullPathName(path.c_str(), sizeof(buf), buf, nullptr);
+  if (size < 1) {
+    return GetErrnoStatus("GetFullPathName", errno);
+  }
+  if (size < sizeof(buf)) {
+    *real_path = std::string(buf);
+    return Status(Status::SUCCESS);
+  }
+  char* lbuf = new char[size];
+  DWORD nsiz = GetFullPathName(path.c_str(), size, lbuf, nullptr);
+  if (nsiz < 1 || nsiz >= size) {
+    delete[] lbuf;
+    return GetErrnoStatus("GetFullPathName", errno);
+  }
+  *real_path = std::string(lbuf);
+  delete[] lbuf;
+  return Status(Status::SUCCESS);
+#else
   assert(real_path != nullptr);
   real_path->clear();
   char buf[PATH_MAX];
@@ -132,9 +195,32 @@ Status GetRealPath(const std::string& path, std::string* real_path) {
   }
   *real_path = std::string(buf);
   return Status(Status::SUCCESS);
+#endif
 }
 
 Status ReadFileStatus(const std::string& path, FileStatus* fstats) {
+#if defined(_SYS_WINDOWS_)
+  assert(fstats != nullptr);
+  WIN32_FILE_ATTRIBUTE_DATA ibuf;
+  if (!GetFileAttributesEx(path.c_str(), GetFileExInfoStandard, &ibuf)) {
+    return GetErrnoStatus("GetFileAttributesEx", errno);
+  }
+  if (ibuf.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+    fstats->is_file = false;
+    fstats->is_directory = true;
+  } else {
+    fstats->is_file = true;
+    fstats->is_directory = false;
+  }
+  LARGE_INTEGER li;
+  li.LowPart = ibuf.nFileSizeLow;
+  li.HighPart = ibuf.nFileSizeHigh;
+  fstats->file_size = li.QuadPart;
+  li.LowPart = ibuf.ftLastWriteTime.dwLowDateTime;
+  li.HighPart = ibuf.ftLastWriteTime.dwHighDateTime;
+  fstats->modified_time = li.QuadPart;
+  return Status(Status::SUCCESS);
+#else
   assert(fstats != nullptr);
   struct stat sbuf;
   if (lstat(path.c_str(), &sbuf) != 0) {
@@ -145,6 +231,7 @@ Status ReadFileStatus(const std::string& path, FileStatus* fstats) {
   fstats->file_size = sbuf.st_size;
   fstats->modified_time = sbuf.st_mtime;
   return Status(Status::SUCCESS);
+#endif
 }
 
 bool PathIsFile(const std::string& path) {
@@ -164,13 +251,10 @@ int64_t GetFileSize(const std::string& path) {
 }
 
 std::string GetPathToTemporaryDirectory() {
-  static const char* tmp_candidates[] = {
-    "/tmp", "/temp", "/var/tmp", "/",
-  };
   static std::string tmp_path;
   static std::once_flag tmp_path_once_flag;
   std::call_once(tmp_path_once_flag, [&]() {
-      for (const auto& tmp_candidate : tmp_candidates) {
+      for (const auto& tmp_candidate : TMP_DIR_CANDIDATES) {
         if (PathIsDirectory(tmp_candidate)) {
           tmp_path = tmp_candidate;
           break;
@@ -230,6 +314,11 @@ Status ReadFile(const std::string& path, std::string* content) {
   return status;
 }
 
+std::string ReadFileSimple(const std::string& path, std::string_view default_value) {
+  std::string content;
+  return ReadFile(path, &content) == Status::SUCCESS ? content : std::string(default_value);
+}
+
 Status RemoveFile(const std::string& path) {
   if (unlink(path.c_str()) != 0) {
     return GetErrnoStatus("unlink", errno);
@@ -238,13 +327,36 @@ Status RemoveFile(const std::string& path) {
 }
 
 Status RenameFile(const std::string& src_path, const std::string& dest_path) {
+  if (!IS_POSIX) {
+    FileStatus src_stats;
+    Status status = ReadFileStatus(src_path, &src_stats);
+    if (status != Status::SUCCESS) {
+      return status;
+    }
+    FileStatus dest_stats;
+    status = ReadFileStatus(dest_path, &dest_stats);
+    if (status == Status::SUCCESS) {
+      if (src_stats.is_file && dest_stats.is_file) {
+        status = RemoveFile(dest_path);
+        if (status != Status::SUCCESS) {
+          return status;
+        }
+      }
+      if (src_stats.is_directory && dest_stats.is_directory) {
+        status = RemoveDirectory(dest_path, false);
+        if (status != Status::SUCCESS) {
+          return status;
+        }
+      }
+    }
+  }
   if (rename(src_path.c_str(), dest_path.c_str()) != 0) {
     return GetErrnoStatus("rename", errno);
   }
   return Status(Status::SUCCESS);
 }
 
-Status CopyFile(const std::string& src_path, const std::string& dest_path) {
+Status CopyFileData(const std::string& src_path, const std::string& dest_path) {
   // TODO: use sendfile on Linux.
   const int32_t src_fd = open(src_path.c_str(), O_RDONLY);
   if (src_fd < 0) {
@@ -288,6 +400,33 @@ Status CopyFile(const std::string& src_path, const std::string& dest_path) {
 }
 
 Status ReadDirectory(const std::string& path, std::vector<std::string>* children) {
+#if defined(_SYS_WINDOWS_)
+  assert(children != nullptr);
+  std::string dpath = path;
+  if (path.empty() || path.back() != DIR_SEP_CHR) {
+    dpath.append(DIR_SEP_STR);
+  }
+  dpath.append("*");
+  WIN32_FIND_DATA fbuf;
+  HANDLE dh = FindFirstFile(dpath.c_str(), &fbuf);
+  if (!dh || dh == INVALID_HANDLE_VALUE) {
+    return GetErrnoStatus("FindFirstFile", errno);
+  }
+  if (std::strcmp(fbuf.cFileName, CURRENT_DIR_NAME) &&
+      std::strcmp(fbuf.cFileName, PARENT_DIR_NAME)) {
+    children->push_back(fbuf.cFileName);
+  }
+  while (FindNextFile(dh, &fbuf)) {
+    if (std::strcmp(fbuf.cFileName, CURRENT_DIR_NAME) &&
+        std::strcmp(fbuf.cFileName, PARENT_DIR_NAME)) {
+      children->push_back(fbuf.cFileName);
+    }
+  }
+  if (!FindClose(dh)) {
+    return GetErrnoStatus("FindClose", errno);
+  }
+  return Status(Status::SUCCESS);
+#else
   assert(children != nullptr);
   children->clear();
   DIR* dir = opendir(path.c_str());
@@ -296,7 +435,7 @@ Status ReadDirectory(const std::string& path, std::vector<std::string>* children
   }
   struct dirent *dp;
   while ((dp = readdir(dir)) != nullptr) {
-    if (std::strcmp(dp->d_name, ".") && std::strcmp(dp->d_name, "..")) {
+    if (std::strcmp(dp->d_name, CURRENT_DIR_NAME) && std::strcmp(dp->d_name, PARENT_DIR_NAME)) {
       children->emplace_back(dp->d_name);
     }
   }
@@ -304,6 +443,7 @@ Status ReadDirectory(const std::string& path, std::vector<std::string>* children
     return GetErrnoStatus("closedir", errno);
   }
   return Status(Status::SUCCESS);
+#endif
 }
 
 Status MakeDirectory(const std::string& path, bool recursive) {

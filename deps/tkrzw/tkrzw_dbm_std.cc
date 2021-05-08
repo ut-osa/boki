@@ -11,15 +11,17 @@
  * and limitations under the License.
  *************************************************************************************************/
 
+#include "tkrzw_sys_config.h"
+
 #include "tkrzw_dbm.h"
 #include "tkrzw_dbm_std.h"
 #include "tkrzw_file.h"
 #include "tkrzw_file_mmap.h"
 #include "tkrzw_file_pos.h"
+#include "tkrzw_file_std.h"
 #include "tkrzw_file_util.h"
 #include "tkrzw_lib_common.h"
 #include "tkrzw_str_util.h"
-#include "tkrzw_sys_config.h"
 
 namespace tkrzw {
 
@@ -112,7 +114,8 @@ Status StdDBMImpl<STRMAP>::Open(const std::string& path, bool writable, int32_t 
   if (open_) {
     return Status(Status::PRECONDITION_ERROR, "opened database");
   }
-  Status status = file_->Open(path, writable, options);
+  const std::string norm_path = NormalizePath(path);
+  Status status = file_->Open(norm_path, writable, options);
   if (status != Status::SUCCESS) {
     return status;
   }
@@ -123,7 +126,7 @@ Status StdDBMImpl<STRMAP>::Open(const std::string& path, bool writable, int32_t 
   }
   open_ = true;
   writable_ = writable;
-  path_ = path;
+  path_ = norm_path;
   return Status(Status::SUCCESS);
 }
 

@@ -11,6 +11,8 @@
  * and limitations under the License.
  *************************************************************************************************/
 
+#include "tkrzw_sys_config.h"
+
 #include <cassert>
 #include <cstdarg>
 #include <cstdint>
@@ -21,7 +23,6 @@
 #include <vector>
 
 #include "tkrzw_cmd_util.h"
-#include "tkrzw_sys_config.h"
 
 namespace tkrzw {
 
@@ -242,7 +243,9 @@ std::map<std::string, std::string> GetSystemInfo() {
 std::unique_ptr<File> MakeFileOrDie(
     const std::string& impl_name, int64_t alloc_init_size, double alloc_inc_factor) {
   std::unique_ptr<File> file;
-  if (impl_name == "mmap-para") {
+  if (impl_name == "std") {
+    file = std::make_unique<StdFile>();
+  } else if (impl_name == "mmap-para") {
     file = std::make_unique<MemoryMapParallelFile>();
   } else if (impl_name == "mmap-atom") {
     file = std::make_unique<MemoryMapAtomicFile>();

@@ -11,6 +11,8 @@
  * and limitations under the License.
  *************************************************************************************************/
 
+#include "tkrzw_sys_config.h"
+
 #include "tkrzw_containers.h"
 #include "tkrzw_dbm.h"
 #include "tkrzw_dbm_baby.h"
@@ -18,11 +20,11 @@
 #include "tkrzw_file.h"
 #include "tkrzw_file_mmap.h"
 #include "tkrzw_file_pos.h"
+#include "tkrzw_file_std.h"
 #include "tkrzw_file_util.h"
 #include "tkrzw_lib_common.h"
 #include "tkrzw_key_comparators.h"
 #include "tkrzw_str_util.h"
-#include "tkrzw_sys_config.h"
 #include "tkrzw_thread_util.h"
 
 namespace tkrzw {
@@ -357,7 +359,8 @@ Status BabyDBMImpl::Open(const std::string& path, bool writable, int32_t options
   if (open_) {
     return Status(Status::PRECONDITION_ERROR, "opened database");
   }
-  Status status = file_->Open(path, writable, options);
+  const std::string norm_path = NormalizePath(path);
+  Status status = file_->Open(norm_path, writable, options);
   if (status != Status::SUCCESS) {
     return status;
   }
@@ -368,7 +371,7 @@ Status BabyDBMImpl::Open(const std::string& path, bool writable, int32_t options
   }
   open_ = true;
   writable_ = writable;
-  path_ = path;
+  path_ = norm_path;
   return Status(Status::SUCCESS);
 }
 
@@ -890,7 +893,7 @@ Status BabyDBMImpl::ImportRecords() {
       }
       return Status(Status::BROKEN_DATA_ERROR, "odd number of records");
     }
-    DBM::RecordProcessorSet setter(&status, value, true);
+    DBM::RecordProcessorSet setter(&status, value, true, nullptr);
     BabyLeafNode* leaf_node = SearchTree(key_store);
     std::lock_guard<std::shared_timed_mutex> page_lock(leaf_node->mutex);
     ProcessImpl(leaf_node, key_store, &setter, true);

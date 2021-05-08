@@ -29,7 +29,7 @@ static void PrintUsageAndDie() {
   P("\n");
   P("Common options:\n");
   P("  --file impl : The name of a file implementation:"
-    " mmap-para, mmap-atom, pos-para, pos-atom. (default: mmap-para)\n");
+    " std, mmap-para, mmap-atom, pos-para, pos-atom. (default: mmap-para)\n");
   P("  --iter num : The number of iterations. (default: 10000)\n");
   P("  --size num : The size of each record. (default: 100)\n");
   P("  --threads num : The number of threads. (default: 1)\n");
@@ -372,12 +372,17 @@ int main(int argc, char** argv) {
     tkrzw::PrintUsageAndDie();
   }
   int32_t rv = 0;
-  if (std::strcmp(args[1], "sequence") == 0) {
-    rv = tkrzw::ProcessSequence(argc - 1, args + 1);
-  } else if (std::strcmp(args[1], "wicked") == 0) {
-    rv = tkrzw::ProcessWicked(argc - 1, args + 1);
-  } else {
-    tkrzw::PrintUsageAndDie();
+  try {
+    if (std::strcmp(args[1], "sequence") == 0) {
+      rv = tkrzw::ProcessSequence(argc - 1, args + 1);
+    } else if (std::strcmp(args[1], "wicked") == 0) {
+      rv = tkrzw::ProcessWicked(argc - 1, args + 1);
+    } else {
+      tkrzw::PrintUsageAndDie();
+    }
+  } catch (const std::runtime_error& e) {
+    std::cerr << e.what() << std::endl;
+    rv = 1;
   }
   return rv;
 }

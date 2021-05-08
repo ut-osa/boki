@@ -11,6 +11,8 @@
  * and limitations under the License.
  *************************************************************************************************/
 
+#include "tkrzw_sys_config.h"
+
 #include "tkrzw_dbm.h"
 #include "tkrzw_dbm_common_impl.h"
 #include "tkrzw_dbm_hash.h"
@@ -18,10 +20,10 @@
 #include "tkrzw_file.h"
 #include "tkrzw_file_mmap.h"
 #include "tkrzw_file_pos.h"
+#include "tkrzw_file_std.h"
 #include "tkrzw_file_util.h"
 #include "tkrzw_lib_common.h"
 #include "tkrzw_str_util.h"
-#include "tkrzw_sys_config.h"
 #include "tkrzw_thread_util.h"
 
 namespace tkrzw {
@@ -198,6 +200,7 @@ Status HashDBMImpl::Open(const std::string& path, bool writable,
   if (open_) {
     return Status(Status::PRECONDITION_ERROR, "opened database");
   }
+  const std::string norm_path = NormalizePath(path);
   if (tuning_params.update_mode == HashDBM::UPDATE_DEFAULT ||
       tuning_params.update_mode == HashDBM::UPDATE_IN_PLACE) {
     static_flags_ |= STATIC_FLAG_UPDATE_IN_PLACE;
@@ -215,14 +218,14 @@ Status HashDBMImpl::Open(const std::string& path, bool writable,
     num_buckets_ = GetHashBucketSize(std::min(tuning_params.num_buckets, MAX_NUM_BUCKETS));
   }
   if (tuning_params.fbp_capacity >= 0) {
-    fbp_.SetCapacity(tuning_params.fbp_capacity);
+    fbp_.SetCapacity(std::max(1, tuning_params.fbp_capacity));
   }
   lock_mem_buckets_ = tuning_params.lock_mem_buckets;
-  Status status = file_->Open(path, writable, options);
+  Status status = file_->Open(norm_path, writable, options);
   if (status != Status::SUCCESS) {
     return status;
   }
-  path_ = path;
+  path_ = norm_path;
   status = OpenImpl(writable);
   if (status != Status::SUCCESS) {
     file_->Close();
@@ -524,8 +527,13 @@ Status HashDBMImpl::Rebuild(
       return status;
     }
     fbp_.Clear();
-    status |= RenameFile(tmp_path, path_);
-    status |= file_->Close();
+    if (IS_POSIX) {
+      status |= tmp_file->Rename(path_);
+      status |= file_->Close();
+    } else {
+      status |= file_->Close();
+      status |= tmp_file->Rename(path_);
+    }
     file_ = std::move(tmp_file);
     if (tuning_params.fbp_capacity >= 0) {
       fbp_.SetCapacity(tuning_params.fbp_capacity);
@@ -535,7 +543,7 @@ Status HashDBMImpl::Rebuild(
     db_type_ = db_type;
     opaque_ = opaque;
   }
-  return Status(Status::SUCCESS);
+  return status;
 }
 
 Status HashDBMImpl::ShouldBeRebuilt(bool* tobe) {
@@ -777,7 +785,7 @@ Status HashDBMImpl::ImportFromFileForward(
     }
   }
   auto file = file_->MakeFile();
-  Status status = file->Open(path, false);
+  Status status = file->Open(path, false, File::OPEN_NO_LOCK);
   if (status != Status::SUCCESS) {
     return status;
   }
@@ -807,14 +815,14 @@ Status HashDBMImpl::ImportFromFileForward(
     Importer(HashDBMImpl* impl, Status* status) : impl_(impl), status_(status) {}
     std::string_view ProcessFull(std::string_view key, std::string_view value) override {
       Status set_status(Status::SUCCESS);
-      DBM::RecordProcessorSet setter(&set_status, value, true);
+      DBM::RecordProcessorSet setter(&set_status, value, true, nullptr);
       *status_ = impl_->Process(key, &setter, true);
       *status_ |= set_status;
       return NOOP;
     }
     std::string_view ProcessEmpty(std::string_view key) override {
       Status remove_status(Status::SUCCESS);
-      DBM::RecordProcessorRemove remover(&remove_status);
+      DBM::RecordProcessorRemove remover(&remove_status, nullptr);
       *status_ = impl_->Process(key, &remover, true);
       *status_ |= remove_status;
       return NOOP;
@@ -853,7 +861,7 @@ Status HashDBMImpl::ImportFromFileBackward(
     dead_path = path_ + ".tmp.dead";
   }
   auto file = file_->MakeFile();
-  Status status = file->Open(path, false);
+  Status status = file->Open(path, false, File::OPEN_NO_LOCK);
   if (status != Status::SUCCESS) {
     return status;
   }
@@ -943,7 +951,7 @@ Status HashDBMImpl::ImportFromFileBackward(
         }
         if (!removed) {
           Status set_status(Status::SUCCESS);
-          DBM::RecordProcessorSet setter(&set_status, value, false);
+          DBM::RecordProcessorSet setter(&set_status, value, false, nullptr);
           status = Process(key, &setter, true);
           if (status != Status::SUCCESS) {
             CleanUp();

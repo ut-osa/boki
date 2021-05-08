@@ -11,6 +11,8 @@
  * and limitations under the License.
  *************************************************************************************************/
 
+#include "tkrzw_sys_config.h"
+
 #include "tkrzw_containers.h"
 #include "tkrzw_dbm.h"
 #include "tkrzw_dbm_common_impl.h"
@@ -20,10 +22,10 @@
 #include "tkrzw_file.h"
 #include "tkrzw_file_mmap.h"
 #include "tkrzw_file_pos.h"
+#include "tkrzw_file_std.h"
 #include "tkrzw_file_util.h"
 #include "tkrzw_lib_common.h"
 #include "tkrzw_str_util.h"
-#include "tkrzw_sys_config.h"
 #include "tkrzw_thread_util.h"
 
 namespace tkrzw {
@@ -98,8 +100,8 @@ struct InnerSlot final {
 };
 
 class TreeDBMImpl final {
-  friend class TreeLeafNode;
-  friend class TreeInnerNode;
+  friend struct TreeLeafNode;
+  friend struct TreeInnerNode;
   friend class TreeDBMIteratorImpl;
   typedef std::list<TreeDBMIteratorImpl*> IteratorList;
  public:
@@ -374,6 +376,7 @@ Status TreeDBMImpl::Open(const std::string& path, bool writable,
   if (open_) {
     return Status(Status::PRECONDITION_ERROR, "opened database");
   }
+  const std::string norm_path = NormalizePath(path);
   HashDBM::TuningParameters hash_params = tuning_params;
   hash_params.offset_width = tuning_params.offset_width >= 0 ?
       tuning_params.offset_width : TreeDBM::DEFAULT_OFFSET_WIDTH;
@@ -395,7 +398,7 @@ Status TreeDBMImpl::Open(const std::string& path, bool writable,
   if (tuning_params.key_comparator != nullptr) {
     key_comparator_ = tuning_params.key_comparator;
   }
-  Status status = hash_dbm_->OpenAdvanced(path, writable, options, hash_params);
+  Status status = hash_dbm_->OpenAdvanced(norm_path, writable, options, hash_params);
   if (status != Status::SUCCESS) {
     return status;
   }
@@ -440,7 +443,7 @@ Status TreeDBMImpl::Open(const std::string& path, bool writable,
   open_ = true;
   writable_ = writable;
   healthy_ = hash_dbm_->IsHealthy();
-  path_ = path;
+  path_ = norm_path;
   return Status(Status::SUCCESS);
 }
 

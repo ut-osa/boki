@@ -3,8 +3,10 @@
 #include "base/common.h"
 
 #ifdef __FAAS_HAVE_ABSL
+__BEGIN_THIRD_PARTY_HEADERS
 #include <absl/container/inlined_vector.h>
 #include <absl/synchronization/mutex.h>
+__END_THIRD_PARTY_HEADERS
 #endif
 
 #ifdef __FAAS_SRC

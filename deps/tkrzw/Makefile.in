@@ -41,7 +41,8 @@ CC := @CC@
 CXX := @CXX@
 CPPFLAGS := @MYCPPFLAGS@ \
   -D_TKRZW_PREFIX="\"$(prefix)\"" -D_TKRZW_INCLUDEDIR="\"$(INCLUDEDIR)\"" \
-  -D_TKRZW_LIBDIR="\"$(LIBDIR)\"" -D_TKRZW_BINDIR="\"$(BINDIR)\"" -D_TKRZW_LIBEXECDIR="\"$(LIBEXECDIR)\"" \
+  -D_TKRZW_LIBDIR="\"$(LIBDIR)\"" -D_TKRZW_BINDIR="\"$(BINDIR)\"" \
+  -D_TKRZW_LIBEXECDIR="\"$(LIBEXECDIR)\"" \
   -D_TKRZW_APPINC="\"-I$(INCLUDEDIR)\"" -D_TKRZW_APPLIBS="\"-L$(LIBDIR) @MYCMDLIBS@ @LIBS@\"" \
   -D_TKRZW_PKG_VERSION="\"$(VERSION)\"" -D_TKRZW_LIB_VERSION="\"$(LIBVER).$(LIBREV).$(LIBFMT)\""
 CFLAGS := @MYCFLAGS@
@@ -52,6 +53,8 @@ CMDLIBS := @MYCMDLIBS@
 TESTLIBS := @MYTESTLIBS@
 LIBS := @LIBS@
 RUNENV := @MYLDLIBPATHENV@=@MYLDLIBPATH@
+FILEPERFMEMLOCKFLAGS=@MYFILEPERFMEMLOCKFLAGS@
+DBMPERFMEMLOCKFLAGS=@MYDBMPERFMEMLOCKFLAGS@
 POSTCMD := @MYPOSTCMD@
 
 #================================================================
@@ -77,6 +80,14 @@ untabify :
 	    sed -e 's/\t/        /g' -e 's/ *$$//' $$name > $$name~; \
 	    [ -f $$name~ ] && mv -f $$name~ $$name ; \
 	  done
+
+setversion :
+	ls VCMakefile | while read name ; \
+	  do \
+	    sed -e "s/^PKG_VERSION = .*/PKG_VERSION = $(VERSION)/" \
+	      -e "s/^LIB_VERSION = .*/LIB_VERSION = $(LIBVER).$(LIBREV).$(LIBFMT)/" $$name > $$name~ ; \
+	    [ -f $$name~ ] && mv -f $$name~ $$name ; \
+    done
 
 install :
 	mkdir -p $(DESTDIR)$(INCLUDEDIR)
@@ -104,6 +115,7 @@ uninstall :
 
 dist :
 	$(MAKE) untabify
+	$(MAKE) setversion
 	$(MAKE) distclean
 	rm -Rf "../$(PACKAGEDIR)" "../$(PACKAGETGZ)"
 	cd .. && cp -R tkrzw $(PACKAGEDIR) && \
@@ -118,6 +130,7 @@ distclean : clean apidocclean
 
 check :
 	$(MAKE) check-build-util
+	$(MAKE) check-str-perf
 	$(MAKE) check-file-perf
 	$(MAKE) check-hashdbm-perf
 	$(MAKE) check-hashdbm-util
@@ -151,16 +164,27 @@ check-build-util :
 
 check-str-perf :
 	$(RUNENV) $(RUNCMD) ./tkrzw_str_perf search \
-	  --iter 1000 --threads 1000 --patterns 5 -chars 10
+	  --iter 1000 --text 2000 --pattern 5 --chars 10
 	$(RUNENV) $(RUNCMD) ./tkrzw_str_perf search \
-	  --iter 1000 --threads 1000 --patterns 5 -chars 10 --whole 3
+	  --iter 1000 --text 2000 --pattern 5 --chars 10 --whole 3
 	$(RUNENV) $(RUNCMD) ./tkrzw_str_perf search \
-	  --iter 1000 --thterds 1000 --patterns 5 -chars 10 --batch 3
+	  --iter 1000 --text 2000 --pattern 5 --chars 10 --batch 3
 
 check-file-perf :
 	rm -Rf casket*
+	$(RUNENV) $(RUNCMD) ./tkrzw_file_perf sequence --file std \
+	  --iter 50000 --threads 5 --size 20 casket
+	$(RUNENV) $(RUNCMD) ./tkrzw_file_perf sequence --file std \
+	  --iter 50000 --threads 5 --size 20 --random casket
 	$(RUNENV) $(RUNCMD) ./tkrzw_file_perf sequence --file mmap-para \
-	  --iter 50000 --threads 5 --size 20 --alloc_init 1 --alloc_inc 1.2 --lock_memory 10 casket
+	  --iter 50000 --threads 5 --size 20 --append casket
+	$(RUNENV) $(RUNCMD) ./tkrzw_file_perf wicked --file mmap-para \
+	  --iter 50000 --threads 5 --size 20 casket
+	$(RUNENV) $(RUNCMD) ./tkrzw_file_perf sequence --file mmap-atom \
+	  --iter 50000 --threads 5 --size 20  casket
+	$(RUNENV) $(RUNCMD) ./tkrzw_file_perf sequence --file mmap-para \
+	  --iter 50000 --threads 5 --size 20 --alloc_init 1 --alloc_inc 1.2 \
+	  $(FILEPERFMEMLOCKFLAGS) casket
 	$(RUNENV) $(RUNCMD) ./tkrzw_file_perf sequence --file mmap-para \
 	  --iter 50000 --threads 5 --size 20 --alloc_init 1 --alloc_inc 1.2 --random casket
 	$(RUNENV) $(RUNCMD) ./tkrzw_file_perf sequence --file mmap-para \
@@ -168,7 +192,8 @@ check-file-perf :
 	$(RUNENV) $(RUNCMD) ./tkrzw_file_perf wicked --file mmap-para \
 	  --iter 50000 --threads 5 --size 20 --alloc_init 1 --alloc_inc 1.2 casket
 	$(RUNENV) $(RUNCMD) ./tkrzw_file_perf sequence --file mmap-atom \
-	  --iter 50000 --threads 5 --size 20 --alloc_init 1 --alloc_inc 1.2 --lock_memory 10 casket
+	  --iter 50000 --threads 5 --size 20 --alloc_init 1 --alloc_inc 1.2 \
+	  $(FILEPERFMEMLOCKFLAGS) casket
 	$(RUNENV) $(RUNCMD) ./tkrzw_file_perf sequence --file mmap-atom \
 	  --iter 50000 --threads 5 --size 20 --alloc_init 1 --alloc_inc 1.2 --random casket
 	$(RUNENV) $(RUNCMD) ./tkrzw_file_perf sequence --file mmap-atom \
@@ -195,9 +220,9 @@ check-file-perf :
 check-hashdbm-perf :
 	rm -Rf casket*
 	$(RUNENV) $(RUNCMD) ./tkrzw_dbm_perf sequence --dbm hash --file mmap-para --path casket.tkh \
-	  --iter 20000 --threads 5 --size 8 --buckets 100000 --lock_mem_buckets
+	  --iter 20000 --threads 5 --size 8 --buckets 100000 $(DBMPERFMEMLOCKFLAGS)
 	$(RUNENV) $(RUNCMD) ./tkrzw_dbm_perf sequence --dbm hash --file mmap-para --path casket.tkh \
-	  --iter 20000 --threads 5 --size 8 --buckets 100000 --lock_mem_buckets --append
+	  --iter 20000 --threads 5 --size 8 --buckets 100000 $(DBMPERFMEMLOCKFLAGS) --append
 	$(RUNENV) $(RUNCMD) ./tkrzw_dbm_perf sequence --dbm hash --file mmap-para --path casket.tkh \
 	  --iter 20000 --threads 5 --size 8 --buckets 100000 --random_key --random_value
 	$(RUNENV) $(RUNCMD) ./tkrzw_dbm_perf sequence --dbm hash --file mmap-para --path casket.tkh \
@@ -209,16 +234,16 @@ check-hashdbm-perf :
 	$(RUNENV) $(RUNCMD) ./tkrzw_dbm_perf parallel --dbm hash --file mmap-para --path casket.tkh \
 	  --iter 100000 --threads 1 --size 8 --buckets 10000 --random_key --random_value --rebuild
 	$(RUNENV) $(RUNCMD) ./tkrzw_dbm_perf parallel --dbm hash --file mmap-para --path casket.tkh \
-	  --iter 100000 --threads 1 --size 8 --buckets 10000 --lock_mem_buckets \
+	  --iter 100000 --threads 1 --size 8 --buckets 10000 $(DBMPERFMEMLOCKFLAGS) \
 	  --random_key --random_value --keys 10000 --rebuild --append
 	$(RUNENV) $(RUNCMD) ./tkrzw_dbm_perf parallel --dbm hash --file mmap-para --path casket.tkh \
-	  --iter 10000 --threads 5 --size 8 --buckets 1000 --lock_mem_buckets \
+	  --iter 10000 --threads 5 --size 8 --buckets 1000 $(DBMPERFMEMLOCKFLAGS) \
 	  --random_key --random_value --keys 5000 --rebuild --append  --sleep 0.0001
 	$(RUNENV) $(RUNCMD) ./tkrzw_dbm_perf wicked --dbm hash --file mmap-para --path casket.tkh \
-	  --iter 20000 --threads 5 --size 8 --buckets 100000 --lock_mem_buckets \
+	  --iter 20000 --threads 5 --size 8 --buckets 100000 $(DBMPERFMEMLOCKFLAGS) \
 	  --iterator --clear --rebuild
 	$(RUNENV) $(RUNCMD) ./tkrzw_dbm_perf wicked --dbm hash --file mmap-para --path casket.tkh \
-	  --iter 20000 --threads 5 --size 8 --buckets 100000 --lock_mem_buckets \
+	  --iter 20000 --threads 5 --size 8 --buckets 100000 $(DBMPERFMEMLOCKFLAGS) \
 	  --append --iterator --clear --rebuild
 
 check-hashdbm-util :
@@ -274,7 +299,7 @@ check-treedbm-perf :
 	  --iter 100000 --threads 1 --size 8 --max_page_size 200 --max_branches 8 \
 	  --max_cached_pages 256 --random_key --random_value --keys 10000 --rebuild --append
 	$(RUNENV) $(RUNCMD) ./tkrzw_dbm_perf parallel --dbm tree --file mmap-para --path casket.tkt \
-	  --iter 10000 --threads 5 --size 8 --buckets 1000 --lock_mem_buckets \
+	  --iter 10000 --threads 5 --size 8 --buckets 1000 $(DBMPERFMEMLOCKFLAGS) \
 	  --max_page_size 200 --max_branches 8 \
 	  --random_key --random_value --keys 5000 --rebuild --append  --sleep 0.0001
 	$(RUNENV) $(RUNCMD) ./tkrzw_dbm_perf wicked --dbm tree --file mmap-para --path casket.tkt \
@@ -402,18 +427,22 @@ check-stddbm-perf :
 	  --iter 20000 --threads 5 --size 8 --iterator --clear --rebuild
 
 check-polydbm-perf :
+	rm -Rf casket*
+	$(RUNENV) $(RUNCMD) ./tkrzw_dbm_perf sequence --dbm poly --path casket \
+	  --iter 10000 --threads 5 --size 8 \
+	  --params "dbm=hash,file=std,num_buckets=100000,offset_width=3,align_pow=0"
 	$(RUNENV) $(RUNCMD) ./tkrzw_dbm_perf sequence --dbm poly --path casket \
 	  --iter 20000 --threads 5 --size 8 \
-	  --params "dbm=hash,lock_mem_buckets=false"
+	  --params "dbm=hash,file=mmap-para,update_mode=in_place,num_buckets=100000"
 	$(RUNENV) $(RUNCMD) ./tkrzw_dbm_perf sequence --dbm poly --path casket \
 	  --iter 20000 --threads 5 --size 8 --random_key --random_value \
-	  --params "dbm=hash,lock_mem_buckets=false"
+	  --params "dbm=hash,file=mmap-atom,update_mode=appending,num_buckets=100000"
 	$(RUNENV) $(RUNCMD) ./tkrzw_dbm_perf parallel --dbm poly --path casket \
 	  --iter 20000 --threads 5 --size 8 --random_key --random_value \
-	  --params "dbm=hash,lock_mem_buckets=false"
+	  --params "dbm=hash,file=pos-para,num_buckets=100000,offset_width=3,align_pow=1"
 	$(RUNENV) $(RUNCMD) ./tkrzw_dbm_perf wicked --dbm poly --path casket \
 	  --iter 20000 --threads 5 --size 8 --iterator --clear --rebuild \
-	  --params "dbm=hash,lock_mem_buckets=false"
+	  --params "dbm=hash,file=pos-atom,num_buckets=100000,fbp_capacity=0,lock_mem_buckets=false"
 
 check-polydbm-util :
 	rm -Rf casket*
@@ -443,6 +472,7 @@ check-polydbm-util :
 	$(RUNENV) $(RUNCMD) ./tkrzw_dbm_util inspect --dbm poly casket-new.tkh
 
 check-sharddbm-perf :
+	rm -Rf casket*
 	$(RUNENV) $(RUNCMD) ./tkrzw_dbm_perf sequence --dbm shard --path casket \
 	  --iter 20000 --threads 5 --size 8 \
 	  --params "dbm=tree,lock_mem_buckets=false,num_shards=3"
@@ -639,6 +669,9 @@ tkrzw_key_comparators_test : tkrzw_key_comparators_test.o $(LIBRARYFILES)
 	$(CXX) $(CXXFLAGS) -o $@ $< $(CMDLDFLAGS) $(CMDLIBS) $(TESTLIBS) $(LIBS)
 
 tkrzw_file_util_test : tkrzw_file_util_test.o $(LIBRARYFILES)
+	$(CXX) $(CXXFLAGS) -o $@ $< $(CMDLDFLAGS) $(CMDLIBS) $(TESTLIBS) $(LIBS)
+
+tkrzw_file_std_test : tkrzw_file_std_test.o $(LIBRARYFILES)
 	$(CXX) $(CXXFLAGS) -o $@ $< $(CMDLDFLAGS) $(CMDLIBS) $(TESTLIBS) $(LIBS)
 
 tkrzw_file_mmap_test : tkrzw_file_mmap_test.o $(LIBRARYFILES)

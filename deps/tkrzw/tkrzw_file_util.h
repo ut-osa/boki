@@ -26,6 +26,24 @@
 
 namespace tkrzw {
 
+/** Directory separator character. */
+extern const char DIR_SEP_CHR;
+
+/** Directory separator string. */
+extern const char* const DIR_SEP_STR;
+
+/** Extension separator character. */
+extern const char EXT_SEP_CHR;
+
+/** Extension separator string. */
+extern const char* const EXT_SEP_STR;
+
+/** Current directory name. */
+extern const char* const CURRENT_DIR_NAME;
+
+/** Parent directory name. */
+extern const char* const PARENT_DIR_NAME;
+
 /**
  * Makes a unique name for a temporary file.
  * @return The unique name.
@@ -141,6 +159,15 @@ Status WriteFile(const std::string& path, std::string_view content);
  */
 Status ReadFile(const std::string& path, std::string* content);
 
+
+/**
+ * Read the content from a file, in a simple way.
+ * @param path The path of the file to make.
+ * @param default_value The value to be returned on failure.
+ * @return The content of the file on success, or the default value on failure.
+ */
+std::string ReadFileSimple(const std::string& path, std::string_view default_value = "");
+
 /**
  * Removes a file.
  * @param path The path of the file.
@@ -153,16 +180,18 @@ Status RemoveFile(const std::string& path);
  * @param src_path The source path of the file.
  * @param dest_path The destination path of the file.
  * @return The result status.
+ * @details If there is a file at the destination path, the file is overwritten.  This function
+ * can rename directories too.
  */
 Status RenameFile(const std::string& src_path, const std::string& dest_path);
 
 /**
- * Copies a file.
+ * Copies the data of a file.
  * @param src_path The source path of the file.
  * @param dest_path The destination path of the file.
  * @return The result status.
  */
-Status CopyFile(const std::string& src_path, const std::string& dest_path);
+Status CopyFileData(const std::string& src_path, const std::string& dest_path);
 
 /**
  * Reads a directory.

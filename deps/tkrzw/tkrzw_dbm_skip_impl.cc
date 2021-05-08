@@ -11,14 +11,16 @@
  * and limitations under the License.
  *************************************************************************************************/
 
+#include "tkrzw_sys_config.h"
+
 #include "tkrzw_dbm.h"
 #include "tkrzw_dbm_skip_impl.h"
 #include "tkrzw_file.h"
 #include "tkrzw_file_mmap.h"
 #include "tkrzw_file_pos.h"
+#include "tkrzw_file_std.h"
 #include "tkrzw_file_util.h"
 #include "tkrzw_str_util.h"
-#include "tkrzw_sys_config.h"
 
 namespace tkrzw {
 
@@ -425,17 +427,17 @@ void SkipRecord::Deserialize(int64_t index, const char* serialized) {
   delete[] body_buf_;
   body_buf_ = nullptr;
   const char* rp = serialized;
-  constexpr int32_t dummy_size = 1 << 28;
+  constexpr int32_t max_varnum_size = 6;
   offset_ = ReadFixNum(rp, offset_width_);
   rp += offset_width_;
   uint64_t num = 0;
-  rp += ReadVarNum(rp, dummy_size, &num);
+  rp += ReadVarNum(rp, max_varnum_size, &num);
   level_ = num;
   std::memcpy(skip_offsets_.data(), rp, sizeof(int64_t) * level_);
   rp += sizeof(int64_t) * level_;
-  rp += ReadVarNum(rp, dummy_size, &num);
+  rp += ReadVarNum(rp, max_varnum_size, &num);
   key_size_ = num;
-  rp += ReadVarNum(rp, dummy_size, &num);
+  rp += ReadVarNum(rp, max_varnum_size, &num);
   value_size_ = num;
   const bool has_value = *(rp++);
   if (key_size_ <= READ_BUFFER_SIZE) {
@@ -526,9 +528,9 @@ void SkipRecordCache::Add(const SkipRecord& record) {
   }
 }
 
-RecordSorter::RecordSorter(const std::string& base_path, int64_t max_mem_size)
-    : base_path_(base_path), max_mem_size_(max_mem_size), total_data_size_(0),
-      finished_(false), current_mem_size_(0) {}
+RecordSorter::RecordSorter(const std::string& base_path, int64_t max_mem_size, bool use_mmap)
+    : base_path_(base_path), max_mem_size_(max_mem_size), use_mmap_(use_mmap),
+      total_data_size_(0), finished_(false), current_mem_size_(0) {}
 
 RecordSorter::~RecordSorter() {
   for (const auto& tmp_file : tmp_files_) {
@@ -695,7 +697,7 @@ Status RecordSorter::Flush() {
   total_data_size_ += current_mem_size_;
   TmpFileFlat tmp_file;
   tmp_file.path = base_path_ + SPrintF(".%05d", tmp_files_.size());
-  if (total_data_size_ <= MAX_DATA_SIZE_MMAP_USE) {
+  if (use_mmap_ && total_data_size_ <= MAX_DATA_SIZE_MMAP_USE) {
     tmp_file.file = new MemoryMapParallelFile();
   } else {
     tmp_file.file = new PositionalParallelFile();

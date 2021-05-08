@@ -8,7 +8,7 @@
 SHELL = /bin/sh
 
 # Targets
-MYBINS = helloworld \
+MYBINS = helloworld accesscounter \
   hashdbm_ex1 hashdbm_ex2 hashdbm_ex3 \
   treedbm_ex1 treedbm_ex2 treedbm_ex3 \
   skipdbm_ex1 skipdbm_ex2 skipdbm_ex3 \
@@ -17,7 +17,8 @@ MYBINS = helloworld \
   cachedbm_ex1 \
   stdtreedbm_ex1 stdtreedbm_ex2 \
   polydbm_ex1 sharddbm_ex1 \
-  fileindex_ex1 stdindex_ex1
+  fileindex_ex1 stdindex_ex1 \
+  invindex_ex1
 
 # Building binaries
 CC = gcc
@@ -50,22 +51,25 @@ RUNENV = LD_LIBRARY_PATH=/lib:/usr/lib:$(HOME)/lib:/usr/local/lib:.:..
 all : $(MYBINS)
 
 clean :
-	rm -rf $(MYBINS) *.exe *.o a.out check.out gmon.out leak.log casket* *~
+	rm -rf $(MYBINS) *.exe *.o a.out check.out gmon.out leak.log casket* *.tkh *.tkt *.tks *~
 
 static :
 	make LDFLAGS="$(LDFLAGS) -static"
 
-check :
-	rm -rf casket*
-	$(RUNENV) ./tkhashex
+single :
+	g++ -std=c++17 -I/usr/local/include -Wall -fsigned-char -O2 \
+	  -o helloworld helloworld.cc -L/usr/local/lib -ltkrzw -lstdc++ -lpthread
 
-.PHONY : all clean static
+.PHONY : all clean static single
 
 #================================================================
 # Building binaries
 #================================================================
 
 helloworld : helloworld.o
+	$(LDENV) $(CXX) $(CPPFLAGS) $(CXXFLAGS) -o $@ $< $(LDFLAGS) $(LIBS)
+
+accesscounter : accesscounter.o
 	$(LDENV) $(CXX) $(CPPFLAGS) $(CXXFLAGS) -o $@ $< $(LDFLAGS) $(LIBS)
 
 hashdbm_ex1 : hashdbm_ex1.o
@@ -126,6 +130,9 @@ fileindex_ex1 : fileindex_ex1.o
 	$(LDENV) $(CXX) $(CPPFLAGS) $(CXXFLAGS) -o $@ $< $(LDFLAGS) $(LIBS)
 
 stdindex_ex1 : stdindex_ex1.o
+	$(LDENV) $(CXX) $(CPPFLAGS) $(CXXFLAGS) -o $@ $< $(LDFLAGS) $(LIBS)
+
+invindex_ex1 : invindex_ex1.o
 	$(LDENV) $(CXX) $(CPPFLAGS) $(CXXFLAGS) -o $@ $< $(LDFLAGS) $(LIBS)
 
 # END OF FILE

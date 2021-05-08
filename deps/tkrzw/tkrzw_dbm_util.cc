@@ -66,6 +66,7 @@ static void PrintUsageAndDie() {
   P("Options for the list subcommand:\n");
   P("  --jump pattern : Jumps to the position of the pattern.\n");
   P("  --items num : The number of items to print.\n");
+  P("  --escape : C-style escape is applied to the TSV data.\n");
   P("\n");
   P("Options for the rebuild subcommand:\n");
   P("  --restore : Skips broken records to restore a broken database.\n");
@@ -208,7 +209,7 @@ KeyComparator GetKeyComparatorOrDie(const std::string& cmp_name) {
 }
 
 // Gets a reducer or die.
-SkipDBM::ReducerType GetReducerOrDier(const std::string& reducer_name) {
+SkipDBM::ReducerType GetReducerOrDie(const std::string& reducer_name) {
   SkipDBM::ReducerType reducer = nullptr;
   if (reducer_name == "none") {
     reducer = nullptr;
@@ -591,7 +592,7 @@ static int32_t ProcessSet(int32_t argc, const char** args) {
   if (typeid(*dbm) == typeid(SkipDBM)) {
     SkipDBM* skip_dbm = dynamic_cast<SkipDBM*>(dbm.get());
     const Status status = skip_dbm->SynchronizeAdvanced(
-        false, nullptr, GetReducerOrDier(reducer_name));
+        false, nullptr, GetReducerOrDie(reducer_name));
     if (status != Status::SUCCESS) {
       EPrintL("SynchronizeAdvanced failed: ", status);
       ok = false;
@@ -648,7 +649,7 @@ static int32_t ProcessRemove(int32_t argc, const char** args) {
 static int32_t ProcessList(int32_t argc, const char** args) {
   const std::map<std::string, int32_t>& cmd_configs = {
     {"", 1}, {"--dbm", 1}, {"--file", 1}, {"--no_wait", 0}, {"--no_lock", 0},
-    {"--jump", 1}, {"--items", 1},
+    {"--jump", 1}, {"--items", 1}, {"--escape", 0},
   };
   std::map<std::string, std::vector<std::string>> cmd_args;
   std::string cmd_error;
@@ -664,6 +665,7 @@ static int32_t ProcessList(int32_t argc, const char** args) {
   const bool with_no_lock = CheckMap(cmd_args, "--no_lock");
   const std::string jump_pattern = GetStringArgument(cmd_args, "--jump", 0, "");
   const int64_t num_items = GetIntegerArgument(cmd_args, "--items", 0, INT64MAX);
+  const bool with_escape = CheckMap(cmd_args, "--escape");
   if (file_path.empty()) {
     Die("The file path must be specified");
   }
@@ -675,15 +677,20 @@ static int32_t ProcessList(int32_t argc, const char** args) {
                "")) {
     return 1;
   }
-  class Printer final : public DBM::RecordProcessor {
-   public:
-    std::string_view ProcessFull(std::string_view key, std::string_view value) override {
-      PrintL(StrTrimForTSV(key), "\t", StrTrimForTSV(value));
-      return NOOP;
-    }
-  } printer;
   bool ok = true;
-  if (jump_pattern.empty() && num_items < INT64MAX) {
+  if (jump_pattern.empty() && num_items == INT64MAX) {
+    class Printer final : public DBM::RecordProcessor {
+     public:
+      explicit Printer(bool escape) : escape_(escape) {}
+      std::string_view ProcessFull(std::string_view key, std::string_view value) override {
+        const std::string& esc_key = escape_ ? StrEscapeC(key) : StrTrimForTSV(key);
+        const std::string& esc_value = escape_ ? StrEscapeC(value) : StrTrimForTSV(value, true);
+        PrintL(esc_key, "\t", esc_value);
+        return NOOP;
+      }
+     private:
+      bool escape_;
+    } printer(with_escape);
     const Status status = dbm->ProcessEach(&printer, false);
     if (status != Status::SUCCESS) {
       EPrintL("ProcessEach failed: ", status);
@@ -714,7 +721,9 @@ static int32_t ProcessList(int32_t argc, const char** args) {
         }
         break;
       }
-      PrintL(StrTrimForTSV(key), "\t", StrTrimForTSV(value));
+      const std::string& esc_key = with_escape ? StrEscapeC(key) : StrTrimForTSV(key);
+      const std::string& esc_value = with_escape ? StrEscapeC(value) : StrTrimForTSV(value, true);
+      PrintL(esc_key, "\t", esc_value);
       status = iter->Next();
       if (status != Status::SUCCESS) {
         EPrintL("Next failed: ", status);
@@ -900,7 +909,7 @@ static int32_t ProcessMerge(int32_t argc, const char** args) {
       has_error = true;
     }
     status = skip_dbm->SynchronizeAdvanced(
-        false, nullptr, GetReducerOrDier(reducer_name));
+        false, nullptr, GetReducerOrDie(reducer_name));
     if (status != Status::SUCCESS) {
       EPrintL("SynchronizeAdvanced failed: ", status);
       has_error = true;
@@ -1106,30 +1115,35 @@ int main(int argc, char** argv) {
     tkrzw::PrintUsageAndDie();
   }
   int32_t rv = 0;
-  if (std::strcmp(args[1], "create") == 0) {
-    rv = tkrzw::ProcessCreate(argc - 1, args + 1);
-  } else if (std::strcmp(args[1], "inspect") == 0) {
-    rv = tkrzw::ProcessInspect(argc - 1, args + 1);
-  } else if (std::strcmp(args[1], "get") == 0) {
-    rv = tkrzw::ProcessGet(argc - 1, args + 1);
-  } else if (std::strcmp(args[1], "set") == 0) {
-    rv = tkrzw::ProcessSet(argc - 1, args + 1);
-  } else if (std::strcmp(args[1], "remove") == 0) {
-    rv = tkrzw::ProcessRemove(argc - 1, args + 1);
-  } else if (std::strcmp(args[1], "list") == 0) {
-    rv = tkrzw::ProcessList(argc - 1, args + 1);
-  } else if (std::strcmp(args[1], "rebuild") == 0) {
-    rv = tkrzw::ProcessRebuild(argc - 1, args + 1);
-  } else if (std::strcmp(args[1], "restore") == 0) {
-    rv = tkrzw::ProcessRestore(argc - 1, args + 1);
-  } else if (std::strcmp(args[1], "merge") == 0) {
-    rv = tkrzw::ProcessMerge(argc - 1, args + 1);
-  } else if (std::strcmp(args[1], "export") == 0) {
-    rv = tkrzw::ProcessExport(argc - 1, args + 1);
-  } else if (std::strcmp(args[1], "import") == 0) {
-    rv = tkrzw::ProcessImport(argc - 1, args + 1);
-  } else {
-    tkrzw::PrintUsageAndDie();
+  try {
+    if (std::strcmp(args[1], "create") == 0) {
+      rv = tkrzw::ProcessCreate(argc - 1, args + 1);
+    } else if (std::strcmp(args[1], "inspect") == 0) {
+      rv = tkrzw::ProcessInspect(argc - 1, args + 1);
+    } else if (std::strcmp(args[1], "get") == 0) {
+      rv = tkrzw::ProcessGet(argc - 1, args + 1);
+    } else if (std::strcmp(args[1], "set") == 0) {
+      rv = tkrzw::ProcessSet(argc - 1, args + 1);
+    } else if (std::strcmp(args[1], "remove") == 0) {
+      rv = tkrzw::ProcessRemove(argc - 1, args + 1);
+    } else if (std::strcmp(args[1], "list") == 0) {
+      rv = tkrzw::ProcessList(argc - 1, args + 1);
+    } else if (std::strcmp(args[1], "rebuild") == 0) {
+      rv = tkrzw::ProcessRebuild(argc - 1, args + 1);
+    } else if (std::strcmp(args[1], "restore") == 0) {
+      rv = tkrzw::ProcessRestore(argc - 1, args + 1);
+    } else if (std::strcmp(args[1], "merge") == 0) {
+      rv = tkrzw::ProcessMerge(argc - 1, args + 1);
+    } else if (std::strcmp(args[1], "export") == 0) {
+      rv = tkrzw::ProcessExport(argc - 1, args + 1);
+    } else if (std::strcmp(args[1], "import") == 0) {
+      rv = tkrzw::ProcessImport(argc - 1, args + 1);
+    } else {
+      tkrzw::PrintUsageAndDie();
+    }
+  } catch (const std::runtime_error& e) {
+    std::cerr << e.what() << std::endl;
+    rv = 1;
   }
   return rv;
 }

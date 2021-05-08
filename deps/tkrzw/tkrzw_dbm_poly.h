@@ -1,5 +1,5 @@
 /*************************************************************************************************
- * Polymorphic datatabase manager adapter
+ * Polymorphic database manager adapter
  *
  * Copyright 2020 Google LLC
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file
@@ -253,7 +253,7 @@ class PolyDBM final : public ParamDBM {
    * @param params Optional parameters.
    * @return The result status.
    * @details The extension of the path indicates the type of the database.
-   *   - .thh : File hash database (HashDBM)
+   *   - .tkh : File hash database (HashDBM)
    *   - .tkt : File tree database (TreeDBM)
    *   - .tks : File skip database (SkipDBM)
    *   - .tkmt : On-memory hash database (TinyDBM)
@@ -269,6 +269,9 @@ class PolyDBM final : public ParamDBM {
    * @details The optional parameter "dbm" supercedes the decision of the database type by the
    * extension.  The value is the type name: "HashDBM", "TreeDBM", "SkipDBM", "TinyDBM",
    * "BabyDBM", "CacheDBM", "StdHashDBM", "StdTreeDBM".
+   * @details The optional parameter "file" specifies the internal file implementation class.
+   * The default file class is "MemoryMapAtomicFile".  The other supported classes are
+   * "StdFile", "MemoryMapAtomicFile", "PositionalParallelFile", and "PositionalAtomicFile".
    * @details For HashDBM, these optional parameters are supported.
    *   - update_mode (string): How to update the database file: "UPDATE_IN_PLACE" for the
    *     in-palce and "UPDATE_APPENDING" for the appending mode.
@@ -285,7 +288,7 @@ class PolyDBM final : public ParamDBM {
    *   - key_comparator (string): The comparator of record keys: "LexicalKeyComparator" for the
    *     lexical order, "LexicalCaseKeyComparator" for the lexical order ignoring case,
    *     "DecimalKeyComparator" for the order of the decimal integer numeric expressions,
-   *     "HexadecimalKeyComparato" for the order of the hexadecimal integer numeric expressions,
+   *     "HexadecimalKeyComparator" for the order of the hexadecimal integer numeric expressions,
    *     "RealNumberKeyComparator" for the order of the decimal real number expressions.
    * @details For SkipDBM, these optional parameters are supported.
    *   - offset_width (int): The width to represent the offset of records.
@@ -306,7 +309,7 @@ class PolyDBM final : public ParamDBM {
    */
   Status OpenAdvanced(const std::string& path, bool writable,
                       int32_t options = File::OPEN_DEFAULT,
-                      const std::map<std::string, std::string>& params = {});
+                      const std::map<std::string, std::string>& params = {}) override;
 
   /**
    * Closes the database file.
@@ -341,16 +344,21 @@ class PolyDBM final : public ParamDBM {
    * @param overwrite Whether to overwrite the existing value if there's a record with the same
    * key.  If true, the existing value is overwritten by the new value.  If false, the operation
    * is given up and an error status is returned.
+   * @param old_value The pointer to a string object to contain the old value.  Assignment is done
+   * even on the duplication error.  If it is nullptr, it is ignored.
    * @return The result status.
    */
-  Status Set(std::string_view key, std::string_view value, bool overwrite = true) override;
+  Status Set(std::string_view key, std::string_view value, bool overwrite = true,
+             std::string* old_value = nullptr) override;
 
   /**
    * Removes a record of a key.
    * @param key The key of the record.
+   * @param old_value The pointer to a string object to contain the old value.  If it is nullptr,
+   * it is ignored.
    * @return The result status.
    */
-  Status Remove(std::string_view key) override;
+  Status Remove(std::string_view key, std::string* old_value = nullptr) override;
 
   /**
    * Appends data at the end of a record of a key.
@@ -415,7 +423,7 @@ class PolyDBM final : public ParamDBM {
    * @return The result status.
    * @details Tuning options can be given by the optional parameters, as with the Open method.
    */
-  Status RebuildAdvanced(const std::map<std::string, std::string>& params = {});
+  Status RebuildAdvanced(const std::map<std::string, std::string>& params = {}) override;
 
   /**
    * Checks whether the database should be rebuilt.
@@ -450,7 +458,7 @@ class PolyDBM final : public ParamDBM {
    * etc are supported.
    */
   Status SynchronizeAdvanced(bool hard, FileProcessor* proc = nullptr,
-                             const std::map<std::string, std::string>& params = {});
+                             const std::map<std::string, std::string>& params = {}) override;
 
   /**
    * Inspects the database.
