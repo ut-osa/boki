@@ -331,8 +331,8 @@ void Storage::SendShardProgressIfNeeded() {
         }
         storage_collection_.ForEachActiveLogSpace(
             current_view_,
-            [&progress_to_send, this] (uint32_t logspace_id,
-                                       LockablePtr<LogStorage> storage_ptr) {
+            [&progress_to_send] (uint32_t logspace_id,
+                                 LockablePtr<LogStorage> storage_ptr) {
                 auto locked_storage = storage_ptr.Lock();
                 if (!locked_storage->frozen() && !locked_storage->finalized()) {
                     auto progress = locked_storage->GrabShardProgressForSending();
