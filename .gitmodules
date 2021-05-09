@@ -28,9 +28,6 @@
 [submodule "deps/protobuf"]
 	path = deps/protobuf
 	url = https://github.com/protocolbuffers/protobuf.git
-[submodule "deps/raft"]
-	path = deps/raft
-	url = https://github.com/canonical/raft.git
 [submodule "deps/rocksdb"]
 	path = deps/rocksdb
 	url = https://github.com/facebook/rocksdb.git
