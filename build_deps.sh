@@ -78,12 +78,6 @@ cd $BASE_DIR/deps/nghttp2 && rm -rf build && mkdir -p build && cd build && \
   make -j$(nproc) install && \
   rm -rf $BASE_DIR/deps/nghttp2/build
 
-# Build raft
-cd $BASE_DIR/deps/raft && autoreconf -i && \
-  ./configure --prefix=${DEPS_INSTALL_PATH} --disable-shared \
-              --enable-debug=${ENABLE_DEBUG} && \
-  make clean && make -j$(nproc) install && make clean
-
 # Build zookeeper-client-c
 cd $BASE_DIR/deps/zookeeper-client-c && autoreconf -if && \
   ./configure --prefix=${DEPS_INSTALL_PATH} --disable-shared \
