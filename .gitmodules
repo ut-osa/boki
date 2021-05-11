@@ -40,3 +40,6 @@
 [submodule "deps/zstd"]
 	path = deps/zstd
 	url = https://github.com/facebook/zstd.git
+[submodule "deps/tkrzw"]
+	path = deps/tkrzw
+	url = https://github.com/estraier/tkrzw.git
