@@ -20,7 +20,7 @@ Controller::Controller(uint32_t random_seed)
       state_(kCreated),
       zk_session_(absl::GetFlag(FLAGS_zookeeper_host),
                   absl::GetFlag(FLAGS_zookeeper_root_path)) {
-    LOG(INFO) << fmt::format("Random seed is {}", bits::HexStr0x(random_seed));
+    LOG_F(INFO, "Random seed is {}", bits::HexStr0x(random_seed));
 }
 
 Controller::~Controller() {}
@@ -68,8 +68,7 @@ void Controller::InstallNewView(const ViewProto& view_proto) {
             if (!status.ok()) {
                 HLOG(FATAL) << "Failed to publish the new view: " << status.ToString();
             }
-            HLOG(INFO) << fmt::format("View {} is published as {}",
-                                      view->id(), result.path);
+            HLOG_F(INFO, "View {} is published as {}", view->id(), result.path);
         }
     );
     state_ = kNormal;
@@ -139,7 +138,7 @@ void Controller::ReconfigView(const Configuration& configuration) {
 }
 
 void Controller::FreezeView(const View* view) {
-    HLOG(INFO) << fmt::format("Start sealing for view {}", view->id());
+    HLOG_F(INFO, "Start sealing for view {}", view->id());
     OngoingSeal seal;
     seal.view = view;
     seal.phylogs.clear();
@@ -159,8 +158,7 @@ void Controller::FreezeView(const View* view) {
             if (!status.ok()) {
                 HLOG(FATAL) << "Failed to freeze the view: " << status.ToString();
             }
-            HLOG(INFO) << fmt::format("View {} freeze cmd is published as {}",
-                                      view->id(), result.path);
+            HLOG_F(INFO, "View {} freeze cmd is published as {}", view->id(), result.path);
         }
     );
     state_ = kReconfiguring;
@@ -260,7 +258,7 @@ void Controller::StartCommandHandler() {
     }
     CHECK_GT(metalog_replicas_, 0U);
     CHECK_GT(num_phylogs_, 0U);
-    HLOG(INFO) << fmt::format("Number of physical logs: {}", num_phylogs_);
+    HLOG_F(INFO, "Number of physical logs: {}", num_phylogs_);
     CHECK_GT(index_replicas_, 0U);
     CHECK_GT(userlog_replicas_, 0U);
 
@@ -277,11 +275,8 @@ void Controller::StartCommandHandler() {
                  log_space_hash_tokens_.end(),
                  rnd_gen_);
 
-    HLOG(INFO) << fmt::format("Create initial view with {} sequencers, {} engines, "
-                              "and {} storages",
-                              sequencer_nodes.size(),
-                              engine_nodes.size(),
-                              storage_nodes.size());
+    HLOG_F(INFO, "Create initial view with {} sequencers, {} engines, and {} storages",
+           sequencer_nodes.size(), engine_nodes.size(), storage_nodes.size());
     Configuration configuration = {
         .log_space_hash_seed   = log_space_hash_seed_,
         .log_space_hash_tokens = log_space_hash_tokens_,
@@ -410,8 +405,8 @@ void Controller::OnFreezeZNodeCreated(std::string_view path,
     if (frozen_proto.view_id() != view->id()) {
         return;
     }
-    HLOG(INFO) << fmt::format("Receive seal response from sequencer {} for view {}",
-                              frozen_proto.sequencer_id(), view->id());
+    HLOG_F(INFO, "Receive seal response from sequencer {} for view {}",
+           frozen_proto.sequencer_id(), view->id());
     for (const auto& tail_metalogs : frozen_proto.tail_metalogs()) {
         auto key = std::make_pair(tail_metalogs.logspace_id(), frozen_proto.sequencer_id());
         ongoing_seal_->tail_metalogs[key] = tail_metalogs;
@@ -421,7 +416,7 @@ void Controller::OnFreezeZNodeCreated(std::string_view path,
         return;
     }
     ongoing_seal_.reset();
-    HLOG(INFO) << fmt::format("Finish sealing for view {}", view->id());
+    HLOG_F(INFO, "Finish sealing for view {}", view->id());
     FinalizedViewProto finalized_view = *sealed;
     std::string serialized;
     CHECK(finalized_view.SerializeToString(&serialized));
@@ -432,8 +427,7 @@ void Controller::OnFreezeZNodeCreated(std::string_view path,
             if (!status.ok()) {
                 HLOG(FATAL) << "Failed to publish the new finalized view: " << status.ToString();
             }
-            HLOG(INFO) << fmt::format("Finalized view {} is published as {}",
-                                      view->id(), result.path);
+            HLOG_F(INFO, "Finalized view {} is published as {}", view->id(), result.path);
             state_ = kFrozen;
             Configuration configuration = *pending_reconfig_;
             pending_reconfig_.reset();

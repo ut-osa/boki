@@ -285,8 +285,7 @@ void EngineBase::LogCachePut(const LogMetaData& log_metadata,
     if (!log_cache_.has_value()) {
         return;
     }
-    HVLOG(1) << fmt::format("Store cache for log entry (seqnum {})",
-                            bits::HexStr0x(log_metadata.seqnum));
+    HVLOG_F(1, "Store cache for log entry (seqnum {})", bits::HexStr0x(log_metadata.seqnum));
     log_cache_->Put(log_metadata, user_tags, log_data);
 }
 
@@ -361,8 +360,7 @@ void EngineBase::SendReadResponse(const IndexQuery& query,
         protocol::ConnType::SLOG_ENGINE_TO_ENGINE,
         engine_id, *response, user_tags_payload, data_payload, aux_data_payload);
     if (!success) {
-        HLOG(WARNING) << fmt::format("Failed to send read response to engine {}",
-                                     engine_id);
+        HLOG_F(WARNING, "Failed to send read response to engine {}", engine_id);
     }
 }
 

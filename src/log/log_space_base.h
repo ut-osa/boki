@@ -121,7 +121,7 @@ LockablePtr<T> LogSpaceCollection<T>::GetLogSpace(uint32_t identifier) const {
 template<class T>
 LockablePtr<T> LogSpaceCollection<T>::GetLogSpaceChecked(uint32_t identifier) const {
     if (!log_spaces_.contains(identifier)) {
-        LOG(FATAL) << fmt::format("Cannot find LogSpace with identifier {}", identifier);
+        LOG_F(FATAL, "Cannot find LogSpace with identifier {}", identifier);
     }
     return log_spaces_.at(identifier);
 }

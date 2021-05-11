@@ -25,10 +25,10 @@ Engine::~Engine() {}
 
 void Engine::OnViewCreated(const View* view) {
     DCHECK(zk_session()->WithinMyEventLoopThread());
-    HLOG(INFO) << fmt::format("New view {} created", view->id());
+    HLOG_F(INFO, "New view {} created", view->id());
     bool contains_myself = view->contains_engine_node(my_node_id());
     if (!contains_myself) {
-        HLOG(WARNING) << fmt::format("View {} does not include myself", view->id());
+        HLOG_F(WARNING, "View {} does not include myself", view->id());
     }
     std::vector<SharedLogRequest> ready_requests;
     {
@@ -56,7 +56,7 @@ void Engine::OnViewCreated(const View* view) {
         log_header_ = fmt::format("LogEngine[{}-{}]: ", my_node_id(), view->id());
     }
     if (!ready_requests.empty()) {
-        HLOG(INFO) << fmt::format("{} requests for the new view", ready_requests.size());
+        HLOG_F(INFO, "{} requests for the new view", ready_requests.size());
         SomeIOWorker()->ScheduleFunction(
             nullptr, [this, requests = std::move(ready_requests)] () {
                 ProcessRequests(requests);
@@ -67,7 +67,7 @@ void Engine::OnViewCreated(const View* view) {
 
 void Engine::OnViewFrozen(const View* view) {
     DCHECK(zk_session()->WithinMyEventLoopThread());
-    HLOG(INFO) << fmt::format("View {} frozen", view->id());
+    HLOG_F(INFO, "View {} frozen", view->id());
     absl::MutexLock view_lk(&view_mu_);
     DCHECK_EQ(view->id(), current_view_->id());
     if (view->contains_engine_node(my_node_id())) {
@@ -78,7 +78,7 @@ void Engine::OnViewFrozen(const View* view) {
 
 void Engine::OnViewFinalized(const FinalizedView* finalized_view) {
     DCHECK(zk_session()->WithinMyEventLoopThread());
-    HLOG(INFO) << fmt::format("View {} finalized", finalized_view->view()->id());
+    HLOG_F(INFO, "View {} finalized", finalized_view->view()->id());
     LogProducer::AppendResultVec append_results;
     Index::QueryResultVec query_results;
     {
@@ -132,8 +132,8 @@ static Message BuildLocalReadOKResponse(uint64_t seqnum,
     Message response = MessageHelper::NewSharedLogOpSucceeded(
         SharedLogResultType::READ_OK, seqnum);
     if (user_tags.size() * sizeof(uint64_t) + log_data.size() > MESSAGE_INLINE_DATA_SIZE) {
-        LOG(FATAL) << fmt::format("Log data too large: num_tags={}, size={}",
-                                  user_tags.size(), log_data.size());
+        LOG_F(FATAL, "Log data too large: num_tags={}, size={}",
+              user_tags.size(), log_data.size());
     }
     response.log_num_tags = gsl::narrow_cast<uint16_t>(user_tags.size());
     MessageHelper::AppendInlineData(&response, user_tags);
@@ -164,8 +164,8 @@ static Message BuildLocalReadOKResponse(const LogEntry& log_entry) {
 
 void Engine::HandleLocalAppend(LocalOp* op) {
     DCHECK(op->type == SharedLogOpType::APPEND);
-    HVLOG(1) << fmt::format("Handle local append: op_id={}, logspace={}, num_tags={}, size={}",
-                            op->id, op->user_logspace, op->user_tags.size(), op->data.length());
+    HVLOG_F(1, "Handle local append: op_id={}, logspace={}, num_tags={}, size={}",
+            op->id, op->user_logspace, op->user_tags.size(), op->data.length());
     const View* view = nullptr;
     LogMetaData log_metadata = MetaDataFromAppendOp(op);
     {
@@ -196,9 +196,8 @@ void Engine::HandleLocalRead(LocalOp* op) {
     DCHECK(  op->type == SharedLogOpType::READ_NEXT
           || op->type == SharedLogOpType::READ_PREV
           || op->type == SharedLogOpType::READ_NEXT_B);
-    HVLOG(1) << fmt::format("Handle local read: op_id={}, logspace={}, tag={}, seqnum={}",
-                            op->id, op->user_logspace, op->query_tag,
-                            bits::HexStr0x(op->seqnum));
+    HVLOG_F(1, "Handle local read: op_id={}, logspace={}, tag={}, seqnum={}",
+            op->id, op->user_logspace, op->query_tag, bits::HexStr0x(op->seqnum));
     onging_reads_.PutChecked(op->id, op);
     const View::Sequencer* sequencer_node = nullptr;
     LockablePtr<Index> index_ptr;
@@ -241,9 +240,9 @@ void Engine::HandleLocalRead(LocalOp* op) {
         }
         ProcessIndexQueryResults(query_results);
     } else {
-        HVLOG(1) << fmt::format("There is no local index for sequencer {}, "
-                                "will send request to remote engine node",
-                                DCHECK_NOTNULL(sequencer_node)->node_id());
+        HVLOG_F(1, "There is no local index for sequencer {}, "
+                   "will send request to remote engine node",
+                DCHECK_NOTNULL(sequencer_node)->node_id());
         SharedLogMessage request = BuildReadRequestMessage(op);
         bool send_success = SendIndexReadRequest(DCHECK_NOTNULL(sequencer_node), &request);
         if (!send_success) {
@@ -378,12 +377,12 @@ void Engine::OnRecvNewIndexData(const SharedLogMessage& message,
         DCHECK(message.view_id < views_.size());
         const View* view = views_.at(message.view_id);
         if (!view->contains_engine_node(my_node_id())) {
-            HLOG(FATAL) << fmt::format("View {} does not contain myself", view->id());
+            HLOG_F(FATAL, "View {} does not contain myself", view->id());
         }
         const View::Engine* engine_node = view->GetEngineNode(my_node_id());
         if (!engine_node->HasIndexFor(message.sequencer_id)) {
-            HLOG(FATAL) << fmt::format("This node is not index node for log space {}",
-                                       bits::HexStr0x(message.logspace_id));
+            HLOG_F(FATAL, "This node is not index node for log space {}",
+                   bits::HexStr0x(message.logspace_id));
         }
         auto index_ptr = index_collection_.GetLogSpaceChecked(message.logspace_id);
         {
@@ -408,13 +407,12 @@ void Engine::OnRecvResponse(const SharedLogMessage& message,
         uint64_t op_id = message.client_data;
         LocalOp* op;
         if (!onging_reads_.Poll(op_id, &op)) {
-            HLOG(WARNING) << fmt::format("Cannot find read op with id {}", op_id);
+            HLOG_F(WARNING, "Cannot find read op with id {}", op_id);
             return;
         }
         if (result == SharedLogResultType::READ_OK) {
             uint64_t seqnum = bits::JoinTwo32(message.logspace_id, message.seqnum_lowhalf);
-            HVLOG(1) << fmt::format("Receive remote read response for log (seqnum {})",
-                                    bits::HexStr0x(seqnum));
+            HVLOG_F(1, "Receive remote read response for log (seqnum {})", bits::HexStr0x(seqnum));
             std::span<const uint64_t> user_tags;
             std::span<const char> log_data;
             std::span<const char> aux_data;
@@ -435,9 +433,8 @@ void Engine::OnRecvResponse(const SharedLogMessage& message,
             FinishLocalOpWithFailure(
                 op, SharedLogResultType::EMPTY, message.user_metalog_progress);
         } else if (result == SharedLogResultType::DATA_LOST) {
-            HLOG(WARNING) << fmt::format("Receive DATA_LOST response for read request "
-                                         "seqnum={}, tag={}",
-                                         bits::HexStr0x(op->seqnum), op->query_tag);
+            HLOG_F(WARNING, "Receive DATA_LOST response for read request: seqnum={}, tag={}",
+                   bits::HexStr0x(op->seqnum), op->query_tag);
             FinishLocalOpWithFailure(op, SharedLogResultType::DATA_LOST);
         } else {
             UNREACHABLE();
@@ -471,8 +468,7 @@ void Engine::ProcessIndexFoundResult(const IndexQueryResult& query_result) {
     uint64_t seqnum = query_result.found_result.seqnum;
     if (auto cached_log_entry = LogCacheGet(seqnum); cached_log_entry.has_value()) {
         // Cache hits
-        HVLOG(1) << fmt::format("Cache hits for log entry (seqnum {})",
-                                bits::HexStr0x(seqnum));
+        HVLOG_F(1, "Cache hits for log entry (seqnum {})", bits::HexStr0x(seqnum));
         const LogEntry& log_entry = cached_log_entry.value();
         std::optional<std::string> cached_aux_data = LogCacheGetAuxData(seqnum);
         std::span<const char> aux_data;
@@ -483,11 +479,11 @@ void Engine::ProcessIndexFoundResult(const IndexQueryResult& query_result) {
             if (full_size <= MESSAGE_INLINE_DATA_SIZE) {
                 aux_data = STRING_AS_SPAN(*cached_aux_data);
             } else {
-                HLOG(WARNING) << fmt::format("Inline buffer of message not large enough "
-                                             "for auxiliary data of log (seqnum {}): "
-                                             "log_size={}, num_tags={} aux_data_size={}",
-                                             bits::HexStr0x(seqnum), log_entry.data.size(),
-                                             log_entry.user_tags.size(), cached_aux_data->size());
+                HLOG_F(WARNING, "Inline buffer of message not large enough "
+                                "for auxiliary data of log (seqnum {}): "
+                                "log_size={}, num_tags={} aux_data_size={}",
+                       bits::HexStr0x(seqnum), log_entry.data.size(),
+                       log_entry.user_tags.size(), cached_aux_data->size());
             }
         }
         if (local_request) {
@@ -497,8 +493,7 @@ void Engine::ProcessIndexFoundResult(const IndexQueryResult& query_result) {
             MessageHelper::AppendInlineData(&response, aux_data);
             FinishLocalOpWithResponse(op, &response, query_result.metalog_progress);
         } else {
-            HVLOG(1) << fmt::format("Send read response for log (seqnum {})",
-                                    bits::HexStr0x(seqnum));
+            HVLOG_F(1, "Send read response for log (seqnum {})", bits::HexStr0x(seqnum));
             SharedLogMessage response = SharedLogMessageHelper::NewReadOkResponse();
             log_utils::PopulateMetaDataToMessage(log_entry.metadata, &response);
             response.user_metalog_progress = query_result.metalog_progress;
@@ -511,8 +506,7 @@ void Engine::ProcessIndexFoundResult(const IndexQueryResult& query_result) {
         // Cache miss
         bool success = SendStorageReadRequest(query_result);
         if (!success) {
-            HLOG(WARNING) << fmt::format("Failed to send read request for seqnum {} ",
-                                         bits::HexStr0x(seqnum));
+            HLOG_F(WARNING, "Failed to send read request for seqnum {} ", bits::HexStr0x(seqnum));
             if (local_request) {
                 LocalOp* op = onging_reads_.PollChecked(query.client_data);
                 FinishLocalOpWithFailure(op, SharedLogResultType::DATA_LOST);

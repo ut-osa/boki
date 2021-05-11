@@ -187,10 +187,10 @@ void Index::ProvideIndexData(const IndexDataProto& index_data) {
 void Index::MakeQuery(const IndexQuery& query) {
     uint16_t view_id = bits::HighHalf32(bits::HighHalf64(query.metalog_progress));
     if (view_id > view_->id()) {
-        HLOG(FATAL) << fmt::format("Cannot process query with metalog_progress from the future: "
-                                    "metalog_progress={}, my_view_id={}",
-                                    bits::HexStr0x(query.metalog_progress),
-                                    bits::HexStr0x(view_->id()));
+        HLOG_F(FATAL, "Cannot process query with metalog_progress from the future: "
+                      "metalog_progress={}, my_view_id={}",
+               bits::HexStr0x(query.metalog_progress),
+               bits::HexStr0x(view_->id()));
     } else if (view_id < view_->id()) {
         ProcessQuery(query);
     } else {
@@ -227,8 +227,7 @@ void Index::AdvanceIndexProgress() {
         if (data_received_seqnum_position_ < end_seqnum) {
             break;
         }
-        HVLOG(1) << fmt::format("Apply IndexData until seqnum {}",
-                                bits::HexStr0x(end_seqnum));
+        HVLOG_F(1, "Apply IndexData until seqnum {}", bits::HexStr0x(end_seqnum));
         auto iter = received_data_.begin();
         while (iter != received_data_.end()) {
             uint32_t seqnum = iter->first;
@@ -276,7 +275,7 @@ Index::PerSpaceIndex* Index::GetOrCreateIndex(uint32_t user_logspace) {
     if (index_.contains(user_logspace)) {
         return index_.at(user_logspace).get();
     }
-    HVLOG(1) << fmt::format("Create index of user logspace {}", user_logspace);
+    HVLOG_F(1, "Create index of user logspace {}", user_logspace);
     PerSpaceIndex* index = new PerSpaceIndex(identifier(), user_logspace);
     index_[user_logspace].reset(index);
     return index;

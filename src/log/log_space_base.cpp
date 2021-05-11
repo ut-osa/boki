@@ -37,8 +37,8 @@ std::optional<MetaLogProto> LogSpaceBase::GetMetaLog(uint32_t pos) const {
 bool LogSpaceBase::ProvideMetaLog(const MetaLogProto& meta_log) {
     DCHECK(state_ == kNormal || state_ == kFrozen);
     if (mode_ == kLiteMode && meta_log.type() == MetaLogProto::TRIM) {
-        HLOG(WARNING) << fmt::format("Trim log (seqnum={}) is simply ignore in lite mode",
-                                     meta_log.metalog_seqnum());
+        HLOG_F(WARNING, "Trim log (seqnum={}) is simply ignore in lite mode",
+               meta_log.metalog_seqnum());
         return false;
     }
     uint32_t seqnum = meta_log.metalog_seqnum();
@@ -61,16 +61,15 @@ void LogSpaceBase::Freeze() {
 bool LogSpaceBase::Finalize(uint32_t final_metalog_position,
                             const std::vector<MetaLogProto>& tail_metalogs) {
     DCHECK(state_ == kNormal || state_ == kFrozen);
-    HLOG(INFO) << fmt::format("Finalize log space, final_position={}, provided_tails={}",
-                              final_metalog_position, tail_metalogs.size());
+    HLOG_F(INFO, "Finalize log space, final_position={}, provided_tails={}",
+           final_metalog_position, tail_metalogs.size());
     for (const MetaLogProto& meta_log : tail_metalogs) {
         ProvideMetaLog(meta_log);
     }
     if (metalog_position_ >= final_metalog_position) {
         if (metalog_position_ > final_metalog_position + 1) {
-            HLOG(FATAL) << fmt::format("See the future: current_position={}, "
-                                       "expected_position={}",
-                                       metalog_position_, final_metalog_position);
+            HLOG_F(FATAL, "See the future: current_position={}, expected_position={}",
+                   metalog_position_, final_metalog_position);
         } else {
             // TODO: try fix this
             HLOG(WARNING) << "Fine, the problem with primary sequencer";
@@ -79,8 +78,8 @@ bool LogSpaceBase::Finalize(uint32_t final_metalog_position,
         OnFinalized(metalog_position_);
         return true;
     } else {
-        HLOG(ERROR) << fmt::format("current_position={}, expected_position={}",
-                                   metalog_position_, final_metalog_position);
+        HLOG_F(ERROR, "current_position={}, expected_position={}",
+               metalog_position_, final_metalog_position);
         return false;
     }
 }
@@ -156,9 +155,8 @@ void LogSpaceBase::ApplyMetaLog(const MetaLogProto& meta_log) {
             const auto& new_logs = meta_log.new_logs_proto();
             const View::NodeIdVec& engine_node_ids = view_->GetEngineNodes();
             uint32_t start_seqnum = new_logs.start_seqnum();
-            HVLOG(1) << fmt::format("Apply NEW_LOGS meta log: "
-                                    "metalog_seqnum={}, start_seqnum={}",
-                                    meta_log.metalog_seqnum(), start_seqnum);
+            HVLOG_F(1, "Apply NEW_LOGS meta log: metalog_seqnum={}, start_seqnum={}",
+                    meta_log.metalog_seqnum(), start_seqnum);
             for (size_t i = 0; i < engine_node_ids.size(); i++) {
                 uint32_t shard_start = new_logs.shard_starts(static_cast<int>(i));
                 uint32_t delta = new_logs.shard_deltas(static_cast<int>(i));

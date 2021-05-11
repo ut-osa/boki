@@ -19,10 +19,10 @@ Sequencer::~Sequencer() {}
 
 void Sequencer::OnViewCreated(const View* view) {
     DCHECK(zk_session()->WithinMyEventLoopThread());
-    HLOG(INFO) << fmt::format("New view {} created", view->id());
+    HLOG_F(INFO, "New view {} created", view->id());
     bool contains_myself = view->contains_sequencer_node(my_node_id());
     if (!contains_myself) {
-        HLOG(WARNING) << fmt::format("View {} does not include myself", view->id());
+        HLOG_F(WARNING, "View {} does not include myself", view->id());
     }
     std::vector<SharedLogRequest> ready_requests;
     {
@@ -49,7 +49,7 @@ void Sequencer::OnViewCreated(const View* view) {
         log_header_ = fmt::format("Sequencer[{}-{}]: ", my_node_id(), view->id());
     }
     if (!ready_requests.empty()) {
-        HLOG(INFO) << fmt::format("{} requests for the new view", ready_requests.size());
+        HLOG_F(INFO, "{} requests for the new view", ready_requests.size());
         SomeIOWorker()->ScheduleFunction(
             nullptr, [this, requests = std::move(ready_requests)] {
                 ProcessRequests(requests);
@@ -78,7 +78,7 @@ void FreezeLogSpace(LockablePtr<T> logspace_ptr, MetaLogsProto* tail_metalogs) {
 
 void Sequencer::OnViewFrozen(const View* view) {
     DCHECK(zk_session()->WithinMyEventLoopThread());
-    HLOG(INFO) << fmt::format("View {} frozen", view->id());
+    HLOG_F(INFO, "View {} frozen", view->id());
     FrozenSequencerProto frozen_proto;
     frozen_proto.set_view_id(view->id());
     frozen_proto.set_sequencer_id(my_node_id());
@@ -108,14 +108,14 @@ void Sequencer::OnViewFrozen(const View* view) {
             if (!status.ok()) {
                 HLOG(FATAL) << "Failed to publish freeze data: " << status.ToString();
             }
-            HLOG(INFO) << fmt::format("Frozen at ZK path {}", result.path);
+            HLOG_F(INFO, "Frozen at ZK path {}", result.path);
         }
     );
 }
 
 void Sequencer::OnViewFinalized(const FinalizedView* finalized_view) {
     DCHECK(zk_session()->WithinMyEventLoopThread());
-    HLOG(INFO) << fmt::format("View {} finalized", finalized_view->view()->id());
+    HLOG_F(INFO, "View {} finalized", finalized_view->view()->id());
     absl::MutexLock view_lk(&view_mu_);
     DCHECK_EQ(finalized_view->view()->id(), current_view_->id());
     if (current_primary_ != nullptr) {
@@ -144,8 +144,8 @@ void Sequencer::OnViewFinalized(const FinalizedView* finalized_view) {
     do {                                                            \
         if (current_view_ == nullptr                                \
                 || (MESSAGE_VAR).view_id > current_view_->id()) {   \
-            HLOG(FATAL) << "Receive message from future view "      \
-                        << (MESSAGE_VAR).view_id;                   \
+            HLOG_F(FATAL, "Receive message from future view {}",    \
+                   (MESSAGE_VAR).view_id);                          \
         }                                                           \
     } while (0)
 
@@ -153,8 +153,8 @@ void Sequencer::OnViewFinalized(const FinalizedView* finalized_view) {
     do {                                                            \
         if (current_view_ != nullptr                                \
                 && (MESSAGE_VAR).view_id < current_view_->id()) {   \
-            HLOG(WARNING) << "Receive outdate message from view "   \
-                          << (MESSAGE_VAR).view_id;                 \
+            HLOG_F(WARNING, "Receive outdate message from view {}", \
+                   (MESSAGE_VAR).view_id);                          \
             return;                                                 \
         }                                                           \
     } while (0)
@@ -163,16 +163,14 @@ void Sequencer::OnViewFinalized(const FinalizedView* finalized_view) {
     do {                                                            \
         if ((LOGSPACE_PTR)->frozen()) {                             \
             uint32_t logspace_id = (LOGSPACE_PTR)->identifier();    \
-            HLOG(WARNING) << fmt::format(                           \
-                "LogSpace {} is frozen",                            \
-                bits::HexStr0x(logspace_id));                       \
+            HLOG_F(WARNING, "LogSpace {} is frozen",                \
+                   bits::HexStr0x(logspace_id));                    \
             return;                                                 \
         }                                                           \
         if ((LOGSPACE_PTR)->finalized()) {                          \
             uint32_t logspace_id = (LOGSPACE_PTR)->identifier();    \
-            HLOG(WARNING) << fmt::format(                           \
-                "LogSpace {} is finalized",                         \
-                bits::HexStr0x(logspace_id));                       \
+            HLOG_F(WARNING, "LogSpace {} is finalized",             \
+                   bits::HexStr0x(logspace_id));                    \
             return;                                                 \
         }                                                           \
     } while (0)
@@ -203,7 +201,7 @@ void Sequencer::OnRecvMetaLogProgress(const SharedLogMessage& message) {
                 if (auto metalog = locked_logspace->GetMetaLog(pos); metalog.has_value()) {
                     replicated_metalogs.push_back(std::move(*metalog));
                 } else {
-                    HLOG(FATAL) << fmt::format("Cannot get meta log at position {}", pos);
+                    HLOG_F(FATAL, "Cannot get meta log at position {}", pos);
                 }
             }
         }

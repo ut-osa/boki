@@ -43,7 +43,7 @@ RocksDBBackend::RocksDBBackend(std::string_view db_path) {
     options.create_if_missing = true;
     options.max_background_jobs = absl::GetFlag(FLAGS_rocksdb_max_background_jobs);
     rocksdb::DB* db;
-    LOG(INFO) << fmt::format("Open RocksDB at path {}", db_path);
+    HLOG_F(INFO, "Open RocksDB at path {}", db_path);
     auto status = rocksdb::DB::Open(options, std::string(db_path), &db);
     ROCKSDB_CHECK_OK(status, Open);
     db_.reset(db);
@@ -52,7 +52,7 @@ RocksDBBackend::RocksDBBackend(std::string_view db_path) {
 RocksDBBackend::~RocksDBBackend() {}
 
 void RocksDBBackend::InstallLogSpace(uint32_t logspace_id) {
-    HLOG(INFO) << fmt::format("Install log space {}", bits::HexStr0x(logspace_id));
+    HLOG_F(INFO, "Install log space {}", bits::HexStr0x(logspace_id));
     rocksdb::ColumnFamilyOptions options;
     if (absl::GetFlag(FLAGS_rocksdb_enable_compression)) {
         options.compression = rocksdb::kZSTD;
@@ -75,7 +75,7 @@ void RocksDBBackend::InstallLogSpace(uint32_t logspace_id) {
 std::optional<std::string> RocksDBBackend::Get(uint32_t logspace_id, uint32_t key) {
     rocksdb::ColumnFamilyHandle* cf_handle = GetCFHandle(logspace_id);
     if (cf_handle == nullptr) {
-        LOG(WARNING) << fmt::format("Log space {} not created", bits::HexStr0x(logspace_id));
+        HLOG_F(WARNING, "Log space {} not created", bits::HexStr0x(logspace_id));
         return std::nullopt;
     }
     std::string key_str = bits::HexStr(key);
@@ -91,7 +91,7 @@ std::optional<std::string> RocksDBBackend::Get(uint32_t logspace_id, uint32_t ke
 void RocksDBBackend::Put(uint32_t logspace_id, uint32_t key, std::span<const char> data) {
     rocksdb::ColumnFamilyHandle* cf_handle = GetCFHandle(logspace_id);
     if (cf_handle == nullptr) {
-        LOG(ERROR) << fmt::format("Log space {} not created", bits::HexStr0x(logspace_id));
+        HLOG_F(ERROR, "Log space {} not created", bits::HexStr0x(logspace_id));
         return;
     }
     std::string key_str = bits::HexStr(key);
@@ -121,7 +121,7 @@ TkrzwDBMBackend::~TkrzwDBMBackend() {
 }
 
 void TkrzwDBMBackend::InstallLogSpace(uint32_t logspace_id) {
-    HLOG(INFO) << fmt::format("Install log space {}", bits::HexStr0x(logspace_id));
+    HLOG_F(INFO, "Install log space {}", bits::HexStr0x(logspace_id));
     tkrzw::DBM* db_ptr = nullptr;
     if (type_ == kHashDBM) {
         tkrzw::HashDBM* db = new tkrzw::HashDBM();
@@ -167,7 +167,7 @@ void TkrzwDBMBackend::InstallLogSpace(uint32_t logspace_id) {
 std::optional<std::string> TkrzwDBMBackend::Get(uint32_t logspace_id, uint32_t key) {
     tkrzw::DBM* dbm = GetDBM(logspace_id);
     if (dbm == nullptr) {
-        LOG(WARNING) << fmt::format("Log space {} not created", bits::HexStr0x(logspace_id));
+        HLOG_F(WARNING, "Log space {} not created", bits::HexStr0x(logspace_id));
         return std::nullopt;
     }
     std::string key_str = bits::HexStr(key);
@@ -183,7 +183,7 @@ std::optional<std::string> TkrzwDBMBackend::Get(uint32_t logspace_id, uint32_t k
 void TkrzwDBMBackend::Put(uint32_t logspace_id, uint32_t key, std::span<const char> data) {
     tkrzw::DBM* dbm = GetDBM(logspace_id);
     if (dbm == nullptr) {
-        LOG(FATAL) << fmt::format("Log space {} not created", bits::HexStr0x(logspace_id));
+        HLOG_F(FATAL, "Log space {} not created", bits::HexStr0x(logspace_id));
     }
     std::string key_str = bits::HexStr(key);
     auto status = dbm->Set(key_str, std::string_view(data.data(), data.size()));

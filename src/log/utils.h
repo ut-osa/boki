@@ -76,7 +76,7 @@ template<class T>
 ThreadedMap<T>::~ThreadedMap() {
 #if DCHECK_IS_ON()
     if (!rep_.empty()) {
-        LOG(WARNING) << fmt::format("There are {} elements left", rep_.size());
+        LOG_F(WARNING, "There are {} elements left", rep_.size());
     }
 #endif
 }
@@ -160,8 +160,7 @@ void FinalizedLogSpace(LockablePtr<T> logspace_ptr,
         finalized_view->final_metalog_position(logspace_id),
         finalized_view->tail_metalogs(logspace_id));
     if (!success) {
-        LOG(FATAL) << fmt::format("Failed to finalize log space {}",
-                                  bits::HexStr0x(logspace_id));
+        LOG_F(FATAL, "Failed to finalize log space {}", bits::HexStr0x(logspace_id));
     }
 }
 

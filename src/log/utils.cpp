@@ -22,12 +22,12 @@ void FutureRequests::OnNewView(const View* view,
                                std::vector<SharedLogRequest>* ready_requests) {
     absl::MutexLock lk(&mu_);
     if (view->id() != next_view_id_) {
-        LOG(FATAL) << fmt::format("Views are not consecutive: have={}, expect={}",
-                                  view->id(), next_view_id_);
+        LOG_F(FATAL, "Views are not consecutive: have={}, expect={}",
+              view->id(), next_view_id_);
     }
     if (onhold_requests_.contains(view->id())) {
         if (ready_requests == nullptr) {
-            LOG(FATAL) << fmt::format("Not expect on-hold requests for view {}", view->id());
+            LOG_F(FATAL, "Not expect on-hold requests for view {}", view->id());
         }
         *ready_requests = std::move(onhold_requests_[view->id()]);
         onhold_requests_.erase(view->id());
@@ -38,9 +38,9 @@ void FutureRequests::OnNewView(const View* view,
 void FutureRequests::OnHoldRequest(uint16_t view_id, SharedLogRequest request) {
     absl::MutexLock lk(&mu_);
     if (view_id < next_view_id_) {
-        LOG(FATAL) << fmt::format("Receive request from view not in the future: "
-                                  "request_view_id={}, next_view_id={}",
-                                  view_id, next_view_id_);
+        LOG_F(FATAL, "Receive request from view not in the future: "
+                      "request_view_id={}, next_view_id={}",
+              view_id, next_view_id_);
     }
     onhold_requests_[view_id].push_back(std::move(request));
 }

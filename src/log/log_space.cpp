@@ -31,14 +31,13 @@ MetaLogPrimary::~MetaLogPrimary() {}
 void MetaLogPrimary::UpdateStorageProgress(uint16_t storage_id,
                                            const std::vector<uint32_t>& progress) {
     if (!view_->contains_storage_node(storage_id)) {
-        HLOG(FATAL) << fmt::format("View {} does not has storage node {}",
-                                   view_->id(), storage_id);
+        HLOG_F(FATAL, "View {} does not has storage node {}", view_->id(), storage_id);
     }
     const View::Storage* storage_node = view_->GetStorageNode(storage_id);
     const View::NodeIdVec& engine_node_ids = storage_node->GetSourceEngineNodes();
     if (progress.size() != engine_node_ids.size()) {
-        HLOG(FATAL) << fmt::format("Size does not match: have={}, expected={}",
-                                   progress.size(), engine_node_ids.size());
+        HLOG_F(FATAL, "Size does not match: have={}, expected={}",
+               progress.size(), engine_node_ids.size());
     }
     for (size_t i = 0; i < progress.size(); i++) {
         uint16_t engine_id = engine_node_ids[i];
@@ -49,9 +48,8 @@ void MetaLogPrimary::UpdateStorageProgress(uint16_t storage_id,
             uint32_t current_position = GetShardReplicatedPosition(engine_id);
             DCHECK_GE(current_position, last_cut_.at(engine_id));
             if (current_position > last_cut_.at(engine_id)) {
-                HVLOG(1) << fmt::format("Store progress from storage {} for engine {}: {}",
-                                        storage_id, engine_id,
-                                        bits::HexStr0x(current_position));
+                HVLOG_F(1, "Store progress from storage {} for engine {}: {}",
+                        storage_id, engine_id, bits::HexStr0x(current_position));
                 dirty_shards_.insert(engine_id);
             }
         }
@@ -61,12 +59,11 @@ void MetaLogPrimary::UpdateStorageProgress(uint16_t storage_id,
 void MetaLogPrimary::UpdateReplicaProgress(uint16_t sequencer_id,
                                            uint32_t metalog_position) {
     if (!sequencer_node_->IsReplicaSequencerNode(sequencer_id)) {
-        HLOG(FATAL) << fmt::format("Should not receive META_PROG message from sequencer {}",
-                                    sequencer_id);
+        HLOG_F(FATAL, "Should not receive META_PROG message from sequencer {}", sequencer_id);
     }
     if (metalog_position > metalog_position_) {
-        HLOG(FATAL) << fmt::format("Receive future position: received={}, current={}",
-                                   metalog_position, metalog_position_);
+        HLOG_F(FATAL, "Receive future position: received={}, current={}",
+               metalog_position, metalog_position_);
     }
     if (metalog_position > metalog_progresses_[sequencer_id]) {
         metalog_progresses_[sequencer_id] = metalog_position;
@@ -98,9 +95,8 @@ std::optional<MetaLogProto> MetaLogPrimary::MarkNextCut() {
         total_delta += delta;
     }
     dirty_shards_.clear();
-    HVLOG(1) << fmt::format("Generate new NEW_LOGS meta log: "
-                            "start_seqnum={}, total_delta={}",
-                            new_logs_proto->start_seqnum(), total_delta);
+    HVLOG_F(1, "Generate new NEW_LOGS meta log: start_seqnum={}, total_delta={}",
+            new_logs_proto->start_seqnum(), total_delta);
     if (!ProvideMetaLog(meta_log_proto)) {
         HLOG(FATAL) << "Failed to advance metalog position";
     }
@@ -160,7 +156,7 @@ LogProducer::~LogProducer() {}
 
 void LogProducer::LocalAppend(void* caller_data, uint64_t* localid) {
     DCHECK(!pending_appends_.contains(next_localid_));
-    HVLOG(1) << fmt::format("LocalAppend with localid {}", bits::HexStr0x(next_localid_));
+    HVLOG_F(1, "LocalAppend with localid {}", bits::HexStr0x(next_localid_));
     pending_appends_[next_localid_] = caller_data;
     *localid = next_localid_++;
 }
@@ -177,8 +173,8 @@ void LogProducer::OnNewLogs(uint32_t metalog_seqnum,
         uint64_t seqnum = start_seqnum + i;
         uint64_t localid = start_localid + i;
         if (!pending_appends_.contains(localid)) {
-            HLOG(FATAL) << fmt::format("Cannot find pending log entry for localid {}",
-                                       bits::HexStr0x(localid));
+            HLOG_F(FATAL, "Cannot find pending log entry for localid {}",
+                   bits::HexStr0x(localid));
         }
         pending_append_results_.push_back(AppendResult {
             .seqnum = seqnum,
@@ -223,11 +219,11 @@ bool LogStorage::Store(const LogMetaData& log_metadata, std::span<const uint64_t
     uint64_t localid = log_metadata.localid;
     DCHECK_EQ(size_t{log_metadata.data_size}, log_data.size());
     uint16_t engine_id = gsl::narrow_cast<uint16_t>(bits::HighHalf64(localid));
-    HVLOG(1) << fmt::format("Store log from engine {} with localid {}",
-                            engine_id, bits::HexStr0x(localid));
+    HVLOG_F(1, "Store log from engine {} with localid {}",
+            engine_id, bits::HexStr0x(localid));
     if (!storage_node_->IsSourceEngineNode(engine_id)) {
-        HLOG(ERROR) << fmt::format("Not storage node (node_id {}) for engine (node_id {})",
-                                   storage_node_->node_id(), engine_id);
+        HLOG_F(ERROR, "Not storage node (node_id {}) for engine (node_id {})",
+               storage_node_->node_id(), engine_id);
         return false;
     }
     pending_log_entries_[localid].reset(new LogEntry {
@@ -257,7 +253,7 @@ void LogStorage::ReadAt(const protocol::SharedLogMessage& request) {
     } else if (seqnum < persisted_seqnum_position_) {
         result.status = ReadResult::kLookupDB;
     } else {
-        HLOG(WARNING) << fmt::format("Failed to locate seqnum {}", bits::HexStr0x(seqnum));
+        HLOG_F(WARNING, "Failed to locate seqnum {}", bits::HexStr0x(seqnum));
     }
     pending_read_results_.push_back(std::move(result));
 }
@@ -321,8 +317,7 @@ void LogStorage::OnNewLogs(uint32_t metalog_seqnum,
                            uint32_t delta) {
     auto iter = pending_read_requests_.begin();
     while (iter != pending_read_requests_.end() && iter->first < start_seqnum) {
-        HLOG(WARNING) << fmt::format("Read request for seqnum {} has past",
-                                     bits::HexStr0x(iter->first));
+        HLOG_F(WARNING, "Read request for seqnum {} has past", bits::HexStr0x(iter->first));
         pending_read_results_.push_back(ReadResult {
             .status = ReadResult::kFailed,
             .log_entry = nullptr,
@@ -334,13 +329,13 @@ void LogStorage::OnNewLogs(uint32_t metalog_seqnum,
         uint64_t seqnum = start_seqnum + i;
         uint64_t localid = start_localid + i;
         if (!pending_log_entries_.contains(localid)) {
-            HLOG(FATAL) << fmt::format("Cannot find pending log entry for localid {}",
-                                       bits::HexStr0x(localid));
+            HLOG_F(FATAL, "Cannot find pending log entry for localid {}",
+                   bits::HexStr0x(localid));
         }
         // Build the log entry for live_log_entries_
         LogEntry* log_entry = pending_log_entries_[localid].release();
         pending_log_entries_.erase(localid);
-        HVLOG(1) << fmt::format("Store the log entry (seqnum {})", bits::HexStr0x(seqnum));
+        HVLOG_F(1, "Store the log entry (seqnum {})", bits::HexStr0x(seqnum));
         log_entry->metadata.seqnum = seqnum;
         std::shared_ptr<const LogEntry> log_entry_ptr(log_entry);
         // Add the new entry to index data
@@ -371,13 +366,11 @@ void LogStorage::OnNewLogs(uint32_t metalog_seqnum,
 
 void LogStorage::OnFinalized(uint32_t metalog_position) {
     if (!pending_log_entries_.empty()) {
-        HLOG(WARNING) << fmt::format("{} pending log entries discarded",
-                                     pending_log_entries_.size());
+        HLOG_F(WARNING, "{} pending log entries discarded", pending_log_entries_.size());
         pending_log_entries_.clear();
     }
     if (!pending_read_requests_.empty()) {
-        HLOG(FATAL) << fmt::format("There are {} pending reads",
-                                   pending_read_requests_.size());
+        HLOG_F(FATAL, "There are {} pending reads", pending_read_requests_.size());
     }
 }
 

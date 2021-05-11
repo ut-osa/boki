@@ -32,7 +32,7 @@ void ViewWatcher::SetViewFinalizedCallback(ViewFinalizedCallback cb) {
 
 void ViewWatcher::InstallNextView(const ViewProto& view_proto) {
     if (view_proto.view_id() != next_view_id()) {
-        HLOG(FATAL) << fmt::format("Non-consecutive view_id {}", view_proto.view_id());
+        HLOG_F(FATAL, "Non-consecutive view_id {}", view_proto.view_id());
     }
     View* view = new View(view_proto);
     views_.emplace_back(view);
@@ -44,8 +44,8 @@ void ViewWatcher::InstallNextView(const ViewProto& view_proto) {
 void ViewWatcher::FinalizeCurrentView(const FinalizedViewProto& finalized_view_proto) {
     const View* view = current_view();
     if (view == nullptr || finalized_view_proto.view_id() != view->id()) {
-        LOG(FATAL) << fmt::format("Cannot finalized current view: view_id {}",
-                                  finalized_view_proto.view_id());
+        LOG_F(FATAL, "Cannot finalized current view: view_id {}",
+              finalized_view_proto.view_id());
     }
     FinalizedView* finalized_view = new FinalizedView(view, finalized_view_proto);
     finalized_views_.emplace_back(finalized_view);
@@ -69,7 +69,7 @@ void ViewWatcher::OnZNodeCreated(std::string_view path, std::span<const char> co
         }
         const View* view = view_with_id(gsl::narrow_cast<uint16_t>(parsed));
         if (view == nullptr) {
-            HLOG(FATAL) << fmt::format("Invalid view_id {}", parsed);
+            HLOG_F(FATAL, "Invalid view_id {}", parsed);
         }
         if (view_frozen_cb_) {
             view_frozen_cb_(view);
@@ -82,7 +82,7 @@ void ViewWatcher::OnZNodeCreated(std::string_view path, std::span<const char> co
         }
         FinalizeCurrentView(finalized_view_proto);
     } else {
-        HLOG(FATAL) << fmt::format("Unknown znode path {}", path);
+        HLOG_F(FATAL, "Unknown znode path {}", path);
     }
 }
 

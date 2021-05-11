@@ -103,8 +103,7 @@ void SequencerBase::ReplicateMetaLog(const View* view, const MetaLogProto& metal
             protocol::ConnType::SEQUENCER_TO_SEQUENCER, sequencer_id,
             message, STRING_AS_SPAN(payload));
         if (!success) {
-            HLOG(ERROR) << fmt::format("Failed to send metalog message to sequencer {}",
-                                       sequencer_id);
+            HLOG_F(ERROR, "Failed to send metalog message to sequencer {}", sequencer_id);
         }
     }
 }
@@ -146,8 +145,7 @@ void SequencerBase::PropagateMetaLog(const View* view, const MetaLogProto& metal
             protocol::ConnType::SEQUENCER_TO_ENGINE, engine_id,
             message, STRING_AS_SPAN(payload));
         if (!success) {
-            HLOG(ERROR) << fmt::format("Failed to send metalog message to engine {}",
-                                       engine_id);
+            HLOG_F(ERROR, "Failed to send metalog message to engine {}", engine_id);
         }
     }
     for (uint16_t storage_id : storage_nodes) {
@@ -155,8 +153,7 @@ void SequencerBase::PropagateMetaLog(const View* view, const MetaLogProto& metal
             protocol::ConnType::SEQUENCER_TO_STORAGE, storage_id,
             message, STRING_AS_SPAN(payload));
         if (!success) {
-            HLOG(ERROR) << fmt::format("Failed to send metalog message to storage {}",
-                                       storage_id);
+            HLOG_F(ERROR, "Failed to send metalog message to storage {}", storage_id);
         }
     }
 }

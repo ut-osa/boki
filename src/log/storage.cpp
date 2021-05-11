@@ -23,10 +23,10 @@ Storage::~Storage() {}
 
 void Storage::OnViewCreated(const View* view) {
     DCHECK(zk_session()->WithinMyEventLoopThread());
-    HLOG(INFO) << fmt::format("New view {} created", view->id());
+    HLOG_F(INFO, "New view {} created", view->id());
     bool contains_myself = view->contains_storage_node(my_node_id());
     if (!contains_myself) {
-        HLOG(WARNING) << fmt::format("View {} does not include myself", view->id());
+        HLOG_F(WARNING, "View {} does not include myself", view->id());
     }
     std::vector<SharedLogRequest> ready_requests;
     {
@@ -46,7 +46,7 @@ void Storage::OnViewCreated(const View* view) {
         log_header_ = fmt::format("Storage[{}-{}]: ", my_node_id(), view->id());
     }
     if (!ready_requests.empty()) {
-        HLOG(INFO) << fmt::format("{} requests for the new view", ready_requests.size());
+        HLOG_F(INFO, "{} requests for the new view", ready_requests.size());
         SomeIOWorker()->ScheduleFunction(
             nullptr, [this, requests = std::move(ready_requests)] () {
                 ProcessRequests(requests);
@@ -57,7 +57,7 @@ void Storage::OnViewCreated(const View* view) {
 
 void Storage::OnViewFinalized(const FinalizedView* finalized_view) {
     DCHECK(zk_session()->WithinMyEventLoopThread());
-    HLOG(INFO) << fmt::format("View {} finalized", finalized_view->view()->id());
+    HLOG_F(INFO, "View {} finalized", finalized_view->view()->id());
     LogStorage::ReadResultVec results;
     std::vector<IndexDataProto> index_data_vec;
     {
@@ -113,8 +113,8 @@ void Storage::OnViewFinalized(const FinalizedView* finalized_view) {
     do {                                                            \
         if (current_view_ != nullptr                                \
                 && (MESSAGE_VAR).view_id < current_view_->id()) {   \
-            HLOG(WARNING) << "Receive outdate request from view "   \
-                          << (MESSAGE_VAR).view_id;                 \
+            HLOG_F(WARNING, "Receive outdate request from view {}", \
+                   (MESSAGE_VAR).view_id);                          \
             return;                                                 \
         }                                                           \
     } while (0)
@@ -123,9 +123,8 @@ void Storage::OnViewFinalized(const FinalizedView* finalized_view) {
     do {                                                            \
         if ((LOGSPACE_PTR)->finalized()) {                          \
             uint32_t logspace_id = (LOGSPACE_PTR)->identifier();    \
-            HLOG(WARNING) << fmt::format(                           \
-                "LogSpace {} is finalized",                         \
-                bits::HexStr0x(logspace_id));                       \
+            HLOG_F(WARNING, "LogSpace {} is finalized",             \
+                   bits::HexStr0x(logspace_id));                    \
             return;                                                 \
         }                                                           \
     } while (0)
@@ -234,9 +233,8 @@ void Storage::ProcessReadResults(const LogStorage::ReadResultVec& results) {
             ProcessReadFromDB(request);
             break;
         case LogStorage::ReadResult::kFailed:
-            HLOG(ERROR) << fmt::format(
-                "Failed to read log data (seqnum={})",
-                bits::HexStr0x(bits::JoinTwo32(request.logspace_id, request.seqnum_lowhalf)));
+            HLOG_F(ERROR, "Failed to read log data (seqnum={})",
+                   bits::HexStr0x(bits::JoinTwo32(request.logspace_id, request.seqnum_lowhalf)));
             response = SharedLogMessageHelper::NewDataLostResponse();
             SendEngineResponse(request, &response);
             break;
@@ -252,8 +250,7 @@ void Storage::ProcessReadFromDB(const SharedLogMessage& request) {
     if (auto tmp = GetLogEntryFromDB(seqnum); tmp.has_value()) {
         log_entry = std::move(*tmp);
     } else {
-        HLOG(ERROR) << fmt::format("Failed to read log data (seqnum={})",
-                                   bits::HexStr0x(seqnum));
+        HLOG_F(ERROR, "Failed to read log data (seqnum={})", bits::HexStr0x(seqnum));
         SharedLogMessage response = SharedLogMessageHelper::NewDataLostResponse();
         SendEngineResponse(request, &response);
         return;
@@ -288,12 +285,12 @@ void Storage::SendEngineLogResult(const protocol::SharedLogMessage& request,
         if (full_size <= MESSAGE_INLINE_DATA_SIZE) {
             aux_data = STRING_AS_SPAN(*cached_aux_data);
         } else {
-            HLOG(WARNING) << fmt::format("Inline buffer of message not large enough "
-                                         "for auxiliary data of log (seqnum {}): "
-                                         "log_size={}, num_tags={} aux_data_size={}",
-                                         bits::HexStr0x(seqnum), log_data.size(),
-                                         tags_data.size() / sizeof(uint64_t),
-                                         cached_aux_data->size());
+            HLOG_F(WARNING, "Inline buffer of message not large enough "
+                            "for auxiliary data of log (seqnum {}): "
+                            "log_size={}, num_tags={} aux_data_size={}",
+                   bits::HexStr0x(seqnum), log_data.size(),
+                   tags_data.size() / sizeof(uint64_t),
+                   cached_aux_data->size());
         }
     }
     response->aux_data_size = gsl::narrow_cast<uint16_t>(aux_data.size());
@@ -373,7 +370,7 @@ void Storage::FlushLogEntries() {
     if (log_entires.empty()) {
         return;
     }
-    HVLOG(1) << fmt::format("Will flush {} log entries", log_entires.size());
+    HVLOG_F(1, "Will flush {} log entries", log_entires.size());
     for (size_t i = 0; i < log_entires.size(); i++) {
         PutLogEntryToDB(*log_entires[i]);
     }
@@ -392,11 +389,10 @@ void Storage::FlushLogEntries() {
         absl::MutexLock view_lk(&view_mu_);
         for (uint32_t logspace_id : finalized_logspaces) {
             if (storage_collection_.FinalizeLogSpace(logspace_id)) {
-                HLOG(INFO) << fmt::format("Finalize storage log space {}",
-                                          bits::HexStr0x(logspace_id));
+                HLOG_F(INFO, "Finalize storage log space {}", bits::HexStr0x(logspace_id));
             } else {
-                HLOG(ERROR) << fmt::format("Storage log space {} not active, "
-                                           "cannot finalize", bits::HexStr0x(logspace_id));
+                HLOG_F(ERROR, "Storage log space {} not active, cannot finalize",
+                       bits::HexStr0x(logspace_id));
             }
         }
     }
