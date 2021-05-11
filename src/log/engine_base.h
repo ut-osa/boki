@@ -134,8 +134,6 @@ private:
     void SetupZKWatchers();
     void SetupTimers();
 
-    void HandleSetAuxData(LocalOp* op);
-
     void PopulateLogTagsAndData(const protocol::Message& message, LocalOp* op);
 
     DISALLOW_COPY_AND_ASSIGN(EngineBase);

@@ -31,7 +31,6 @@ void Engine::OnViewCreated(const View* view) {
         HLOG(WARNING) << fmt::format("View {} does not include myself", view->id());
     }
     std::vector<SharedLogRequest> ready_requests;
-    std::vector<std::pair<LogMetaData, LocalOp*>> new_appends;
     {
         absl::MutexLock view_lk(&view_mu_);
         if (contains_myself) {
@@ -61,17 +60,6 @@ void Engine::OnViewCreated(const View* view) {
         SomeIOWorker()->ScheduleFunction(
             nullptr, [this, requests = std::move(ready_requests)] () {
                 ProcessRequests(requests);
-            }
-        );
-    }
-    if (!new_appends.empty()) {
-        HLOG(INFO) << fmt::format("{} appends for the new view", new_appends.size());
-        SomeIOWorker()->ScheduleFunction(
-            nullptr, [this, view, new_appends = std::move(new_appends)] () {
-                for (const auto& [log_metadata, op] : new_appends) {
-                    ReplicateLogEntry(view, log_metadata,
-                                      VECTOR_AS_SPAN(op->user_tags), op->data.to_span());
-                }
             }
         );
     }
@@ -217,15 +205,6 @@ void Engine::HandleLocalRead(LocalOp* op) {
     {
         absl::ReaderMutexLock view_lk(&view_mu_);
         ONHOLD_IF_SEEN_FUTURE_VIEW(op);
-        uint64_t query_seqnum = op->seqnum;
-        uint16_t view_id = bits::HighHalf32(bits::HighHalf64(query_seqnum));
-        if (op->type == SharedLogOpType::READ_PREV && query_seqnum == kMaxLogSeqNum) {
-            // This is a CheckTail read
-            view_id = current_view_->id();
-        }
-        if (view_id != current_view_->id()) {
-            NOT_IMPLEMENTED();
-        }
         uint32_t logspace_id = current_view_->LogSpaceIdentifier(op->user_logspace);
         sequencer_node = current_view_->GetSequencerNode(bits::LowHalf32(logspace_id));
         if (sequencer_node->IsIndexEngineNode(my_node_id())) {
@@ -284,13 +263,12 @@ void Engine::HandleLocalSetAuxData(LocalOp* op) {
         return;
     }
     if (auto log_entry = LogCacheGet(seqnum); log_entry.has_value()) {
-        std::optional<std::string> cached_aux_data = LogCacheGetAuxData(seqnum);
-        if (cached_aux_data.has_value()) {
+        if (auto aux_data = LogCacheGetAuxData(seqnum); aux_data.has_value()) {
             uint16_t view_id = bits::HighHalf32(bits::HighHalf64(seqnum));
             absl::ReaderMutexLock view_lk(&view_mu_);
             if (view_id < views_.size()) {
                 const View* view = views_.at(view_id);
-                PropagateAuxData(view, log_entry->metadata, *cached_aux_data);
+                PropagateAuxData(view, log_entry->metadata, *aux_data);
             }
         }
     }

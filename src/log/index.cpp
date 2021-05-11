@@ -187,8 +187,10 @@ void Index::ProvideIndexData(const IndexDataProto& index_data) {
 void Index::MakeQuery(const IndexQuery& query) {
     uint16_t view_id = bits::HighHalf32(bits::HighHalf64(query.metalog_progress));
     if (view_id > view_->id()) {
-        // TODO: think more carefully for this case
-        ProcessQuery(query);
+        HLOG(FATAL) << fmt::format("Cannot process query with metalog_progress from the future: "
+                                    "metalog_progress={}, my_view_id={}",
+                                    bits::HexStr0x(query.metalog_progress),
+                                    bits::HexStr0x(view_->id()));
     } else if (view_id < view_->id()) {
         ProcessQuery(query);
     } else {
@@ -336,7 +338,7 @@ IndexQueryResult Index::BuildFoundResult(const IndexQuery& query,
     };
     return IndexQueryResult {
         .state = IndexQueryResult::kFound,
-        .metalog_progress = indexed_metalog_position_,
+        .metalog_progress = bits::JoinTwo32(identifier(), indexed_metalog_position_),
         .original_query = query,
         .found_result = std::move(found_result)
     };
@@ -346,7 +348,7 @@ IndexQueryResult Index::BuildNotFoundResult(const IndexQuery& query) {
     // TODO: revisit this part
     return IndexQueryResult {
         .state = IndexQueryResult::kEmpty,
-        .metalog_progress = indexed_metalog_position_,
+        .metalog_progress = bits::JoinTwo32(identifier(), indexed_metalog_position_),
         .original_query = query,
         .found_result = {}
     };
