@@ -51,9 +51,8 @@ bool Dispatcher::OnFuncWorkerConnected(std::shared_ptr<FuncWorker> func_worker) 
     if (requested_workers_.contains(client_id)) {
         int64_t request_timestamp = requested_workers_[client_id];
         requested_workers_.erase(client_id);
-        HLOG(INFO) << fmt::format("FuncWorker (client_id {}) takes {}ms to launch",
-                                  client_id,
-                                  (GetMonotonicMicroTimestamp() - request_timestamp) / 1000);
+        HLOG_F(INFO, "FuncWorker (client_id {}) takes {}ms to launch",
+               client_id, (GetMonotonicMicroTimestamp() - request_timestamp) / 1000);
     }
     if (!DispatchPendingFuncCall(func_worker.get())) {
         idle_workers_.push_back(client_id);
@@ -68,7 +67,7 @@ void Dispatcher::OnFuncWorkerDisconnected(FuncWorker* func_worker) {
     absl::MutexLock lk(&mu_);
     if (running_workers_.contains(client_id)) {
         // TODO: how to handle this?
-        HLOG(FATAL) << fmt::format("Running worker {} exited", client_id);
+        HLOG_F(FATAL, "Running worker {} exited", client_id);
     }
     DCHECK(workers_.contains(client_id));
     workers_.erase(client_id);
@@ -122,7 +121,7 @@ bool Dispatcher::OnFuncCallCompleted(const FuncCall& func_call, int32_t processi
         FuncWorker* func_worker = workers_[client_id].get();
         FuncWorkerFinished(func_worker);
     } else {
-        HLOG(WARNING) << fmt::format("FuncWorker (client_id {}) already disconnected", client_id);
+        HLOG_F(WARNING, "FuncWorker (client_id {}) already disconnected", client_id);
     }
     assigned_workers_.erase(func_call.full_call_id);
     return true;
@@ -146,7 +145,7 @@ bool Dispatcher::OnFuncCallFailed(const FuncCall& func_call, int32_t dispatch_de
         FuncWorker* func_worker = workers_[client_id].get();
         FuncWorkerFinished(func_worker);
     } else {
-        HLOG(WARNING) << fmt::format("FuncWorker (client_id {}) already disconnected", client_id);
+        HLOG_F(WARNING, "FuncWorker (client_id {}) already disconnected", client_id);
     }
     assigned_workers_.erase(func_call.full_call_id);
     return true;
@@ -228,8 +227,8 @@ void Dispatcher::UpdateWorkerLoadStat() {
     size_t total_workers = workers_.size();
     size_t running_workers = running_workers_.size();
     size_t idle_workers = total_workers - running_workers;
-    HVLOG(1) << fmt::format("UpdateWorkerLoadStat: running_workers={}, idle_workers={}",
-                            running_workers, idle_workers);
+    HVLOG_F(1, "UpdateWorkerLoadStat: running_workers={}, idle_workers={}",
+            running_workers, idle_workers);
     idle_workers_stat_.AddSample(gsl::narrow_cast<uint16_t>(idle_workers));
     running_workers_stat_.AddSample(gsl::narrow_cast<uint16_t>(running_workers));
 }

@@ -95,8 +95,7 @@ bool HttpConnection::OnRecvData(int status, std::span<const char> data) {
                                         data.data(), data.size());
     if (parsed < data.size()) {
         const char* err_str = http_errno_name(static_cast<http_errno>(http_parser_.http_errno));
-        HLOG(WARNING) << fmt::format("HTTP parsing failed: {}, "
-                                     "will close the connection", err_str);
+        HLOG_F(WARNING, "HTTP parsing failed: {}, will close the connection", err_str);
         ScheduleClose();
         return false;
     }

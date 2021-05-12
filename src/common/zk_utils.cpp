@@ -116,9 +116,8 @@ DirWatcher::DirWatcher(zk::ZKSession* session, std::string_view directory,
 
 DirWatcher::~DirWatcher() {
     if (session_->running()) {
-        LOG(FATAL) << fmt::format("Watcher on directory {} is destructed "
-                                  "while ZKSession still running",
-                                   dir_full_path_);
+        LOG_F(FATAL, "Watcher on directory {} is destructed while ZKSession still running",
+              dir_full_path_);
     }
 }
 
@@ -164,7 +163,7 @@ void DirWatcher::GetWatchCallback(ZKEvent event, std::string_view path) {
     } else if (event.IsChanged()) {
         InvokeGet(std::string(path), true);
     } else {
-        LOG(FATAL) << fmt::format("Get watch receives {} event", EventName(event));
+        LOG_F(FATAL, "Get watch receives {} event", EventName(event));
     }
 }
 
@@ -178,15 +177,14 @@ void DirWatcher::GetCallback(std::string path, bool from_get_watch,
             }
             nodes_.insert(node_path);
         } else if (!from_get_watch) {
-            VLOG(1) << fmt::format("Duplicate Get from GetChildrenCallback for path {}",
-                                   node_path);
+            VLOG_F(1, "Duplicate Get from GetChildrenCallback for path {}", node_path);
             *remove_watch = true;
         } else if (node_changed_cb_) {
             node_changed_cb_(node_path, result.data);
         }
     } else if (status.IsNoNode()) {
         std::string node_path = GetNodePath(path);
-        VLOG(1) << fmt::format("NoNode path {}", node_path);
+        VLOG_F(1, "NoNode path {}", node_path);
         if (nodes_.contains(node_path)) {
             if (node_deleted_cb_) {
                 node_deleted_cb_(node_path);
@@ -195,7 +193,7 @@ void DirWatcher::GetCallback(std::string path, bool from_get_watch,
         }
         *remove_watch = true;
     } else {
-        LOG(FATAL) << fmt::format("Get failed on path {}: {}", path, status.ToString());
+        LOG_F(FATAL, "Get failed on path {}: {}", path, status.ToString());
     }
 }
 
@@ -203,21 +201,19 @@ void DirWatcher::GetChildrenWatchCallback(ZKEvent event, std::string_view path) 
     if (event.IsChild()) {
         InvokeGetChildren();
     } else {
-        LOG(FATAL) << fmt::format("GetChildren watch receives {} event",
-                                  EventName(event));
+        LOG_F(FATAL, "GetChildren watch receives {} event", EventName(event));
     }
 }
 
 void DirWatcher::GetChildrenCallback(ZKStatus status, const ZKResult& result, bool*) {
     if (!status.ok()) {
-        LOG(FATAL) << fmt::format("GetChildren failed on path {}: {}",
-                                  dir_full_path_, status.ToString());
+        LOG_F(FATAL, "GetChildren failed on path {}: {}", dir_full_path_, status.ToString());
     }
     std::vector<std::string_view> paths = result.paths;
     if (sequential_znodes_) {
         for (std::string_view path : paths) {
             if (path.length() < kSequenceNumberLength) {
-                LOG(FATAL) << fmt::format("Path {} is not sequential znode");
+                LOG_F(FATAL, "Path {} is not sequential znode", path);
             }
         }
         std::sort(
@@ -231,7 +227,7 @@ void DirWatcher::GetChildrenCallback(ZKStatus status, const ZKResult& result, bo
     for (std::string_view path : paths) {
         std::string node_path(path);
         if (!nodes_.contains(node_path)) {
-            VLOG(1) << fmt::format("Seen new node {} in GetChildren", node_path);
+            VLOG_F(1, "Seen new node {} in GetChildren", node_path);
             InvokeGet(fs_utils::JoinPath(dir_full_path_, node_path), false);
         }
     }

@@ -112,9 +112,9 @@ void ServerBase::EventLoopThreadMain() {
             CHECK((item.revents & POLLNVAL) == 0) << fmt::format("Invalid fd {}", item.fd);
             if ((item.revents & POLLERR) != 0 || (item.revents & POLLHUP) != 0) {
                 if (connection_cbs_.contains(item.fd)) {
-                    HLOG(ERROR) << fmt::format("Error happens on server fd {}", item.fd);
+                    HLOG_F(ERROR, "Error happens on server fd {}", item.fd);
                 } else {
-                    HLOG(FATAL) << fmt::format("Error happens on fd {}", item.fd);
+                    HLOG_F(FATAL, "Error happens on fd {}", item.fd);
                 }
             } else if (item.revents & POLLIN) {
                 if (item.fd == stop_eventfd_) {
@@ -142,7 +142,7 @@ void ServerBase::SetupIOWorkers() {
     DCHECK(state_.load() == kCreated);
     int num_io_workers = absl::GetFlag(FLAGS_num_io_workers);
     CHECK_GT(num_io_workers, 0);
-    HLOG(INFO) << fmt::format("Start {} IO workers", num_io_workers);
+    HLOG_F(INFO, "Start {} IO workers", num_io_workers);
     for (int i = 0; i < num_io_workers; i++) {
         auto io_worker = std::make_unique<IOWorker>(
             fmt::format("IO-{}", i), kDefaultIOWorkerBufferSize);
@@ -168,8 +168,7 @@ void ServerBase::SetupMessageServer() {
         << fmt::format("Failed to bind on {}", iface_ip);
     CHECK(utils::SocketListen(message_sockfd_, absl::GetFlag(FLAGS_socket_listen_backlog)))
         << fmt::format("Failed to listen on {}:{}", iface_ip, message_port);
-    HLOG(INFO) << fmt::format("Listen on {}:{} for message connections",
-                              iface_ip, message_port);
+    HLOG_F(INFO, "Listen on {}:{} for message connections", iface_ip, message_port);
     ListenForNewConnections(
         message_sockfd_, absl::bind_front(&ServerBase::OnNewMessageConnection, this));
     // Save my host address to ZooKeeper for others to connect
@@ -271,7 +270,7 @@ void ServerBase::DoAcceptConnection(int server_sockfd) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 break;
             } else {
-                PLOG(ERROR) << fmt::format("Accept failed on server fd {}", server_sockfd);
+                PLOG_F(ERROR, "Accept failed on server fd {}", server_sockfd);
             }
         } else {
             connection_cbs_[server_sockfd](client_sockfd);

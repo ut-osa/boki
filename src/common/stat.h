@@ -65,11 +65,10 @@ public:
     static ReportCallback StandardReportCallback(std::string_view stat_name) {
         return [name = std::string(stat_name)] (int duration_ms, size_t n_samples,
                                                 const Report& report) {
-            LOG(INFO) << fmt::format("{} statistics ({} samples): "
-                                     "p30={}, p50={}, p70={}, p90={}, p99={}, p99.9={}",
-                                     name, n_samples,
-                                     report.p30, report.p50, report.p70, report.p90,
-                                     report.p99, report.p99_9);
+            LOG_F(INFO, "{} statistics ({} samples): "
+                        "p30={}, p50={}, p70={}, p90={}, p99={}, p99.9={}",
+                  name, n_samples,
+                  report.p30, report.p50, report.p70, report.p90, report.p99, report.p99_9);
         };
     }
 
@@ -77,11 +76,10 @@ public:
     static ReportCallback VerboseLogReportCallback(std::string_view stat_name) {
         return [name = std::string(stat_name)] (int duration_ms, size_t n_samples,
                                                 const Report& report) {
-            VLOG(L) << fmt::format("{} statistics ({} samples): "
-                                   "p30={}, p50={}, p70={}, p90={}, p99={}, p99.9={}",
-                                   name, n_samples,
-                                   report.p30, report.p50, report.p70, report.p90,
-                                   report.p99, report.p99_9);
+            VLOG_F(L, "{} statistics ({} samples): "
+                      "p30={}, p50={}, p70={}, p90={}, p99={}, p99.9={}",
+                   name, n_samples,
+                   report.p30, report.p50, report.p70, report.p90, report.p99, report.p99_9);
         };
     }
 
@@ -160,8 +158,7 @@ public:
         return [name = std::string(counter_name)] (int duration_ms,
                                                    int64_t new_value, int64_t old_value) {
             double rate = gsl::narrow_cast<double>(new_value - old_value) / duration_ms * 1000;
-            LOG(INFO) << fmt::format("{} counter: value={}, rate={} per second",
-                                     name, new_value, rate);
+            LOG_F(INFO, "{} counter: value={}, rate={} per second", name, new_value, rate);
         };
     }
 
@@ -170,8 +167,7 @@ public:
         return [name = std::string(counter_name)] (int duration_ms,
                                                    int64_t new_value, int64_t old_value) {
             double rate = gsl::narrow_cast<double>(new_value - old_value) / duration_ms * 1000;
-            VLOG(L) << fmt::format("{} counter: value={}, rate={} per second",
-                                   name, new_value, rate);
+            VLOG_F(L, "{} counter: value={}, rate={} per second", name, new_value, rate);
         };
     }
 

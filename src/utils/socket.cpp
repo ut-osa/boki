@@ -164,7 +164,7 @@ int UnixSocketConnect(std::string_view path) {
 int TcpSocketBindAndListen(std::string_view ip, uint16_t port, int backlog) {
     struct sockaddr_in sockaddr;
     if (!FillTcpSocketAddr(&sockaddr, ip, port)) {
-        LOG(ERROR) << fmt::format("Failed to fill socket addr: {}:{}", ip, port);
+        LOG_F(ERROR, "Failed to fill socket addr: {}:{}", ip, port);
         return -1;
     }
     int fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
@@ -178,7 +178,7 @@ int TcpSocketBindAndListen(std::string_view ip, uint16_t port, int backlog) {
     }
 #endif
     if (bind(fd, (struct sockaddr*)&sockaddr, sizeof(sockaddr)) != 0) {
-        PLOG(ERROR) << fmt::format("Failed to bind to {}:{}", ip, port);
+        PLOG_F(ERROR, "Failed to bind to {}:{}", ip, port);
         close(fd);
         return -1;
     }
@@ -192,7 +192,7 @@ int TcpSocketBindAndListen(std::string_view ip, uint16_t port, int backlog) {
 int TcpSocketConnect(std::string_view ip, uint16_t port) {
     struct sockaddr_in sockaddr;
     if (!FillTcpSocketAddr(&sockaddr, ip, port)) {
-        LOG(ERROR) << fmt::format("Failed to fill socket addr: {}:{}", ip, port);
+        LOG_F(ERROR, "Failed to fill socket addr: {}:{}", ip, port);
         return -1;
     }
     int fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
@@ -201,7 +201,7 @@ int TcpSocketConnect(std::string_view ip, uint16_t port) {
         return -1;
     }
     if (connect(fd, (struct sockaddr*)&sockaddr, sizeof(sockaddr)) != 0) {
-        PLOG(ERROR) << fmt::format("Failed to connect to {}:{}", ip, port);
+        PLOG_F(ERROR, "Failed to connect to {}:{}", ip, port);
         close(fd);
         return -1;
     }
@@ -211,7 +211,7 @@ int TcpSocketConnect(std::string_view ip, uint16_t port) {
 int Tcp6SocketBindAndListen(std::string_view ip, uint16_t port, int backlog) {
     struct sockaddr_in6 sockaddr;
     if (!FillTcp6SocketAddr(&sockaddr, ip, port)) {
-        LOG(ERROR) << fmt::format("Failed to fill socket addr: {}:{}", ip, port);
+        LOG_F(ERROR, "Failed to fill socket addr: {}:{}", ip, port);
         return -1;
     }
     int fd = socket(AF_INET6, SOCK_STREAM | SOCK_CLOEXEC, 0);
@@ -220,7 +220,7 @@ int Tcp6SocketBindAndListen(std::string_view ip, uint16_t port, int backlog) {
         return -1;
     }
     if (bind(fd, (struct sockaddr*)&sockaddr, sizeof(sockaddr)) != 0) {
-        PLOG(ERROR) << fmt::format("Failed to bind to {}:{}", ip, port);
+        PLOG_F(ERROR, "Failed to bind to {}:{}", ip, port);
         close(fd);
         return -1;
     }
@@ -234,7 +234,7 @@ int Tcp6SocketBindAndListen(std::string_view ip, uint16_t port, int backlog) {
 int Tcp6SocketConnect(std::string_view ip, uint16_t port) {
     struct sockaddr_in6 sockaddr;
     if (!FillTcp6SocketAddr(&sockaddr, ip, port)) {
-        LOG(ERROR) << fmt::format("Failed to fill socket addr: {}:{}", ip, port);
+        LOG_F(ERROR, "Failed to fill socket addr: {}:{}", ip, port);
         return -1;
     }
     int fd = socket(AF_INET6, SOCK_STREAM | SOCK_CLOEXEC, 0);
@@ -248,7 +248,7 @@ int Tcp6SocketConnect(std::string_view ip, uint16_t port) {
     }
 #endif
     if (connect(fd, (struct sockaddr*)&sockaddr, sizeof(sockaddr)) != 0) {
-        PLOG(ERROR) << fmt::format("Failed to connect to {}:{}", ip, port);
+        PLOG_F(ERROR, "Failed to connect to {}:{}", ip, port);
         close(fd);
         return -1;
     }
@@ -267,7 +267,7 @@ int TcpSocketBindArbitraryPort(std::string_view ip, uint16_t* port) {
             uint16_t random_port = gsl::narrow_cast<uint16_t>(
                 utils::GetRandomInt(kMinPortNum, kMaxPortNum));
             if (!FillTcpSocketAddr(&sockaddr, ip, random_port)) {
-                LOG(ERROR) << fmt::format("Failed to fill socket addr: {}:{}", ip, random_port);
+                LOG_F(ERROR, "Failed to fill socket addr: {}:{}", ip, random_port);
                 return false;
             }
             sockfd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
@@ -282,7 +282,7 @@ int TcpSocketBindArbitraryPort(std::string_view ip, uint16_t* port) {
             }
             close(sockfd);
             if (errno != EADDRINUSE) {
-                PLOG(ERROR) << fmt::format("Failed to bind to {}:{}", ip, random_port);
+                PLOG_F(ERROR, "Failed to bind to {}:{}", ip, random_port);
             }
             return false;
         }

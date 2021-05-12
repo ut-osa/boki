@@ -112,7 +112,7 @@ void Server::SetupHttpServer() {
         absl::GetFlag(FLAGS_socket_listen_backlog));
     CHECK(http_sockfd_ != -1)
         << fmt::format("Failed to listen on {}:{}", address, http_port_);
-    HLOG(INFO) << fmt::format("Listen on {}:{} for HTTP requests", address, http_port_);
+    HLOG_F(INFO, "Listen on {}:{} for HTTP requests", address, http_port_);
     ListenForNewConnections(
         http_sockfd_, absl::bind_front(&Server::OnNewHttpConnection, this));
 }
@@ -127,7 +127,7 @@ void Server::SetupGrpcServer() {
         absl::GetFlag(FLAGS_socket_listen_backlog));
     CHECK(grpc_sockfd_ != -1)
         << fmt::format("Failed to listen on {}:{}", address, grpc_port_);
-    HLOG(INFO) << fmt::format("Listen on {}:{} for gRPC requests", address, grpc_port_);
+    HLOG_F(INFO, "Listen on {}:{} for gRPC requests", address, grpc_port_);
     ListenForNewConnections(
         grpc_sockfd_, absl::bind_front(&Server::OnNewGrpcConnection, this));
 }
@@ -173,14 +173,14 @@ void Server::DiscardFuncCall(FuncCallContext* func_call_context) {
 
 void Server::OnEngineNodeOnline(uint16_t node_id) {
     DCHECK(zk_session()->WithinMyEventLoopThread());
-    HLOG(INFO) << fmt::format("Engine node {} is online", node_id);
+    HLOG_F(INFO, "Engine node {} is online", node_id);
     SomeIOWorker()->ScheduleFunction(
         nullptr, absl::bind_front(&Server::TryDispatchingPendingFuncCalls, this));
 }
 
 void Server::OnEngineNodeOffline(uint16_t node_id) {
     DCHECK(zk_session()->WithinMyEventLoopThread());
-    HLOG(INFO) << fmt::format("Engine node {} is offline", node_id);
+    HLOG_F(INFO, "Engine node {} is offline", node_id);
 }
 
 void Server::TryDispatchingPendingFuncCalls() {
@@ -298,8 +298,8 @@ void Server::HandleFuncCallCompleteOrFailedMessage(uint16_t node_id,
         if (GatewayMessageHelper::IsFuncCallFailed(message)) {
             async_result.success = false;
             auto func_entry = func_config_.find_by_func_id(func_call.func_id);
-            HLOG(WARNING) << fmt::format("Async call of {} failed",
-                                         DCHECK_NOTNULL(func_entry)->func_name);
+            HLOG_F(WARNING, "Async call of {} failed",
+                   DCHECK_NOTNULL(func_entry)->func_name);
         } else {
             async_result.success = true;
             async_result.output.assign(payload.data(), payload.size());

@@ -85,7 +85,7 @@ bool ReadContents(std::string_view path, std::string* contents) {
 std::optional<int> Open(std::string_view full_path, int flags) {
     int fd = open(std::string(full_path).c_str(), flags | O_CLOEXEC);
     if (fd == -1) {
-        PLOG(ERROR) << fmt::format("Open {} failed", full_path);
+        PLOG_F(ERROR, "Open {} failed", full_path);
         return std::nullopt;
     }
     return fd;
@@ -97,7 +97,7 @@ std::optional<int> Create(std::string_view full_path) {
         /* flags= */ O_CREAT | O_WRONLY | O_TRUNC | O_CLOEXEC,
         /* mode=  */ __FAAS_FILE_CREAT_MODE);
     if (fd == -1) {
-        PLOG(ERROR) << fmt::format("Create {} failed", full_path);
+        PLOG_F(ERROR, "Create {} failed", full_path);
         return std::nullopt;
     }
     return fd;

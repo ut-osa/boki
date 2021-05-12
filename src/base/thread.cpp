@@ -35,7 +35,7 @@ void Thread::Start() {
         LOG(FATAL) << "Cannot call Start() on the main thread";
     }
     if (!fn_) {
-        LOG(FATAL) << "Empty entry function for thread " << name_;
+        LOG_F(FATAL, "Empty entry function for thread {}", name_);
     }
     state_.store(kStarting);
     CHECK_EQ(pthread_create(&pthread_, nullptr, &Thread::StartRoutine, this), 0);
@@ -59,7 +59,7 @@ void Thread::Run() {
     tid_ = __gettid();
     state_.store(kRunning);
     started_.Notify();
-    LOG(INFO) << fmt::format("Start thread: {} (tid={})", name_, tid_);
+    LOG_F(INFO, "Start thread: {} (tid={})", name_, tid_);
     fn_();
     state_.store(kFinished);
 }
@@ -78,13 +78,13 @@ void Thread::MarkThreadCategory(std::string_view category) {
             CPU_SET(cpu, &set);
         }
         if (sched_setaffinity(0, sizeof(set), &set) != 0) {
-            PLOG(FATAL) << "Failed to set CPU affinity to " << cpuset_str;
+            PLOG_F(FATAL, "Failed to set CPU affinity to {}", cpuset_str);
         } else {
-            LOG(INFO) << "Successfully set CPU affinity of current thread to " << cpuset_str;
+            LOG_F(INFO, "Successfully set CPU affinity of current thread to {}", cpuset_str);
         }
     } else {
-        LOG(INFO) << "Does not find cpuset setting for " << category
-                  << " threads (can be set by " << cpuset_var_name << ")";
+        LOG_F(INFO, "Does not find cpuset setting for {} threads (can be set by {})",
+              category, cpuset_var_name);
     }
     // Set nice
     std::string nice_var_name(fmt::format("FAAS_{}_THREAD_NICE", category));
@@ -95,14 +95,14 @@ void Thread::MarkThreadCategory(std::string_view category) {
         int current_nice = nice(0);
         errno = 0;
         if (nice(nice_value - current_nice) == -1 && errno != 0) {
-            PLOG(FATAL) << "Failed to set nice to " << nice_value;
+            PLOG_F(FATAL, "Failed to set nice to {}", nice_value);
         } else {
             CHECK_EQ(nice(0), nice_value);
-            LOG(INFO) << "Successfully set nice of current thread to " << nice_value;
+            LOG_F(INFO, "Successfully set nice of current thread to {}", nice_value);
         }
     } else {
-        LOG(INFO) << "Does not find nice setting for " << category
-                  << " threads (can be set by " << nice_var_name << ")";
+        LOG_F(INFO, "Does not find nice setting for {} threads (can be set by {})",
+              category, nice_var_name);
     }
 }
 
@@ -123,7 +123,7 @@ void Thread::RegisterMainThread() {
     thread->tid_ = __gettid();
     thread->pthread_ = pthread_self();
     current_ = thread;
-    LOG(INFO) << "Register main thread: tid=" << thread->tid_;
+    LOG_F(INFO, "Register main thread: tid={}", thread->tid_);
 }
 
 }  // namespace base

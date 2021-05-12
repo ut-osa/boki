@@ -106,7 +106,7 @@ void Engine::SetupLocalIpc() {
         ipc_sockfd_ = utils::UnixSocketBindAndListen(ipc_path, listen_backlog);
         CHECK(ipc_sockfd_ != -1)
             << fmt::format("Failed to listen on {}", ipc_path);
-        HLOG(INFO) << fmt::format("Listen on {} for IPC connections", ipc_path);
+        HLOG_F(INFO, "Listen on {} for IPC connections", ipc_path);
     } else {
         std::string address = absl::GetFlag(FLAGS_listen_addr);
         CHECK(!address.empty());
@@ -114,8 +114,7 @@ void Engine::SetupLocalIpc() {
             address, gsl::narrow_cast<uint16_t>(engine_tcp_port_), listen_backlog);
         CHECK(ipc_sockfd_ != -1)
             << fmt::format("Failed to listen on {}:{}", address, engine_tcp_port_);
-        HLOG(INFO) << fmt::format("Listen on {}:{} for IPC connections",
-                                  address, engine_tcp_port_);
+        HLOG_F(INFO, "Listen on {}:{} for IPC connections", address, engine_tcp_port_);
     }
     ListenForNewConnections(ipc_sockfd_, absl::bind_front(&Engine::OnNewLocalIpcConn, this));
 }
@@ -426,8 +425,7 @@ void Engine::HandleFuncCallFailedMessage(const Message& message) {
     if (func_call.client_id == 0) {
         ExternalFuncCallFailed(func_call);
     } else if (is_async_call) {
-        HLOG(WARNING) << fmt::format("Async call of func {} failed",
-                                     uint16_t{func_call.func_id});
+        HLOG_F(WARNING, "Async call of func {} failed", uint16_t{func_call.func_id});
     } else if (!use_fifo_for_nested_call_) {
         Message message_copy = message;
         SendFuncWorkerMessage(func_call.client_id, &message_copy);

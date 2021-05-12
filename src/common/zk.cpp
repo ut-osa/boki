@@ -277,7 +277,7 @@ void ZKSession::OpCompleted(Op* op, int rc, const ZKResult& result) {
         bool remove_watch = false;
         op->cb(ZKStatus(rc), result, &remove_watch);
         if (remove_watch && op->watch != nullptr) {
-            HVLOG(1) << fmt::format("Going to remove watch (path {})", op->watch->path);
+            HVLOG_F(1, "Going to remove watch (path {})", op->watch->path);
             DCHECK_EQ(op->watch->op, op);
             DCHECK(!op->watch->triggered);
             op->watch->removed = true;
@@ -297,7 +297,7 @@ void ZKSession::OnWatchTriggered(Watch* watch, int type, int state, std::string_
         HLOG(FATAL) << "Receive not watching event";
     }
     if (watch->removed) {
-        HVLOG(1) << fmt::format("Removed watch (path {}) triggered", path);
+        HVLOG_F(1, "Removed watch (path {}) triggered", path);
     } else {
         watch->cb(ZKEvent(type), path);
     }
@@ -365,7 +365,7 @@ void ZKSession::EventLoopThreadMain() {
                 if (item.fd == zk_fd) {
                     HLOG(ERROR) << "Error happens on Zookeeper fd";
                 } else {
-                    HLOG(ERROR) << fmt::format("Error happens on fd {}", item.fd);
+                    HLOG_F(ERROR, "Error happens on fd {}", item.fd);
                 }
                 continue;
             }

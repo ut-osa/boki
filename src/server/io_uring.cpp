@@ -67,7 +67,7 @@ IOUring::IOUring()
     if (ret != 0) {
         LOG(FATAL) << "io_uring_register_files failed: " << ERRNO_LOGSTR(-ret);
     }
-    HLOG(INFO) << fmt::format("register {} fd slots", n_fd_slots);
+    HLOG_F(INFO, "register {} fd slots", n_fd_slots);
     fds_.resize(n_fd_slots);
     free_fd_slots_.reserve(n_fd_slots);
     for (size_t i = 0; i < n_fd_slots; i++) {
@@ -106,7 +106,7 @@ void IOUring::PrepareBuffers(uint16_t gid, size_t buf_size) {
 
 bool IOUring::RegisterFd(int fd) {
     if (fd_indices_.contains(fd)) {
-        LOG(ERROR) << fmt::format("fd {} already registered", fd);
+        HLOG_F(ERROR, "fd {} already registered", fd);
         return false;
     }
     if (free_fd_slots_.empty()) {
@@ -120,8 +120,7 @@ bool IOUring::RegisterFd(int fd) {
         LOG(FATAL) << "io_uring_register_files_update failed: " << ERRNO_LOGSTR(-ret);
     }
     fd_indices_[fd] = index;
-    HLOG(INFO) << fmt::format("register fd {}, {} registered fds in total",
-                              fd, fd_indices_.size());
+    HLOG_F(INFO, "register fd {}, {} registered fds in total", fd, fd_indices_.size());
     Descriptor* desc = &fds_[index];
     desc->fd = fd;
     desc->index = index;
@@ -132,16 +131,16 @@ bool IOUring::RegisterFd(int fd) {
     return true;
 }
 
-#define GET_AND_CHECK_DESC(FD_VAR, DESC_VAR)                        \
-    if (!fd_indices_.contains(FD_VAR)) {                            \
-        LOG(ERROR) << fmt::format("fd {} not registered", FD_VAR);  \
-        return false;                                               \
-    }                                                               \
-    Descriptor* DESC_VAR = &fds_[fd_indices_[FD_VAR]];              \
-    DCHECK_EQ(DESC_VAR->fd, fd);                                    \
-    if (DESC_VAR->close_op != nullptr) {                            \
-        LOG(WARNING) << fmt::format("fd {} is closing", FD_VAR);    \
-        return false;                                               \
+#define GET_AND_CHECK_DESC(FD_VAR, DESC_VAR)           \
+    if (!fd_indices_.contains(FD_VAR)) {               \
+        LOG_F(ERROR, "fd {} not registered", FD_VAR);  \
+        return false;                                  \
+    }                                                  \
+    Descriptor* DESC_VAR = &fds_[fd_indices_[FD_VAR]]; \
+    DCHECK_EQ(DESC_VAR->fd, fd);                       \
+    if (DESC_VAR->close_op != nullptr) {               \
+        LOG_F(WARNING, "fd {} is closing", FD_VAR);    \
+        return false;                                  \
     }
 
 bool IOUring::Connect(int fd, const struct sockaddr* addr, size_t addrlen, ConnectCallback cb) {
@@ -155,11 +154,11 @@ bool IOUring::Connect(int fd, const struct sockaddr* addr, size_t addrlen, Conne
 bool IOUring::StartReadInternal(int fd, uint16_t buf_gid, uint16_t flags, ReadCallback cb) {
     GET_AND_CHECK_DESC(fd, desc);
     if (desc->active_read_op != nullptr) {
-        LOG(ERROR) << fmt::format("fd {} already registered read callback", fd);
+        HLOG_F(ERROR, "fd {} already registered read callback", fd);
         return false;
     }
     if (!buf_pools_.contains(buf_gid)) {
-        LOG(ERROR) << fmt::format("Invalid buf_gid {}", buf_gid);
+        HLOG_F(ERROR, "Invalid buf_gid {}", buf_gid);
         return false;
     }
     std::span<char> buf;
@@ -181,7 +180,7 @@ bool IOUring::StartRecv(int fd, uint16_t buf_gid, ReadCallback cb) {
 bool IOUring::StopReadOrRecv(int fd) {
     GET_AND_CHECK_DESC(fd, desc);
     if (desc->active_read_op == nullptr) {
-        LOG(WARNING) << fmt::format("fd {} has no registered read callback", fd);
+        HLOG_F(WARNING, "fd {} has no registered read callback", fd);
         return false;
     }
     Op* read_op = desc->active_read_op;
@@ -336,8 +335,8 @@ void IOUring::EventLoopRunOnce(size_t* inflight_ops) {
         VLOG(2) << "Inflight ops:";
         for (const auto& [op_id, op] : ops_) {
             DCHECK_EQ(op->id, op_id);
-            VLOG(2) << fmt::format("id={}, type={}, fd={}",
-                                   (op->id >> 8), kOpTypeStr[op_type(op)], op_fd(op));
+            VLOG_F(2, "id={}, type={}, fd={}",
+                   (op->id >> 8), kOpTypeStr[op_type(op)], op_fd(op));
         }
     }
     *inflight_ops = ops_.size();
@@ -426,8 +425,7 @@ void IOUring::UnregisterFd(Descriptor* desc) {
     fds_[index].fd = -1;
     free_fd_slots_.push_back(index);
     fd_indices_.erase(fd);
-    HLOG(INFO) << fmt::format("unregister fd {}, {} registered fds in total",
-                              fd, fd_indices_.size());
+    HLOG_F(INFO, "unregister fd {}, {} registered fds in total", fd, fd_indices_.size());
 }
 
 #ifdef __CLANG_CONVERSION_DIAGNOSTIC_ENABLED
@@ -436,8 +434,8 @@ void IOUring::UnregisterFd(Descriptor* desc) {
 #endif
 
 void IOUring::EnqueueOp(Op* op) {
-    VLOG(2) << fmt::format("EnqueueOp: id={}, type={}, fd={}",
-                           (op->id >> 8), kOpTypeStr[op_type(op)], op_fd(op));
+    VLOG_F(2, "EnqueueOp: id={}, type={}, fd={}",
+           (op->id >> 8), kOpTypeStr[op_type(op)], op_fd(op));
     struct io_uring_sqe* sqe = io_uring_get_sqe(&ring_);
     switch (op_type(op)) {
     case kConnect:
@@ -465,8 +463,8 @@ void IOUring::EnqueueOp(Op* op) {
         io_uring_prep_close(sqe, op->fd);
         break;
     case kCancel:
-        VLOG(1) << fmt::format("Going to cancel op {} (type {}): ",
-                               (op->root_op >> 8), kOpTypeStr[op->root_op & 0xff]);
+        VLOG_F(1, "Going to cancel op {} (type {}): ",
+               (op->root_op >> 8), kOpTypeStr[op->root_op & 0xff]);
         io_uring_prep_cancel(sqe, reinterpret_cast<void*>(op->root_op), 0);
         break;
     default:
@@ -502,9 +500,9 @@ void IOUring::OnOpComplete(Op* op, struct io_uring_cqe* cqe) {
         break;
     case kCancel:
         if (res < 0 && res != -EALREADY) {
-            LOG(WARNING) << fmt::format("Failed to cancel op {} (type {}): ",
-                                        (op->root_op >> 8), kOpTypeStr[op->root_op & 0xff])
-                         << ERRNO_LOGSTR(-res);
+            LOG_F(WARNING, "Failed to cancel op {} (type {}): {}",
+                  (op->root_op >> 8), kOpTypeStr[op->root_op & 0xff],
+                  ERRNO_LOGSTR(-res));
         }
         break;
     default:
@@ -651,8 +649,7 @@ void IOUring::HandleSendallOpComplete(Op* op, int res, Op** next_op) {
 void IOUring::HandleCloseOpComplete(Op* op, int res) {
     DCHECK_EQ(op_type(op), kClose);
     if (res < 0) {
-        LOG(FATAL) << fmt::format("Failed to close fd {}: ", op->fd)
-                   << ERRNO_LOGSTR(-res);
+        LOG_F(FATAL, "Failed to close fd {}: {}", op->fd, ERRNO_LOGSTR(-res));
     }
     DCHECK(close_cbs_.contains(op->id));
     close_cbs_[op->id]();

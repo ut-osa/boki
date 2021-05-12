@@ -45,17 +45,17 @@ void Monitor::WaitForFinish() {
 
 void Monitor::OnIOWorkerCreated(std::string_view worker_name, int event_loop_thread_tid) {
     absl::MutexLock lk(&mu_);
-    HLOG(INFO) << fmt::format("New IOWorker[{}]: tid={}", worker_name, event_loop_thread_tid);
+    HLOG_F(INFO, "New IOWorker[{}]: tid={}", worker_name, event_loop_thread_tid);
     io_workers_[event_loop_thread_tid] = std::string(worker_name);
 }
 
 void Monitor::OnNewFuncContainer(uint16_t func_id, std::string_view container_id) {
     absl::MutexLock lk(&mu_);
     if (func_container_ids_.contains(func_id)) {
-        HLOG(ERROR) << fmt::format("func_id {} already exists", func_id);
+        HLOG_F(ERROR, "func_id {} already exists", func_id);
         return;
     }
-    HLOG(INFO) << fmt::format("New FuncContainer[{}]: container_id={}", func_id, container_id);
+    HLOG_F(INFO, "New FuncContainer[{}]: container_id={}", func_id, container_id);
     func_container_ids_[func_id] = std::string(container_id);
 }
 
@@ -147,22 +147,19 @@ void Monitor::BackgroundThreadMain() {
                 last_stat.timestamp, tick_to_ns(last_stat.cpu_stat_sys),
                 stat.timestamp, tick_to_ns(stat.cpu_stat_sys));
             if (entry.first == -1) {
-                HLOG(INFO) << fmt::format(
-                    "Gateway load: usage={}, user_stat={}, sys_stat={}",
-                    load_usage, user_load_stat, sys_load_stat);
+                HLOG_F(INFO, "Gateway load: usage={}, user_stat={}, sys_stat={}",
+                       load_usage, user_load_stat, sys_load_stat);
             } else {
-                HLOG(INFO) << fmt::format(
-                    "FuncContainer[{}] load: usage={}, user_stat={}, sys_stat={}",
-                    entry.first, load_usage, user_load_stat, sys_load_stat);
+                HLOG_F(INFO, "FuncContainer[{}] load: usage={}, user_stat={}, sys_stat={}",
+                       entry.first, load_usage, user_load_stat, sys_load_stat);
             }
             total_load_usage += load_usage;
             total_user_load_stat += user_load_stat;
             total_sys_load_stat += sys_load_stat;
             container_stats[container_id] = std::move(stat);
         }
-        HLOG(INFO) << fmt::format(
-            "Total load: usage={}, user_stat={}, sys_stat={}",
-            total_load_usage, total_user_load_stat, total_sys_load_stat);
+        HLOG_F(INFO, "Total load: usage={}, user_stat={}, sys_stat={}",
+               total_load_usage, total_user_load_stat, total_sys_load_stat);
 
         for (const auto& entry : io_workers) {
             std::string worker_name = entry.first;
@@ -183,17 +180,16 @@ void Monitor::BackgroundThreadMain() {
             float sys_load_stat = compute_rate(
                 last_stat.timestamp, tick_to_ns(last_stat.cpu_stat_sys),
                 stat.timestamp, tick_to_ns(stat.cpu_stat_sys));
-            HLOG(INFO) << fmt::format("IOWorker[{}] load: user_stat={}, sys_stat={}",
-                                      worker_name, user_load_stat, sys_load_stat);
+            HLOG_F(INFO, "IOWorker[{}] load: user_stat={}, sys_stat={}",
+                   worker_name, user_load_stat, sys_load_stat);
             float voluntary_ctxt_switches_rate = compute_rate(
                 last_stat.timestamp, last_stat.voluntary_ctxt_switches,
                 stat.timestamp, stat.voluntary_ctxt_switches) * 1e6;
             float nonvoluntary_ctxt_switches_rate = compute_rate(
                 last_stat.timestamp, last_stat.nonvoluntary_ctxt_switches,
                 stat.timestamp, stat.nonvoluntary_ctxt_switches) * 1e6;
-            HLOG(INFO) << fmt::format("IOWorker[{}] ctxt_switches_rate: voluntary={}, nonvoluntary={}",
-                                      worker_name, voluntary_ctxt_switches_rate,
-                                      nonvoluntary_ctxt_switches_rate);
+            HLOG_F(INFO, "IOWorker[{}] ctxt_switches_rate: voluntary={}, nonvoluntary={}",
+                   worker_name, voluntary_ctxt_switches_rate, nonvoluntary_ctxt_switches_rate);
             io_thread_stats[tid] = std::move(stat);
         }
     }

@@ -97,8 +97,8 @@ void IOWorker::RegisterConnection(ConnectionBase* connection) {
             connections_by_type_[conn_type].reset(new utils::RoundRobinSet<int>());
         }
         connections_by_type_[conn_type]->Add(connection->id());
-        HLOG(INFO) << fmt::format("New connection of type {0}, total of type {0} is {1}",
-                                  conn_type, connections_by_type_[conn_type]->size());
+        HLOG_F(INFO, "New connection of type {0}, total of type {0} is {1}",
+               conn_type, connections_by_type_[conn_type]->size());
     }
     if (state_.load(std::memory_order_acquire) == kStopping) {
         HLOG(WARNING) << "Receive new connection in stopping state, will close it directly";
@@ -114,8 +114,8 @@ void IOWorker::OnConnectionClose(ConnectionBase* connection) {
     if (conn_type >= 0) {
         DCHECK(connections_by_type_.contains(conn_type));
         connections_by_type_[conn_type]->Remove(connection->id());
-        HLOG(INFO) << fmt::format("One connection of type {0} closed, total of type {0} is {1}",
-                                  conn_type, connections_by_type_[conn_type]->size());
+        HLOG_F(INFO, "One connection of type {0} closed, total of type {0} is {1}",
+               conn_type, connections_by_type_[conn_type]->size());
     }
     DCHECK(pipe_to_server_fd_ >= -1);
     char* buf = connection->pipe_write_buf_for_transfer();

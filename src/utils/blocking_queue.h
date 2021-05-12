@@ -43,8 +43,7 @@ template<class T>
 BlockingQueue<T>::~BlockingQueue() {
     DCHECK(stopped_);
     if (!queue_.empty()) {
-        LOG(WARNING) << fmt::format("There are {} elements left in the queue",
-                                    queue_.size());
+        LOG_F(WARNING, "There are {} elements left in the queue", queue_.size());
     }
 }
 

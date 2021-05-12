@@ -228,6 +228,7 @@ T CheckNotNull(const char* file, int line, const char* exprtext, T&& t) {
 
 #define LOG_F(l, fstr, ...)   LOG(l)   << fmt::format(fstr, __VA_ARGS__)
 #define VLOG_F(l, fstr, ...)  VLOG(l)  << fmt::format(fstr, __VA_ARGS__)
+#define PLOG_F(l, fstr, ...)  PLOG(l)  << fmt::format(fstr, __VA_ARGS__)
 #define HLOG_F(l, fstr, ...)  HLOG(l)  << fmt::format(fstr, __VA_ARGS__)
 #define HPLOG_F(l, fstr, ...) HPLOG(l) << fmt::format(fstr, __VA_ARGS__)
 #define HVLOG_F(l, fstr, ...) HVLOG(l) << fmt::format(fstr, __VA_ARGS__)
