@@ -151,15 +151,15 @@ static Message BuildLocalReadOKResponse(const LogEntry& log_entry) {
 
 // Start handlers for local requests (from functions)
 
-#define ONHOLD_IF_SEEN_FUTURE_VIEW(LOCAL_OP_VAR)                        \
-    do {                                                                \
-        if (current_view_ == nullptr                                    \
-                || GetLastViewId(LOCAL_OP_VAR) > current_view_->id()) { \
-            future_requests_.OnHoldRequest(                             \
-                GetLastViewId(LOCAL_OP_VAR),                            \
-                SharedLogRequest(LOCAL_OP_VAR));                        \
-            return;                                                     \
-        }                                                               \
+#define ONHOLD_IF_SEEN_FUTURE_VIEW(LOCAL_OP_VAR)                          \
+    do {                                                                  \
+        uint16_t view_id = log_utils::GetViewId(                          \
+            (LOCAL_OP_VAR)->metalog_progress);                            \
+        if (current_view_ == nullptr || view_id > current_view_->id()) {  \
+            future_requests_.OnHoldRequest(                               \
+                view_id, SharedLogRequest(LOCAL_OP_VAR));                 \
+            return;                                                       \
+        }                                                                 \
     } while (0)
 
 void Engine::HandleLocalAppend(LocalOp* op) {
@@ -226,6 +226,7 @@ void Engine::HandleLocalRead(LocalOp* op) {
             .direction = IndexQuery::DirectionFromOp(op->type),
             .origin_node_id = my_node_id(),
             .hop_times = 0,
+            .initial = true,
             .client_data = op->id,
             .user_logspace = op->user_logspace,
             .user_tag = op->query_tag,
@@ -263,7 +264,7 @@ void Engine::HandleLocalSetAuxData(LocalOp* op) {
     }
     if (auto log_entry = LogCacheGet(seqnum); log_entry.has_value()) {
         if (auto aux_data = LogCacheGetAuxData(seqnum); aux_data.has_value()) {
-            uint16_t view_id = bits::HighHalf32(bits::HighHalf64(seqnum));
+            uint16_t view_id = log_utils::GetViewId(seqnum);
             absl::ReaderMutexLock view_lk(&view_mu_);
             if (view_id < views_.size()) {
                 const View* view = views_.at(view_id);
@@ -313,6 +314,7 @@ void Engine::HandleRemoteRead(const SharedLogMessage& request) {
         .direction = IndexQuery::DirectionFromOp(op_type),
         .origin_node_id = request.origin_node_id,
         .hop_times = request.hop_times,
+        .initial = (request.flags | protocol::kReadInitialFlag) != 0,
         .client_data = request.client_data,
         .user_logspace = request.user_logspace,
         .user_tag = request.query_tag,
@@ -565,6 +567,7 @@ SharedLogMessage Engine::BuildReadRequestMessage(LocalOp* op) {
     request.query_tag = op->query_tag;
     request.query_seqnum = op->seqnum;
     request.user_metalog_progress = op->metalog_progress;
+    request.flags |= protocol::kReadInitialFlag;
     return request;
 }
 

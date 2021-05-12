@@ -1,5 +1,7 @@
 #include "log/index.h"
 
+#include "log/utils.h"
+
 namespace faas {
 namespace log {
 
@@ -185,21 +187,28 @@ void Index::ProvideIndexData(const IndexDataProto& index_data) {
 }
 
 void Index::MakeQuery(const IndexQuery& query) {
-    uint16_t view_id = bits::HighHalf32(bits::HighHalf64(query.metalog_progress));
-    if (view_id > view_->id()) {
-        HLOG_F(FATAL, "Cannot process query with metalog_progress from the future: "
-                      "metalog_progress={}, my_view_id={}",
-               bits::HexStr0x(query.metalog_progress),
-               bits::HexStr0x(view_->id()));
-    } else if (view_id < view_->id()) {
-        ProcessQuery(query);
-    } else {
-        DCHECK_EQ(view_id, view_->id());
-        uint32_t position = bits::LowHalf64(query.metalog_progress);
-        if (position <= indexed_metalog_position_) {
+    if (query.initial) {
+        uint16_t view_id = log_utils::GetViewId(query.metalog_progress);
+        if (view_id > view_->id()) {
+            HLOG_F(FATAL, "Cannot process query with metalog_progress from the future: "
+                          "metalog_progress={}, my_view_id={}",
+                   bits::HexStr0x(query.metalog_progress), bits::HexStr0x(view_->id()));
+        } else if (view_id < view_->id()) {
             ProcessQuery(query);
         } else {
-            pending_queries_.insert(std::make_pair(position, query));
+            DCHECK_EQ(view_id, view_->id());
+            uint32_t position = bits::LowHalf64(query.metalog_progress);
+            if (position <= indexed_metalog_position_) {
+                ProcessQuery(query);
+            } else {
+                pending_queries_.insert(std::make_pair(position, query));
+            }
+        }
+    } else {
+        if (finalized()) {
+            ProcessQuery(query);
+        } else {
+            pending_queries_.insert(std::make_pair(kMaxMetalogPosition, query));
         }
     }
 }
@@ -219,6 +228,16 @@ void Index::OnMetaLogApplied(const MetaLogProto& meta_log_proto) {
         cuts_.push_back(std::make_pair(meta_log_proto.metalog_seqnum(), seqnum));
     }
     AdvanceIndexProgress();
+}
+
+void Index::OnFinalized(uint32_t metalog_position) {
+    auto iter = pending_queries_.begin();
+    while (iter != pending_queries_.end()) {
+        DCHECK_EQ(iter->first, kMaxMetalogPosition);
+        const IndexQuery& query = iter->second;
+        ProcessQuery(query);
+        iter = pending_queries_.erase(iter);
+    }
 }
 
 void Index::AdvanceIndexProgress() {
@@ -287,46 +306,91 @@ void Index::ProcessQuery(const IndexQuery& query) {
         if (!success) {
             blocking_reads_.push_back(std::make_pair(GetMonotonicMicroTimestamp(), query));
         }
-        return;
+    } else if (query.direction == IndexQuery::kReadNext) {
+        ProcessReadNext(query);
+    } else if (query.direction == IndexQuery::kReadPrev) {
+        ProcessReadPrev(query);
     }
-    if (!index_.contains(query.user_logspace)) {
+}
+
+void Index::ProcessReadNext(const IndexQuery& query) {
+    DCHECK(query.direction == IndexQuery::kReadNext);
+    uint16_t query_view_id = log_utils::GetViewId(query.query_seqnum);
+    if (query_view_id > view_->id()) {
         pending_query_results_.push_back(BuildNotFoundResult(query));
         return;
     }
-    PerSpaceIndex* index = GetOrCreateIndex(query.user_logspace);
-    bool found = false;
     uint64_t seqnum;
     uint16_t engine_id;
-    switch (query.direction) {
-    case IndexQuery::kReadNext:
-        found = index->FindNext(query.query_seqnum, query.user_tag, &seqnum, &engine_id);
-        break;
-    case IndexQuery::kReadPrev:
-        found = index->FindPrev(query.query_seqnum, query.user_tag, &seqnum, &engine_id);
-        break;
-    default:
-        UNREACHABLE();
+    bool found = IndexFindNext(query, &seqnum, &engine_id);
+    if (query_view_id == view_->id()) {
+        if (found) {
+            pending_query_results_.push_back(BuildFoundResult(query, seqnum, engine_id));
+        } else {
+            pending_query_results_.push_back(BuildNotFoundResult(query));
+        }
+    } else {
+        pending_query_results_.push_back(BuildContinueResult(query, found, seqnum, engine_id));
     }
+}
+
+void Index::ProcessReadPrev(const IndexQuery& query) {
+    DCHECK(query.direction == IndexQuery::kReadPrev);
+    uint16_t query_view_id = log_utils::GetViewId(query.query_seqnum);
+    if (query_view_id < view_->id()) {
+        pending_query_results_.push_back(BuildContinueResult(query, false, 0, 0));
+        return;
+    }
+    uint64_t seqnum;
+    uint16_t engine_id;
+    bool found = IndexFindPrev(query, &seqnum, &engine_id);
     if (found) {
         pending_query_results_.push_back(BuildFoundResult(query, seqnum, engine_id));
+    } else if (view_->id() > 0) {
+        pending_query_results_.push_back(BuildContinueResult(query, false, 0, 0));
     } else {
         pending_query_results_.push_back(BuildNotFoundResult(query));
     }
 }
 
 bool Index::ProcessBlockingQuery(const IndexQuery& query) {
-    DCHECK(query.direction == IndexQuery::kReadNextB);
-    if (!index_.contains(query.user_logspace)) {
-        return false;
+    DCHECK(query.direction == IndexQuery::kReadNextB && query.initial);
+    uint16_t query_view_id = log_utils::GetViewId(query.query_seqnum);
+    if (query_view_id > view_->id()) {
+        pending_query_results_.push_back(BuildNotFoundResult(query));
+        return true;
     }
     uint64_t seqnum;
     uint16_t engine_id;
-    bool found = GetOrCreateIndex(query.user_logspace)->FindNext(
-        query.query_seqnum, query.user_tag, &seqnum, &engine_id);
-    if (found) {
-        pending_query_results_.push_back(BuildFoundResult(query, seqnum, engine_id));
+    bool found = IndexFindNext(query, &seqnum, &engine_id);
+    if (query_view_id == view_->id()) {
+        if (found) {
+            pending_query_results_.push_back(BuildFoundResult(query, seqnum, engine_id));
+        }
+        return found;
+    } else {
+        pending_query_results_.push_back(BuildContinueResult(query, found, seqnum, engine_id));
+        return true;
     }
-    return found;
+}
+
+bool Index::IndexFindNext(const IndexQuery& query, uint64_t* seqnum, uint16_t* engine_id) {
+    DCHECK(query.direction == IndexQuery::kReadNext
+            || query.direction == IndexQuery::kReadNextB);
+    if (!index_.contains(query.user_logspace)) {
+        return false;
+    }
+    return GetOrCreateIndex(query.user_logspace)->FindNext(
+        query.query_seqnum, query.user_tag, seqnum, engine_id);
+}
+
+bool Index::IndexFindPrev(const IndexQuery& query, uint64_t* seqnum, uint16_t* engine_id) {
+    DCHECK(query.direction == IndexQuery::kReadPrev);
+    if (!index_.contains(query.user_logspace)) {
+        return false;
+    }
+    return GetOrCreateIndex(query.user_logspace)->FindPrev(
+        query.query_seqnum, query.user_tag, seqnum, engine_id);
 }
 
 IndexQueryResult Index::BuildFoundResult(const IndexQuery& query,
@@ -337,20 +401,50 @@ IndexQueryResult Index::BuildFoundResult(const IndexQuery& query,
     };
     return IndexQueryResult {
         .state = IndexQueryResult::kFound,
-        .metalog_progress = bits::JoinTwo32(identifier(), indexed_metalog_position_),
+        .metalog_progress = query.initial ? index_metalog_progress()
+                                          : query.metalog_progress,
         .original_query = query,
-        .found_result = std::move(found_result)
+        .found_result = std::move(found_result),
+        .continue_result = {}
     };
 }
 
 IndexQueryResult Index::BuildNotFoundResult(const IndexQuery& query) {
-    // TODO: revisit this part
     return IndexQueryResult {
         .state = IndexQueryResult::kEmpty,
-        .metalog_progress = bits::JoinTwo32(identifier(), indexed_metalog_position_),
+        .metalog_progress = query.initial ? index_metalog_progress()
+                                          : query.metalog_progress,
         .original_query = query,
-        .found_result = {}
+        .found_result = {},
+        .continue_result = {}
     };
+}
+
+IndexQueryResult Index::BuildContinueResult(const IndexQuery& query, bool found,
+                                            uint64_t seqnum, uint16_t engine_id) {
+    IndexQueryResult result = {
+        .state = IndexQueryResult::kContinue,
+        .metalog_progress = query.initial ? index_metalog_progress()
+                                          : query.metalog_progress,
+        .original_query = query,
+        .found_result = {},
+        .continue_result = {}
+    };
+    if (query.direction == IndexQuery::kReadNextB) {
+        result.original_query.direction = IndexQuery::kReadNext;
+    }
+    IndexContinueResult* continue_result = &result.continue_result;
+    continue_result->found_seqnum = kInvalidLogSeqNum;
+    if (!query.initial) {
+        *continue_result = query.continue_result;
+    }
+    continue_result->next_view_id = view_->id() - 1;
+    if (found) {
+        continue_result->found_seqnum = seqnum;
+        continue_result->found_view_id = view_->id();
+        continue_result->found_engine_id = engine_id;
+    }
+    return result;
 }
 
 }  // namespace log

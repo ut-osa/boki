@@ -55,10 +55,6 @@ private:
 
     void ProcessIndexFoundResult(const IndexQueryResult& query_result);
 
-    inline uint16_t GetLastViewId(LocalOp* op) {
-        return bits::HighHalf32(bits::HighHalf64(op->metalog_progress));
-    }
-
     inline LogMetaData MetaDataFromAppendOp(LocalOp* op) {
         DCHECK(op->type == protocol::SharedLogOpType::APPEND);
         return LogMetaData {

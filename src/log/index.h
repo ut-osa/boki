@@ -5,17 +5,27 @@
 namespace faas {
 namespace log {
 
+struct IndexContinueResult {
+    uint16_t next_view_id;
+    uint64_t found_seqnum;
+    uint16_t found_view_id;
+    uint16_t found_engine_id;
+};
+
 struct IndexQuery {
     enum ReadDirection { kReadNext, kReadPrev, kReadNextB };
     ReadDirection direction;
     uint16_t origin_node_id;
     uint16_t hop_times;
+    bool     initial;
     uint64_t client_data;
 
     uint32_t user_logspace;
     uint64_t user_tag;
     uint64_t query_seqnum;
     uint64_t metalog_progress;
+
+    IndexContinueResult continue_result;
 
     static inline ReadDirection DirectionFromOp(protocol::SharedLogOpType op_type) {
         switch (op_type) {
@@ -39,10 +49,11 @@ struct IndexFoundResult {
 struct IndexQueryResult {
     enum State { kFound, kEmpty, kContinue };
     State state;
-
     uint64_t metalog_progress;
-    IndexQuery original_query;
-    IndexFoundResult found_result;
+
+    IndexQuery          original_query;
+    IndexFoundResult    found_result;
+    IndexContinueResult continue_result;
 };
 
 class Index final : public LogSpaceBase {
@@ -64,6 +75,8 @@ private:
     absl::flat_hash_map</* user_logspace */ uint32_t,
                         std::unique_ptr<PerSpaceIndex>> index_;
 
+    static constexpr uint32_t kMaxMetalogPosition = std::numeric_limits<uint32_t>::max();
+
     std::multimap</* metalog_position */ uint32_t,
                   IndexQuery> pending_queries_;
     std::vector<std::pair</* start_timestamp */ int64_t,
@@ -83,15 +96,28 @@ private:
     uint32_t data_received_seqnum_position_;
     uint32_t indexed_seqnum_position_;
 
+    uint64_t index_metalog_progress() const {
+        return bits::JoinTwo32(identifier(), indexed_metalog_position_);
+    }
+
     void OnMetaLogApplied(const MetaLogProto& meta_log_proto) override;
+    void OnFinalized(uint32_t metalog_position) override;
     void AdvanceIndexProgress();
     PerSpaceIndex* GetOrCreateIndex(uint32_t user_logspace);
 
     void ProcessQuery(const IndexQuery& query);
+    void ProcessReadNext(const IndexQuery& query);
+    void ProcessReadPrev(const IndexQuery& query);
     bool ProcessBlockingQuery(const IndexQuery& query);
+
+    bool IndexFindNext(const IndexQuery& query, uint64_t* seqnum, uint16_t* engine_id);
+    bool IndexFindPrev(const IndexQuery& query, uint64_t* seqnum, uint16_t* engine_id);
+
     IndexQueryResult BuildFoundResult(const IndexQuery& query,
                                       uint64_t seqnum, uint16_t engine_id);
     IndexQueryResult BuildNotFoundResult(const IndexQuery& query);
+    IndexQueryResult BuildContinueResult(const IndexQuery& query, bool found,
+                                         uint64_t seqnum, uint16_t engine_id);
 
     DISALLOW_COPY_AND_ASSIGN(Index);
 };

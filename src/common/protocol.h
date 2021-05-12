@@ -219,9 +219,14 @@ struct GatewayMessage {
 
 static_assert(sizeof(GatewayMessage) == 16, "Unexpected GatewayMessage size");
 
+constexpr uint16_t kReadInitialFlag = (1 << 0);
+
 struct SharedLogMessage {
     uint16_t op_type;         // [0:2]
-    uint16_t op_result;       // [2:4]
+    union {                   // [2:4]
+        uint16_t op_result;
+        uint16_t flags;
+    };
 
     uint16_t origin_node_id;  // [4:6]
     uint16_t hop_times;       // [6:8]

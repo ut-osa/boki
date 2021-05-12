@@ -13,6 +13,10 @@ using log::MetaLogProto;
 using log::MetaLogsProto;
 using protocol::SharedLogMessage;
 
+uint16_t GetViewId(uint64_t value) {
+    return bits::HighHalf32(bits::HighHalf64(value));
+}
+
 FutureRequests::FutureRequests()
     : next_view_id_(0) {}
 
