@@ -5,11 +5,10 @@
 namespace faas {
 namespace log {
 
-struct IndexContinueResult {
-    uint16_t next_view_id;
-    uint64_t found_seqnum;
-    uint16_t found_view_id;
-    uint16_t found_engine_id;
+struct IndexFoundResult {
+    uint16_t view_id;
+    uint16_t engine_id;
+    uint64_t seqnum;
 };
 
 struct IndexQuery {
@@ -25,35 +24,20 @@ struct IndexQuery {
     uint64_t query_seqnum;
     uint64_t metalog_progress;
 
-    IndexContinueResult continue_result;
+    IndexFoundResult prev_found_result;
 
-    static inline ReadDirection DirectionFromOp(protocol::SharedLogOpType op_type) {
-        switch (op_type) {
-        case protocol::SharedLogOpType::READ_NEXT:
-            return kReadNext;
-        case protocol::SharedLogOpType::READ_PREV:
-            return kReadPrev;
-        case protocol::SharedLogOpType::READ_NEXT_B:
-            return kReadNextB;
-        default:
-            UNREACHABLE();
-        }
-    }
-};
-
-struct IndexFoundResult {
-    const View::Engine* engine_node;
-    uint64_t seqnum;
+    static ReadDirection DirectionFromOpType(protocol::SharedLogOpType op_type);
+    protocol::SharedLogOpType DirectionToOpType() const;
 };
 
 struct IndexQueryResult {
     enum State { kFound, kEmpty, kContinue };
     State state;
     uint64_t metalog_progress;
+    uint16_t next_view_id;
 
-    IndexQuery          original_query;
-    IndexFoundResult    found_result;
-    IndexContinueResult continue_result;
+    IndexQuery       original_query;
+    IndexFoundResult found_result;
 };
 
 class Index final : public LogSpaceBase {
@@ -113,7 +97,7 @@ private:
     bool IndexFindNext(const IndexQuery& query, uint64_t* seqnum, uint16_t* engine_id);
     bool IndexFindPrev(const IndexQuery& query, uint64_t* seqnum, uint16_t* engine_id);
 
-    IndexQueryResult BuildFoundResult(const IndexQuery& query,
+    IndexQueryResult BuildFoundResult(const IndexQuery& query, uint16_t view_id,
                                       uint64_t seqnum, uint16_t engine_id);
     IndexQueryResult BuildNotFoundResult(const IndexQuery& query);
     IndexQueryResult BuildContinueResult(const IndexQuery& query, bool found,

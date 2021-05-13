@@ -103,9 +103,7 @@ void Engine::OnViewFinalized(const FinalizedView* finalized_view) {
                 log_utils::FinalizedLogSpace<Index>(
                     index_ptr, finalized_view);
                 auto locked_index = index_ptr.Lock();
-                Index::QueryResultVec tmp;
-                locked_index->PollQueryResults(&tmp);
-                query_results.insert(query_results.end(), tmp.begin(), tmp.end());
+                locked_index->PollQueryResults(&query_results);
             }
         );
     }
@@ -222,17 +220,7 @@ void Engine::HandleLocalRead(LocalOp* op) {
     }
     if (index_ptr != nullptr && use_local_index) {
         // Use local index
-        IndexQuery query = {
-            .direction = IndexQuery::DirectionFromOp(op->type),
-            .origin_node_id = my_node_id(),
-            .hop_times = 0,
-            .initial = true,
-            .client_data = op->id,
-            .user_logspace = op->user_logspace,
-            .user_tag = op->query_tag,
-            .query_seqnum = op->seqnum,
-            .metalog_progress = op->metalog_progress
-        };
+        IndexQuery query = BuildIndexQuery(op);
         Index::QueryResultVec query_results;
         {
             auto locked_index = index_ptr.Lock();
@@ -310,17 +298,7 @@ void Engine::HandleRemoteRead(const SharedLogMessage& request) {
         ONHOLD_IF_FROM_FUTURE_VIEW(request, EMPTY_CHAR_SPAN);
         index_ptr = index_collection_.GetLogSpaceChecked(request.logspace_id);
     }
-    IndexQuery query = {
-        .direction = IndexQuery::DirectionFromOp(op_type),
-        .origin_node_id = request.origin_node_id,
-        .hop_times = request.hop_times,
-        .initial = (request.flags | protocol::kReadInitialFlag) != 0,
-        .client_data = request.client_data,
-        .user_logspace = request.user_logspace,
-        .user_tag = request.query_tag,
-        .query_seqnum = request.query_seqnum,
-        .metalog_progress = request.user_metalog_progress
-    };
+    IndexQuery query = BuildIndexQuery(request);
     Index::QueryResultVec query_results;
     {
         auto locked_index = index_ptr.Lock();
@@ -506,7 +484,18 @@ void Engine::ProcessIndexFoundResult(const IndexQueryResult& query_result) {
         }
     } else {
         // Cache miss
-        bool success = SendStorageReadRequest(query_result);
+        const View::Engine* engine_node = nullptr;
+        {
+            absl::ReaderMutexLock view_lk(&view_mu_);
+            uint16_t view_id = query_result.found_result.view_id;
+            if (view_id < views_.size()) {
+                const View* view = views_.at(view_id);
+                engine_node = view->GetEngineNode(query_result.found_result.engine_id);
+            } else {
+                HLOG_F(FATAL, "Cannot find view {}", view_id);
+            }
+        }
+        bool success = SendStorageReadRequest(query_result, engine_node);
         if (!success) {
             HLOG_F(WARNING, "Failed to send read request for seqnum {} ", bits::HexStr0x(seqnum));
             if (local_request) {
@@ -519,7 +508,44 @@ void Engine::ProcessIndexFoundResult(const IndexQueryResult& query_result) {
     }
 }
 
+void Engine::ProcessIndexContinueResult(const IndexQueryResult& query_result,
+                                        Index::QueryResultVec* more_results) {
+    DCHECK(query_result.state == IndexQueryResult::kContinue);
+    const IndexQuery& query = query_result.original_query;
+    const View::Sequencer* sequencer_node = nullptr;
+    LockablePtr<Index> index_ptr;
+    {
+        absl::ReaderMutexLock view_lk(&view_mu_);
+        uint16_t view_id = query_result.next_view_id;
+        if (view_id >= views_.size()) {
+            HLOG_F(FATAL, "Cannot find view {}", view_id);
+        }
+        const View* view = views_.at(view_id);
+        uint32_t logspace_id = view->LogSpaceIdentifier(query.user_logspace);
+        sequencer_node = view->GetSequencerNode(bits::LowHalf32(logspace_id));
+        if (sequencer_node->IsIndexEngineNode(my_node_id())) {
+            index_ptr = index_collection_.GetLogSpaceChecked(logspace_id);
+        }
+    }
+    if (index_ptr != nullptr) {
+        IndexQuery query = BuildIndexQuery(query_result);
+        auto locked_index = index_ptr.Lock();
+        locked_index->MakeQuery(query);
+        locked_index->PollQueryResults(more_results);
+    } else {
+        SharedLogMessage request = BuildReadRequestMessage(query_result);
+        bool send_success = SendIndexReadRequest(DCHECK_NOTNULL(sequencer_node), &request);
+        if (!send_success) {
+            uint32_t logspace_id = bits::JoinTwo16(sequencer_node->view()->id(),
+                                                   sequencer_node->node_id());
+            HLOG_F(ERROR, "Failed to send read index request for logspace {}",
+                   bits::HexStr0x(logspace_id));
+        }
+    }
+}
+
 void Engine::ProcessIndexQueryResults(const Index::QueryResultVec& results) {
+    Index::QueryResultVec more_results;
     for (const IndexQueryResult& result : results) {
         const IndexQuery& query = result.original_query;
         switch (result.state) {
@@ -537,11 +563,14 @@ void Engine::ProcessIndexQueryResults(const Index::QueryResultVec& results) {
             }
             break;
         case IndexQueryResult::kContinue:
-            NOT_IMPLEMENTED();
+            ProcessIndexContinueResult(result, &more_results);
             break;
         default:
             UNREACHABLE();
         }
+    }
+    if (!more_results.empty()) {
+        ProcessIndexQueryResults(more_results);
     }
 }
 
@@ -569,6 +598,72 @@ SharedLogMessage Engine::BuildReadRequestMessage(LocalOp* op) {
     request.user_metalog_progress = op->metalog_progress;
     request.flags |= protocol::kReadInitialFlag;
     return request;
+}
+
+SharedLogMessage Engine::BuildReadRequestMessage(const IndexQueryResult& result) {
+    DCHECK(result.state == IndexQueryResult::kContinue);
+    IndexQuery query = result.original_query;
+    SharedLogMessage request = SharedLogMessageHelper::NewReadMessage(
+        query.DirectionToOpType());
+    request.origin_node_id = query.origin_node_id;
+    request.hop_times = query.hop_times + 1;
+    request.client_data = query.client_data;
+    request.user_logspace = query.user_logspace;
+    request.query_tag = query.user_tag;
+    request.query_seqnum = query.query_seqnum;
+    request.user_metalog_progress = result.metalog_progress;
+    request.prev_view_id = result.found_result.view_id;
+    request.prev_engine_id = result.found_result.engine_id;
+    request.prev_found_seqnum = result.found_result.seqnum;
+    return request;
+}
+
+IndexQuery Engine::BuildIndexQuery(LocalOp* op) {
+    return IndexQuery {
+        .direction = IndexQuery::DirectionFromOpType(op->type),
+        .origin_node_id = my_node_id(),
+        .hop_times = 0,
+        .initial = true,
+        .client_data = op->id,
+        .user_logspace = op->user_logspace,
+        .user_tag = op->query_tag,
+        .query_seqnum = op->seqnum,
+        .metalog_progress = op->metalog_progress,
+        .prev_found_result = {
+            .view_id = 0,
+            .engine_id = 0,
+            .seqnum = kInvalidLogSeqNum
+        }
+    };
+}
+
+IndexQuery Engine::BuildIndexQuery(const SharedLogMessage& message) {
+    SharedLogOpType op_type = SharedLogMessageHelper::GetOpType(message);
+    return IndexQuery {
+        .direction = IndexQuery::DirectionFromOpType(op_type),
+        .origin_node_id = message.origin_node_id,
+        .hop_times = message.hop_times,
+        .initial = (message.flags | protocol::kReadInitialFlag) != 0,
+        .client_data = message.client_data,
+        .user_logspace = message.user_logspace,
+        .user_tag = message.query_tag,
+        .query_seqnum = message.query_seqnum,
+        .metalog_progress = message.user_metalog_progress,
+        .prev_found_result = IndexFoundResult {
+            .view_id = message.prev_view_id,
+            .engine_id = message.prev_engine_id,
+            .seqnum = message.prev_found_seqnum
+        }
+    };
+}
+
+IndexQuery Engine::BuildIndexQuery(const IndexQueryResult& result) {
+    DCHECK(result.state == IndexQueryResult::kContinue);
+    IndexQuery query = result.original_query;
+    query.initial = false;
+    query.metalog_progress = result.metalog_progress;
+    query.prev_found_result = result.found_result;
+    return query;
 }
 
 }  // namespace log

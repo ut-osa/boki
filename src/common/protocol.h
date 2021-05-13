@@ -245,7 +245,13 @@ struct SharedLogMessage {
         uint32_t user_logspace;    // [16:20]
     };
 
-    uint32_t seqnum_lowhalf;  // [20:24] (the high half is logspace_id)
+    union {
+        uint32_t seqnum_lowhalf;  // [20:24] (the high half is logspace_id)
+        struct {
+            uint16_t prev_view_id;
+            uint16_t prev_engine_id;
+        } __attribute__ ((packed));
+    };
     union {
         uint64_t query_tag;   // [24:32]
         struct {
@@ -265,7 +271,8 @@ struct SharedLogMessage {
     };
     uint64_t client_data;       // [48:56]
 
-    uint64_t _8_padding_8_;
+    uint64_t prev_found_seqnum; // [56:64]
+
 } __attribute__ (( packed, aligned(__FAAS_CACHE_LINE_SIZE) ));
 
 static_assert(sizeof(SharedLogMessage) == 64, "Unexpected SharedLogMessage size");

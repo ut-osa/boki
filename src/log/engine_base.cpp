@@ -323,7 +323,8 @@ bool EngineBase::SendIndexReadRequest(const View::Sequencer* sequencer_node,
     return false;
 }
 
-bool EngineBase::SendStorageReadRequest(const IndexQueryResult& result) {
+bool EngineBase::SendStorageReadRequest(const IndexQueryResult& result,
+                                        const View::Engine* engine_node) {
     static constexpr int kMaxRetries = 3;
     DCHECK(result.state == IndexQueryResult::kFound);
 
@@ -335,7 +336,7 @@ bool EngineBase::SendStorageReadRequest(const IndexQueryResult& result) {
     request.hop_times = result.original_query.hop_times + 1;
     request.client_data = result.original_query.client_data;
     for (int i = 0; i < kMaxRetries; i++) {
-        uint16_t storage_id = result.found_result.engine_node->PickStorageNode();
+        uint16_t storage_id = engine_node->PickStorageNode();
         bool success = engine_->SendSharedLogMessage(
             protocol::ConnType::ENGINE_TO_STORAGE, storage_id, request);
         if (success) {

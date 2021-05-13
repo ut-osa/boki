@@ -54,6 +54,8 @@ private:
     void ProcessRequests(const std::vector<SharedLogRequest>& requests);
 
     void ProcessIndexFoundResult(const IndexQueryResult& query_result);
+    void ProcessIndexContinueResult(const IndexQueryResult& query_result,
+                                    Index::QueryResultVec* more_results);
 
     inline LogMetaData MetaDataFromAppendOp(LocalOp* op) {
         DCHECK(op->type == protocol::SharedLogOpType::APPEND);
@@ -67,6 +69,11 @@ private:
     }
 
     protocol::SharedLogMessage BuildReadRequestMessage(LocalOp* op);
+    protocol::SharedLogMessage BuildReadRequestMessage(const IndexQueryResult& result);
+
+    IndexQuery BuildIndexQuery(LocalOp* op);
+    IndexQuery BuildIndexQuery(const protocol::SharedLogMessage& message);
+    IndexQuery BuildIndexQuery(const IndexQueryResult& result);
 
     DISALLOW_COPY_AND_ASSIGN(Engine);
 };
