@@ -15,6 +15,7 @@
 #include <time.h>
 #include <signal.h>
 
+#define FMT_HEADER_ONLY
 #include <fmt/format.h>
 #include <fmt/core.h>
 

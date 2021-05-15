@@ -1,5 +1,9 @@
 #pragma once
 
+#ifndef __linux__
+#error We only support Linux
+#endif
+
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
