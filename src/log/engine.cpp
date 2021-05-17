@@ -511,6 +511,8 @@ void Engine::ProcessIndexFoundResult(const IndexQueryResult& query_result) {
 void Engine::ProcessIndexContinueResult(const IndexQueryResult& query_result,
                                         Index::QueryResultVec* more_results) {
     DCHECK(query_result.state == IndexQueryResult::kContinue);
+    HVLOG_F(1, "Process IndexContinueResult: next_view_id={}",
+            query_result.next_view_id);
     const IndexQuery& query = query_result.original_query;
     const View::Sequencer* sequencer_node = nullptr;
     LockablePtr<Index> index_ptr;
@@ -528,11 +530,13 @@ void Engine::ProcessIndexContinueResult(const IndexQueryResult& query_result,
         }
     }
     if (index_ptr != nullptr) {
+        HVLOG(1) << "Use local index";
         IndexQuery query = BuildIndexQuery(query_result);
         auto locked_index = index_ptr.Lock();
         locked_index->MakeQuery(query);
         locked_index->PollQueryResults(more_results);
     } else {
+        HVLOG(1) << "Send to remote index";
         SharedLogMessage request = BuildReadRequestMessage(query_result);
         bool send_success = SendIndexReadRequest(DCHECK_NOTNULL(sequencer_node), &request);
         if (!send_success) {
@@ -597,6 +601,9 @@ SharedLogMessage Engine::BuildReadRequestMessage(LocalOp* op) {
     request.query_seqnum = op->seqnum;
     request.user_metalog_progress = op->metalog_progress;
     request.flags |= protocol::kReadInitialFlag;
+    request.prev_view_id = 0;
+    request.prev_engine_id = 0;
+    request.prev_found_seqnum = kInvalidLogSeqNum;
     return request;
 }
 

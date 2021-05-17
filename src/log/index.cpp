@@ -214,6 +214,7 @@ void Index::ProvideIndexData(const IndexDataProto& index_data) {
 
 void Index::MakeQuery(const IndexQuery& query) {
     if (query.initial) {
+        HVLOG(1) << "Receive initial query";
         uint16_t view_id = log_utils::GetViewId(query.metalog_progress);
         if (view_id > view_->id()) {
             HLOG_F(FATAL, "Cannot process query with metalog_progress from the future: "
@@ -231,6 +232,7 @@ void Index::MakeQuery(const IndexQuery& query) {
             }
         }
     } else {
+        HVLOG(1) << "Receive continue query";
         if (finalized()) {
             ProcessQuery(query);
         } else {
@@ -350,9 +352,12 @@ void Index::ProcessQuery(const IndexQuery& query) {
 
 void Index::ProcessReadNext(const IndexQuery& query) {
     DCHECK(query.direction == IndexQuery::kReadNext);
+    HVLOG_F(1, "ProcessReadNext: seqnum={}, logspace={}, tag={}",
+            bits::HexStr0x(query.query_seqnum), query.user_logspace, query.user_tag);
     uint16_t query_view_id = log_utils::GetViewId(query.query_seqnum);
     if (query_view_id > view_->id()) {
         pending_query_results_.push_back(BuildNotFoundResult(query));
+        HVLOG(1) << "ProcessReadNext: NotFoundResult";
         return;
     }
     uint64_t seqnum;
@@ -362,26 +367,35 @@ void Index::ProcessReadNext(const IndexQuery& query) {
         if (found) {
             pending_query_results_.push_back(
                 BuildFoundResult(query, view_->id(), seqnum, engine_id));
+            HVLOG_F(1, "ProcessReadNext: FoundResult: seqnum={}", seqnum);
         } else {
             if (query.prev_found_result.seqnum != kInvalidLogSeqNum) {
                 const IndexFoundResult& found_result = query.prev_found_result;
                 pending_query_results_.push_back(
                     BuildFoundResult(query, found_result.view_id,
                                      found_result.seqnum, found_result.engine_id));
+                HVLOG_F(1, "ProcessReadNext: FoundResult (from prev_result): seqnum={}",
+                        found_result.seqnum);
+            } else {
+                pending_query_results_.push_back(BuildNotFoundResult(query));
+                HVLOG(1) << "ProcessReadNext: NotFoundResult";
             }
-            pending_query_results_.push_back(BuildNotFoundResult(query));
         }
     } else {
         pending_query_results_.push_back(
             BuildContinueResult(query, found, seqnum, engine_id));
+        HVLOG(1) << "ProcessReadNext: ContinueResult";
     }
 }
 
 void Index::ProcessReadPrev(const IndexQuery& query) {
     DCHECK(query.direction == IndexQuery::kReadPrev);
+    HVLOG_F(1, "ProcessReadPrev: seqnum={}, logspace={}, tag={}",
+            bits::HexStr0x(query.query_seqnum), query.user_logspace, query.user_tag);
     uint16_t query_view_id = log_utils::GetViewId(query.query_seqnum);
     if (query_view_id < view_->id()) {
         pending_query_results_.push_back(BuildContinueResult(query, false, 0, 0));
+        HVLOG(1) << "ProcessReadPrev: ContinueResult";
         return;
     }
     uint64_t seqnum;
@@ -390,10 +404,13 @@ void Index::ProcessReadPrev(const IndexQuery& query) {
     if (found) {
         pending_query_results_.push_back(
             BuildFoundResult(query, view_->id(), seqnum, engine_id));
+        HVLOG_F(1, "ProcessReadPrev: FoundResult: seqnum={}", seqnum);
     } else if (view_->id() > 0) {
         pending_query_results_.push_back(BuildContinueResult(query, false, 0, 0));
+        HVLOG(1) << "ProcessReadPrev: ContinueResult";
     } else {
         pending_query_results_.push_back(BuildNotFoundResult(query));
+        HVLOG(1) << "ProcessReadPrev: NotFoundResult";
     }
 }
 
@@ -462,7 +479,11 @@ IndexQueryResult Index::BuildNotFoundResult(const IndexQuery& query) {
                                           : query.metalog_progress,
         .next_view_id = 0,
         .original_query = query,
-        .found_result = {}
+        .found_result = IndexFoundResult {
+            .view_id = 0,
+            .engine_id = 0,
+            .seqnum = kInvalidLogSeqNum
+        }
     };
 }
 

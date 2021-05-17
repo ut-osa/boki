@@ -358,20 +358,26 @@ void Controller::ReconfigCommandHandler(std::string inputs) {
     const View* view = current_view();
     Configuration configuration;
     configuration.log_space_hash_seed = view->log_space_hash_seed();
-    configuration.log_space_hash_tokens.assign(
-        view->log_space_hash_tokens().begin(),
-        view->log_space_hash_tokens().end());
     configuration.num_phylogs = view->num_phylogs();
     configuration.sequencer_nodes.assign(
         view->GetSequencerNodes().begin(),
         view->GetSequencerNodes().end());
+    std::shuffle(configuration.sequencer_nodes.begin(),
+                 configuration.sequencer_nodes.end(),
+                 rnd_gen_);
     configuration.engine_nodes.assign(
         view->GetEngineNodes().begin(),
         view->GetEngineNodes().end());
+    std::shuffle(configuration.engine_nodes.begin(),
+                 configuration.engine_nodes.end(),
+                 rnd_gen_);
     configuration.storage_nodes.assign(
         view->GetStorageNodes().begin(),
         view->GetStorageNodes().end());
-    
+    std::shuffle(configuration.storage_nodes.begin(),
+                 configuration.storage_nodes.end(),
+                 rnd_gen_);
+
     std::vector<std::string_view> parts = absl::StrSplit(inputs, ' ');
     if (parts[0] == "seq") {
         configuration.sequencer_nodes.clear();
@@ -379,14 +385,15 @@ void Controller::ReconfigCommandHandler(std::string inputs) {
             configuration.sequencer_nodes.push_back(
                 gsl::narrow_cast<uint16_t>(ParseIntChecked(parts[i])));
         }
-        for (size_t i = 0; i < configuration.log_space_hash_tokens.size(); i++) {
-            configuration.log_space_hash_tokens[i] = configuration.sequencer_nodes.at(
-                i % configuration.num_phylogs);
-        }
-        std::shuffle(configuration.log_space_hash_tokens.begin(),
-                     configuration.log_space_hash_tokens.end(),
-                     rnd_gen_);
     }
+
+    for (size_t i = 0; i < view->log_space_hash_tokens().size(); i++) {
+        configuration.log_space_hash_tokens.push_back(configuration.sequencer_nodes.at(
+            i % configuration.num_phylogs));
+    }
+    std::shuffle(configuration.log_space_hash_tokens.begin(),
+                 configuration.log_space_hash_tokens.end(),
+                 rnd_gen_);
 
     ReconfigView(configuration);
 }
