@@ -336,7 +336,8 @@ void LogStorage::OnNewLogs(uint32_t metalog_seqnum,
         // Build the log entry for live_log_entries_
         LogEntry* log_entry = pending_log_entries_[localid].release();
         pending_log_entries_.erase(localid);
-        HVLOG_F(1, "Store the log entry (seqnum {})", bits::HexStr0x(seqnum));
+        HVLOG_F(1, "Finalize the log entry (seqnum={}, localid={})",
+                bits::HexStr0x(seqnum), bits::HexStr0x(localid));
         log_entry->metadata.seqnum = seqnum;
         std::shared_ptr<const LogEntry> log_entry_ptr(log_entry);
         // Add the new entry to index data
@@ -381,6 +382,10 @@ void LogStorage::AdvanceShardProgress(uint16_t engine_id) {
         current++;
     }
     if (current > shard_progrsses_[engine_id]) {
+        HVLOG_F(1, "Update shard progres for engine {}: from={}, to={}",
+                engine_id,
+                bits::HexStr0x(shard_progrsses_[engine_id]),
+                bits::HexStr0x(current));
         shard_progrss_dirty_ = true;
         shard_progrsses_[engine_id] = current;
     }
