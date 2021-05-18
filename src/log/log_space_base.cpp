@@ -63,10 +63,10 @@ bool LogSpaceBase::Finalize(uint32_t final_metalog_position,
     DCHECK(state_ == kNormal || state_ == kFrozen);
     HLOG_F(INFO, "Finalize log space, final_position={}, provided_tails={}",
            final_metalog_position, tail_metalogs.size());
-    for (const MetaLogProto& meta_log : tail_metalogs) {
-        ProvideMetaLog(meta_log);
+    if (metalog_position_ == final_metalog_position) {
+        return true;
     }
-    if (metalog_position_ >= final_metalog_position) {
+    if (metalog_position_ > final_metalog_position) {
         if (metalog_position_ > final_metalog_position + 1) {
             HLOG_F(FATAL, "See the future: current_position={}, expected_position={}",
                    metalog_position_, final_metalog_position);
@@ -74,14 +74,20 @@ bool LogSpaceBase::Finalize(uint32_t final_metalog_position,
             // TODO: try fix this
             HLOG(WARNING) << "Fine, the problem with primary sequencer";
         }
-        state_ = kFinalized;
-        OnFinalized(metalog_position_);
         return true;
-    } else {
-        HLOG_F(ERROR, "current_position={}, expected_position={}",
+    }
+    for (const MetaLogProto& meta_log : tail_metalogs) {
+        ProvideMetaLog(meta_log);
+    }
+    if (metalog_position_ < final_metalog_position) {
+        HLOG_F(ERROR, "Metalog entries not sufficient: current_position={}, expected_position={}",
                metalog_position_, final_metalog_position);
         return false;
+    } else if (metalog_position_ > final_metalog_position) {
+        HLOG_F(WARNING, "It's uncommon, current_position={}, expected_position={}",
+               metalog_position_, final_metalog_position);
     }
+    return true;
 }
 
 void LogSpaceBase::SerializeToProto(MetaLogsProto* meta_logs_proto) {

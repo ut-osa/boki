@@ -65,6 +65,7 @@ void MetaLogPrimary::UpdateReplicaProgress(uint16_t sequencer_id,
         HLOG_F(FATAL, "Receive future position: received={}, current={}",
                metalog_position, metalog_position_);
     }
+    DCHECK(metalog_progresses_.contains(sequencer_id));
     if (metalog_position > metalog_progresses_[sequencer_id]) {
         metalog_progresses_[sequencer_id] = metalog_position;
         UpdateMetaLogReplicatedPosition();
