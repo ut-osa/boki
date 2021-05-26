@@ -14,3 +14,12 @@ ABSL_FLAG(bool, tcp_enable_keepalive, true, "Enable TCP keep-alive");
 
 ABSL_FLAG(std::string, zookeeper_host, "localhost:2181", "ZooKeeper host");
 ABSL_FLAG(std::string, zookeeper_root_path, "/faas", "Root path for all znodes");
+
+ABSL_FLAG(bool, enable_journal, false,
+          "Enable IO worker journals (for write-ahead logging)");
+ABSL_FLAG(std::string, journal_save_path, "",
+          "The directory for storing journal files");
+ABSL_FLAG(size_t, journal_file_max_size_mb, 256,
+          "Maximum size (in MB) of individual journal file");
+ABSL_FLAG(size_t, journal_cap_per_worker, 4,
+          "Maximum number of journal files per IO worker");

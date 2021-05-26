@@ -49,4 +49,8 @@ constexpr uint16_t kMessageConnectionBufGroup      = 0x20;
 constexpr uint16_t kSequencerConnectionBufGroup    = 0x21;
 constexpr uint16_t kIncomingSLogConnectionBufGroup = 0x22;
 
+// ===== Journal entry types =====
+constexpr uint16_t kMetalogJournalEntryType  = 0x00;
+constexpr uint16_t kLogEntryJournalEntryType = 0x01;
+
 }  // namespace faas

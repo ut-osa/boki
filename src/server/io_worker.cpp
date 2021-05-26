@@ -1,5 +1,6 @@
 #include "server/io_worker.h"
 
+#include "common/flags.h"
 #include "server/constants.h"
 
 #include <sys/eventfd.h>
@@ -9,6 +10,10 @@ namespace server {
 
 IOUring* ConnectionBase::current_io_uring() {
     return IOWorker::current()->io_uring();
+}
+
+bool ConnectionBase::journal_enabled() {
+    return absl::GetFlag(FLAGS_enable_journal);
 }
 
 thread_local IOWorker* IOWorker::current_ = nullptr;
@@ -278,6 +283,15 @@ void IOWorker::CloseWorkerFds() {
     URING_DCHECK_OK(io_uring_.Close(pipe_to_server_fd_, [this] () {
         pipe_to_server_fd_ = -1;
     }));
+}
+
+void IOWorker::JournalAppend(uint16_t type, std::span<const char> payload,
+                             std::function<void()> callback) {
+    if (!absl::GetFlag(FLAGS_enable_journal)) {
+        HLOG(FATAL) << "Journal not enabled!";
+    }
+    // TODO
+    NOT_IMPLEMENTED();
 }
 
 }  // namespace server

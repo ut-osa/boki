@@ -35,6 +35,7 @@ protected:
     int id_;
 
     static IOUring* current_io_uring();
+    static bool journal_enabled();
 
 private:
     char pipe_write_buf_for_transfer_[__FAAS_PTR_SIZE];
@@ -87,6 +88,9 @@ public:
 
     // Idle functions will be invoked at the end of each event loop iteration.
     void ScheduleIdleFunction(ConnectionBase* owner, std::function<void()> fn);
+
+    void JournalAppend(uint16_t type, std::span<const char> payload,
+                       std::function<void()> callback);
 
 private:
     enum State { kCreated, kRunning, kStopping, kStopped };
