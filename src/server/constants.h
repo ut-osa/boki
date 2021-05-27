@@ -20,7 +20,8 @@ constexpr int kTimerTypeId                  = 0x10 << 16;
 constexpr int kSLogLocalCutTimerTypeId      = kTimerTypeId + 1;
 constexpr int kSLogStateCheckTimerTypeId    = kTimerTypeId + 2;
 constexpr int kSendShardProgressTimerId     = kTimerTypeId + 3;
-constexpr int kMetaLogCutTimerId            = kTimerTypeId + 3;
+constexpr int kMetaLogCutTimerId            = kTimerTypeId + 4;
+constexpr int kJournalMonitorTimerId        = kTimerTypeId + 5;
 
 // Used by Gateway
 constexpr int kHttpConnectionTypeId         = 0x20 << 16;
@@ -50,7 +51,7 @@ constexpr uint16_t kSequencerConnectionBufGroup    = 0x21;
 constexpr uint16_t kIncomingSLogConnectionBufGroup = 0x22;
 
 // ===== Journal entry types =====
-constexpr uint16_t kMetalogJournalEntryType  = 0x00;
-constexpr uint16_t kLogEntryJournalEntryType = 0x01;
+constexpr uint16_t kMetalogJournalRecordType  = 0x00;
+constexpr uint16_t kLogEntryJournalRecordType = 0x01;
 
 }  // namespace faas

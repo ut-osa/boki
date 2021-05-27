@@ -70,6 +70,15 @@ private:
 
 #undef NEW_EMPTY_FUNC_CALL
 
+struct JournalRecordHeader {
+    uint16_t type;
+    uint16_t payload_size;
+    uint32_t __padding__;
+    int64_t  timestamp;
+} __attribute__ ((packed));
+
+static_assert(sizeof(JournalRecordHeader) == 16, "Unexpected JournalRecordHeader size");
+
 enum class MessageType : uint16_t {
     INVALID               = 0,
     ENGINE_HANDSHAKE      = 1,

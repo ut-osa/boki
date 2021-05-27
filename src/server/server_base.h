@@ -76,6 +76,7 @@ private:
 
     void SetupIOWorkers();
     void SetupMessageServer();
+    void SetupJournalMonitorTimers();
     void OnNewMessageConnection(int sockfd);
 
     void EventLoopThreadMain();

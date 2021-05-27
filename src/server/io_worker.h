@@ -90,9 +90,12 @@ public:
     void ScheduleIdleFunction(ConnectionBase* owner, std::function<void()> fn);
 
     void JournalAppend(uint16_t type, std::span<const char> payload,
-                       std::function<void()> callback);
+                       std::function<void()> cb);
+    void JournalMonitorCallback();
 
 private:
+    static constexpr size_t kJournalBufSize = 65536;
+
     enum State { kCreated, kRunning, kStopping, kStopped };
 
     std::string worker_name_;
@@ -121,12 +124,25 @@ private:
         scheduled_functions_ ABSL_GUARDED_BY(scheduled_function_mu_);
     absl::InlinedVector<ScheduledFunction, 16> idle_functions_;
 
+    struct JournalFile {
+        std::string file_path;
+        int         fd;
+        size_t      size;
+    };
+    utils::BufferPool journal_buffer_pool_;
+    int next_journal_file_id_;
+    std::deque<std::unique_ptr<JournalFile>> journal_files_;
+    JournalFile* current_journal_file_; 
+
     void EventLoopThreadMain();
     void RunScheduledFunctions();
     void RunIdleFunctions();
     void InvokeFunction(const ScheduledFunction& function);
     void StopInternal();
     void CloseWorkerFds();
+
+    JournalFile* CreateNewJournalFile();
+    void RemoveExtraJournalFiles();
 
     DISALLOW_COPY_AND_ASSIGN(IOWorker);
 };

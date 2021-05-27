@@ -1,9 +1,16 @@
 #include "server/io_worker.h"
 
 #include "common/flags.h"
+#include "common/protocol.h"
 #include "server/constants.h"
+#include "utils/fs.h"
 
+#include <fcntl.h>
 #include <sys/eventfd.h>
+
+ABSL_FLAG(bool, journal_file_openflag_direct, false, "");
+ABSL_FLAG(bool, journal_file_openflag_sync, false, "");
+ABSL_FLAG(bool, journal_file_openflag_dsync, false, "");
 
 namespace faas {
 namespace server {
@@ -25,7 +32,10 @@ IOWorker::IOWorker(std::string_view worker_name, size_t write_buffer_size)
       event_loop_thread_(fmt::format("{}/EL", worker_name),
                          absl::bind_front(&IOWorker::EventLoopThreadMain, this)),
       write_buffer_pool_(fmt::format("{}_Write", worker_name), write_buffer_size),
-      connections_on_closing_(0) {}
+      connections_on_closing_(0),
+      journal_buffer_pool_(fmt::format("{}_Journal", worker_name), kJournalBufSize),
+      next_journal_file_id_(0),
+      current_journal_file_(nullptr) {}
 
 IOWorker::~IOWorker() {
     State state = state_.load();
@@ -71,6 +81,9 @@ void IOWorker::Start(int pipe_to_server_fd) {
             return true;
         }
     ));
+    if (absl::GetFlag(FLAGS_enable_journal)) {
+        current_journal_file_ = CreateNewJournalFile();
+    }
     // Start event loop thread
     event_loop_thread_.Start();
     state_.store(kRunning);
@@ -286,12 +299,104 @@ void IOWorker::CloseWorkerFds() {
 }
 
 void IOWorker::JournalAppend(uint16_t type, std::span<const char> payload,
-                             std::function<void()> callback) {
-    if (!absl::GetFlag(FLAGS_enable_journal)) {
+                             std::function<void()> cb) {
+    if (current_journal_file_ == nullptr) {
         HLOG(FATAL) << "Journal not enabled!";
     }
-    // TODO
-    NOT_IMPLEMENTED();
+    std::span<char> buf;
+    journal_buffer_pool_.Get(&buf);
+    size_t write_size = sizeof(protocol::JournalRecordHeader) + payload.size();
+    CHECK_LE(write_size, buf.size());
+    protocol::JournalRecordHeader hdr = {
+        .type         = type,
+        .payload_size = gsl::narrow_cast<uint16_t>(payload.size()),
+        .timestamp    = GetRealtimeNanoTimestamp(),
+    };
+    memcpy(buf.data(), &hdr, sizeof(protocol::JournalRecordHeader));
+    memcpy(buf.data() + sizeof(protocol::JournalRecordHeader),
+           payload.data(), payload.size());
+    int fd = current_journal_file_->fd;
+    DCHECK(fd != -1);
+    current_journal_file_->size += write_size;
+    URING_DCHECK_OK(io_uring_.Write(
+        fd, std::span<const char>(buf.data(), write_size),
+        [this, buf, write_size, cb] (int status, size_t nwrite) {
+            journal_buffer_pool_.Return(buf);
+            if (status != 0) {
+                HPLOG(FATAL) << "Failed to append journal";
+            } else if (nwrite < write_size) {
+                HPLOG_F(FATAL, "Partial write occurs: nwrite={}, expect={}",
+                        nwrite, write_size);
+            }
+            cb();
+        }
+    ));
+}
+
+void IOWorker::JournalMonitorCallback() {
+    if (current_journal_file_ == nullptr) {
+        HLOG(FATAL) << "Journal not enabled!";
+    }
+    size_t size_cap = absl::GetFlag(FLAGS_journal_file_max_size_mb) * 1024 * 1024;
+    if (current_journal_file_->size <= size_cap) {
+        return;
+    }
+    JournalFile* old_journal_file = current_journal_file_;
+    current_journal_file_ = CreateNewJournalFile();
+    int fd = old_journal_file->fd;
+    DCHECK(fd != -1);
+    URING_DCHECK_OK(io_uring_.Close(fd, [this, old_journal_file] () {
+        old_journal_file->fd = -1;
+        RemoveExtraJournalFiles();
+    }));
+    RemoveExtraJournalFiles();
+}
+
+IOWorker::JournalFile* IOWorker::CreateNewJournalFile() {
+    std::string file_path = fs_utils::JoinPath(
+        absl::GetFlag(FLAGS_journal_save_path),
+        fmt::format("{}.{}", worker_name_, next_journal_file_id_++));
+    if (auto fd = fs_utils::Create(file_path); fd) {
+        PCHECK(close(fd.value()) == 0) << "Failed to close file";
+    } else {
+        LOG(FATAL) << "Failed to create file " << file_path;
+    }
+    int flags = O_APPEND;
+    if (absl::GetFlag(FLAGS_journal_file_openflag_direct)) {
+        flags |= O_DIRECT;
+    }
+    if (absl::GetFlag(FLAGS_journal_file_openflag_sync)) {
+        flags |= O_SYNC;
+    }
+    if (absl::GetFlag(FLAGS_journal_file_openflag_dsync)) {
+        flags |= O_DSYNC;
+    }
+    auto fd = fs_utils::Open(file_path, flags);
+    if (!fd) {
+        LOG(FATAL) << "Failed to open file " << file_path;
+    }
+    JournalFile* journal_file = new JournalFile {
+        .file_path = std::move(file_path),
+        .fd        = fd.value(),
+        .size      = 0,
+    };
+    journal_files_.emplace_back(journal_file);
+    URING_DCHECK_OK(io_uring_.RegisterFd(journal_file->fd));
+    return journal_file;
+}
+
+void IOWorker::RemoveExtraJournalFiles() {
+    while (journal_files_.size() > absl::GetFlag(FLAGS_journal_cap_per_worker)) {
+        JournalFile* journal_file = journal_files_.front().get();
+        if (journal_file->fd >= 0) {
+            break;
+        }
+        bool success = fs_utils::Remove(journal_file->file_path);
+        if (!success) {
+            LOG(FATAL) << "Failed to delete file " << journal_file->file_path;
+        }
+        journal_files_.pop_front();
+    }
 }
 
 }  // namespace server

@@ -39,6 +39,9 @@ void ServerBase::Start() {
     zk_session_.Start();
     SetupIOWorkers();
     state_.store(kBootstrapping);
+    if (absl::GetFlag(FLAGS_enable_journal)) {
+        SetupJournalMonitorTimers();
+    }
     StartInternal();
     SetupMessageServer();
     node_watcher_.StartWatching(zk_session());
@@ -179,6 +182,19 @@ void ServerBase::SetupMessageServer() {
         zk::ZKCreateMode::kEphemeral, nullptr);
     CHECK(status.ok()) << fmt::format("Failed to create ZooKeeper node {}: {}",
                                       znode_path, status.ToString());
+}
+
+void ServerBase::SetupJournalMonitorTimers() {
+    DCHECK(state_.load() == kBootstrapping);
+    absl::Time initial = absl::Now() + absl::Seconds(1);
+    ForEachIOWorker([&, this] (IOWorker* io_worker) {
+        Timer* timer = new Timer(
+            kJournalMonitorTimerId,
+            absl::bind_front(&IOWorker::JournalMonitorCallback, io_worker));
+        timer->SetPeriodic(initial, absl::Seconds(1));
+        RegisterConnection(io_worker, timer);
+        timers_.insert(std::unique_ptr<Timer>(timer));
+    });
 }
 
 void ServerBase::OnNewMessageConnection(int sockfd) {
