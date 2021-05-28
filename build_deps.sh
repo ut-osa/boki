@@ -43,9 +43,12 @@ cd $BASE_DIR/deps/jemalloc && ./autogen.sh && \
   make clean && make -j$(nproc) install && make clean
 
 # Build zstd
-cd $BASE_DIR/deps/zstd && make clean && \
-  prefix=${DEPS_INSTALL_PATH} make install && \
-  make clean
+cd $BASE_DIR/deps/zstd && rm -rf builddir && mkdir -p builddir && cd builddir && \
+  cmake -DCMAKE_BUILD_TYPE=Release -DZSTD_BUILD_TESTS=OFF \
+        -DZSTD_BUILD_STATIC=ON -DZSTD_BUILD_SHARED=OFF \
+        -DCMAKE_INSTALL_PREFIX=${DEPS_INSTALL_PATH} -DCMAKE_INSTALL_LIBDIR=lib ../build/cmake && \
+  make -j$(nproc) install && \
+  rm -rf $BASE_DIR/deps/zstd/builddir
 
 # Build http-parser
 cd $BASE_DIR/deps/http-parser && make clean && make package && \
