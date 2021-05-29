@@ -8,8 +8,6 @@
 #include <fcntl.h>
 #include <sys/eventfd.h>
 
-ABSL_FLAG(bool, journal_file_openflag_direct, false, "");
-ABSL_FLAG(bool, journal_file_openflag_sync, false, "");
 ABSL_FLAG(bool, journal_file_openflag_dsync, false, "");
 
 namespace faas {
@@ -367,12 +365,6 @@ IOWorker::JournalFile* IOWorker::CreateNewJournalFile() {
         LOG(FATAL) << "Failed to create file " << file_path;
     }
     int flags = O_WRONLY | O_APPEND | O_NONBLOCK;
-    if (absl::GetFlag(FLAGS_journal_file_openflag_direct)) {
-        flags |= O_DIRECT;
-    }
-    if (absl::GetFlag(FLAGS_journal_file_openflag_sync)) {
-        flags |= O_SYNC;
-    }
     if (absl::GetFlag(FLAGS_journal_file_openflag_dsync)) {
         flags |= O_DSYNC;
     }
