@@ -34,6 +34,29 @@ std::optional<MetaLogProto> LogSpaceBase::GetMetaLog(uint32_t pos) const {
     return *applied_metalogs_.at(pos);
 }
 
+bool LogSpaceBase::GetMetaLogs(uint32_t start_pos, uint32_t end_pos,
+                               MetaLogProtoVec* metalogs) const {
+    DCHECK(mode_ == kFullMode);
+    DCHECK_LT(start_pos, end_pos);
+    if (end_pos > metalog_position_) {
+        return false;
+    }
+    DCHECK_NOTNULL(metalogs)->Clear();
+    int vec_size = static_cast<int>(end_pos - start_pos);
+    metalogs->Reserve(vec_size);
+    for (uint32_t pos = start_pos; pos < end_pos; pos++) {
+        MetaLogProto* metalog = applied_metalogs_.at(pos);
+        metalogs->Add()->CopyFrom(*metalog);
+    }
+    DCHECK_EQ(metalogs->size(), vec_size);
+    return true;
+}
+
+void LogSpaceBase::GetMetaLogsChecked(uint32_t start_pos, uint32_t end_pos,
+                                      MetaLogProtoVec* metalogs) const {
+    CHECK(GetMetaLogs(start_pos, end_pos, metalogs));
+}
+
 bool LogSpaceBase::ProvideMetaLog(const MetaLogProto& meta_log) {
     DCHECK(state_ == kNormal || state_ == kFrozen);
     if (mode_ == kLiteMode && meta_log.type() == MetaLogProto::TRIM) {

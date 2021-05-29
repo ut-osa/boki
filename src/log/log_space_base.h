@@ -24,6 +24,12 @@ public:
 
     std::optional<MetaLogProto> GetMetaLog(uint32_t pos) const;
 
+    using MetaLogProtoVec = google::protobuf::RepeatedField<MetaLogProto>;
+    bool GetMetaLogs(uint32_t start_pos, uint32_t end_pos,
+                     MetaLogProtoVec* metalogs) const;
+    void GetMetaLogsChecked(uint32_t start_pos, uint32_t end_pos,
+                            MetaLogProtoVec* metalogs) const;
+
     // Return true if metalog_position changed
     bool ProvideMetaLog(const MetaLogProto& meta_log_proto);
 

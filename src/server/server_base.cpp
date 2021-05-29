@@ -34,6 +34,10 @@ ServerBase::~ServerBase() {
     PCHECK(close(stop_eventfd_) == 0) << "Failed to close eventfd";
 }
 
+bool ServerBase::journal_enabled() {
+    return absl::GetFlag(FLAGS_enable_journal);
+}
+
 void ServerBase::Start() {
     DCHECK(state_.load() == kCreated);
     zk_session_.Start();

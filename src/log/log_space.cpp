@@ -8,6 +8,7 @@ namespace log {
 MetaLogPrimary::MetaLogPrimary(const View* view, uint16_t sequencer_id)
     : LogSpaceBase(LogSpaceBase::kFullMode, view, sequencer_id),
       replicated_metalog_position_(0) {
+    log_header_ = fmt::format("MetaLogPrimary[{}]: ", view->id());
     for (uint16_t engine_id : view_->GetEngineNodes()) {
         const View::Engine* engine_node = view_->GetEngineNode(engine_id);
         for (uint16_t storage_id : engine_node->GetStorageNodes()) {
@@ -19,9 +20,9 @@ MetaLogPrimary::MetaLogPrimary(const View* view, uint16_t sequencer_id)
     for (uint16_t sequencer_id : sequencer_node_->GetReplicaSequencerNodes()) {
         metalog_progresses_[sequencer_id] = 0;
     }
-    log_header_ = fmt::format("MetaLogPrimary[{}]: ", view->id());
-    if (metalog_progresses_.empty()) {
-        HLOG(WARNING) << "No meta log replication";
+    metalog_progresses_[sequencer_node_->node_id()] = 0;
+    if (metalog_progresses_.size() < 3) {
+        LOG(FATAL) << "Metalog needs at least 3 replicas!";
     }
     state_ = kNormal;
 }
@@ -56,19 +57,37 @@ void MetaLogPrimary::UpdateStorageProgress(uint16_t storage_id,
     }
 }
 
-void MetaLogPrimary::UpdateReplicaProgress(uint16_t sequencer_id,
-                                           uint32_t metalog_position) {
-    if (!sequencer_node_->IsReplicaSequencerNode(sequencer_id)) {
+bool MetaLogPrimary::all_metalog_replicated() const {
+    return metalog_progresses_.at(sequencer_id()) == metalog_position()
+            && replicated_metalog_position_ == metalog_position();
+}
+
+void MetaLogPrimary::UpdateReplicaProgress(uint16_t sequencer_id, uint32_t metalog_position,
+                                           MetaLogProtoVec* newly_replicated_metalogs) {
+    if (sequencer_id != sequencer_node_->node_id() &&
+          !sequencer_node_->IsReplicaSequencerNode(sequencer_id)) {
         HLOG_F(FATAL, "Should not receive META_PROG message from sequencer {}", sequencer_id);
     }
     if (metalog_position > metalog_position_) {
         HLOG_F(FATAL, "Receive future position: received={}, current={}",
                metalog_position, metalog_position_);
     }
+    DCHECK(newly_replicated_metalogs == nullptr || newly_replicated_metalogs->empty());
+    uint32_t old_position = replicated_metalog_position();
     DCHECK(metalog_progresses_.contains(sequencer_id));
     if (metalog_position > metalog_progresses_[sequencer_id]) {
         metalog_progresses_[sequencer_id] = metalog_position;
         UpdateMetaLogReplicatedPosition();
+        uint32_t new_position = replicated_metalog_position();
+        if (new_position > old_position) {
+            GetMetaLogsChecked(old_position, new_position,
+                               DCHECK_NOTNULL(newly_replicated_metalogs));
+        }
+    } else {
+        DCHECK(sequencer_id != sequencer_node_->node_id())
+            << fmt::format("current_progress={}, provided={}",
+                           metalog_progresses_[sequencer_id],
+                           metalog_position);
     }
 }
 
@@ -110,10 +129,7 @@ void MetaLogPrimary::UpdateMetaLogReplicatedPosition() {
     if (replicated_metalog_position_ == metalog_position_) {
         return;
     }
-    if (metalog_progresses_.empty()) {
-        return;
-    }
-    std::vector<uint32_t> tmp;
+    absl::InlinedVector<uint32_t, 8> tmp;
     tmp.reserve(metalog_progresses_.size());
     for (const auto& [sequencer_id, progress] : metalog_progresses_) {
         tmp.push_back(progress);

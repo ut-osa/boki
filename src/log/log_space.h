@@ -14,13 +14,12 @@ public:
     uint32_t replicated_metalog_position() const {
         return replicated_metalog_position_;
     }
-    bool all_metalog_replicated() const {
-        return replicated_metalog_position_ == metalog_position();
-    }
+    bool all_metalog_replicated() const;
 
     void UpdateStorageProgress(uint16_t storage_id,
                                const std::vector<uint32_t>& progress);
-    void UpdateReplicaProgress(uint16_t sequencer_id, uint32_t metalog_position);
+    void UpdateReplicaProgress(uint16_t sequencer_id, uint32_t metalog_position,
+                               MetaLogProtoVec* newly_replicated_metalogs);
     std::optional<MetaLogProto> MarkNextCut();
 
 private:

@@ -318,6 +318,8 @@ void IOWorker::JournalAppend(uint16_t type, std::span<const char> payload,
     int fd = current_journal_file_->fd;
     DCHECK(fd != -1);
     current_journal_file_->size += write_size;
+    HVLOG_F(1, "Append to journal file (fd {}): type={}, size={}",
+            fd, type, write_size);
     URING_DCHECK_OK(io_uring_.Write(
         fd, std::span<const char>(buf.data(), write_size),
         [this, buf, write_size, cb] (int status, size_t nwrite) {
@@ -345,7 +347,10 @@ void IOWorker::JournalMonitorCallback() {
     current_journal_file_ = CreateNewJournalFile();
     int fd = old_journal_file->fd;
     DCHECK(fd != -1);
+    HLOG_F(INFO, "Going to close journal file: {} (fd {})",
+           old_journal_file->file_path, fd);
     URING_DCHECK_OK(io_uring_.Close(fd, [this, old_journal_file] () {
+        HLOG(INFO) << "Journal file closed: " << old_journal_file->file_path;
         old_journal_file->fd = -1;
         RemoveExtraJournalFiles();
     }));
@@ -361,7 +366,7 @@ IOWorker::JournalFile* IOWorker::CreateNewJournalFile() {
     } else {
         LOG(FATAL) << "Failed to create file " << file_path;
     }
-    int flags = O_APPEND;
+    int flags = O_WRONLY | O_APPEND | O_NONBLOCK;
     if (absl::GetFlag(FLAGS_journal_file_openflag_direct)) {
         flags |= O_DIRECT;
     }
@@ -375,6 +380,7 @@ IOWorker::JournalFile* IOWorker::CreateNewJournalFile() {
     if (!fd) {
         LOG(FATAL) << "Failed to open file " << file_path;
     }
+    HLOG_F(INFO, "Create journal file: {} (fd {})", file_path, fd.value());
     JournalFile* journal_file = new JournalFile {
         .file_path = std::move(file_path),
         .fd        = fd.value(),

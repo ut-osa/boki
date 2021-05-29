@@ -26,6 +26,8 @@ protected:
     enum State { kCreated, kBootstrapping, kRunning, kStopping, kStopped };
     std::atomic<State> state_;
 
+    static bool journal_enabled();
+
     zk::ZKSession* zk_session() { return &zk_session_; }
     NodeWatcher* node_watcher() { return &node_watcher_; }
 

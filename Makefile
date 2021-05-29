@@ -48,7 +48,9 @@ include config.mk
 endif
 
 ifneq (,$(findstring clang,$(CXX)))
-COMPILE_FLAGS += -Wthread-safety -Wno-unused-private-field
+COMPILE_FLAGS += -Wthread-safety \
+	-Wno-unused-private-field \
+	-Wno-invalid-offsetof  # Protobuf issue
 endif
 
 ifeq ($(DISABLE_STAT),1)

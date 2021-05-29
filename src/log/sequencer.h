@@ -38,6 +38,8 @@ private:
                            std::span<const char> payload) override;
 
     void ProcessRequests(const std::vector<SharedLogRequest>& requests);
+    void PropagateMetaLogs(const View* view,
+                           const LogSpaceBase::MetaLogProtoVec& metalogs);
 
     void MarkNextCutIfDoable() override;
 
