@@ -226,27 +226,17 @@ void Sequencer::OnRecvNewMetaLogs(const SharedLogMessage& message,
     uint32_t logspace_id = message.logspace_id;
     MetaLogsProto metalogs_proto = log_utils::MetaLogsFromPayload(payload);
     DCHECK_EQ(metalogs_proto.logspace_id(), logspace_id);
-    uint32_t old_metalog_position;
-    uint32_t new_metalog_position;
     {
         absl::ReaderMutexLock view_lk(&view_mu_);
         ONHOLD_IF_FROM_FUTURE_VIEW(message, payload);
         IGNORE_IF_FROM_PAST_VIEW(message);
-        auto logspace_ptr = backup_collection_.GetLogSpaceChecked(logspace_id);
-        {
-            auto locked_logspace = logspace_ptr.Lock();
-            RETURN_IF_LOGSPACE_INACTIVE(locked_logspace);
-            old_metalog_position = locked_logspace->metalog_position();
-            for (const MetaLogProto& metalog_proto : metalogs_proto.metalogs()) {
-                locked_logspace->ProvideMetaLog(metalog_proto);
-            }
-            new_metalog_position = locked_logspace->metalog_position();
-        }
     }
-    if (new_metalog_position > old_metalog_position) {
-        SharedLogMessage response = SharedLogMessageHelper::NewMetaLogProgressMessage(
-            logspace_id, new_metalog_position);
-        SendSequencerMessage(message.sequencer_id, &response);
+    if (journal_enabled()) {
+        CurrentIOWorkerChecked()->JournalAppend(
+            kMetalogBackupJournalRecordType, payload,
+            absl::bind_front(&Sequencer::StoreMetaLogAsBackup, this, metalogs_proto));
+    } else {
+        StoreMetaLogAsBackup(std::move(metalogs_proto));
     }
 }
 
@@ -303,7 +293,7 @@ void Sequencer::MarkNextCutIfDoable() {
     std::string serialized;
     CHECK(meta_log_proto.SerializeToString(&serialized));
     CurrentIOWorkerChecked()->JournalAppend(
-        kMetalogJournalRecordType, STRING_AS_SPAN(serialized),
+        kMetalogPrimaryJournalRecordType, STRING_AS_SPAN(serialized),
         [this, view, metalog_seqnum = meta_log_proto.metalog_seqnum()] () {
             absl::ReaderMutexLock view_lk(&view_mu_);
             if (current_view_ != view) {
@@ -320,6 +310,31 @@ void Sequencer::MarkNextCutIfDoable() {
             PropagateMetaLogs(view, replicated_metalogs);
         }
     );
+}
+
+void Sequencer::StoreMetaLogAsBackup(MetaLogsProto metalogs_proto) {
+    uint32_t logspace_id = metalogs_proto.logspace_id();
+    uint32_t old_metalog_position;
+    uint32_t new_metalog_position;
+    {
+        absl::ReaderMutexLock view_lk(&view_mu_);
+        auto logspace_ptr = backup_collection_.GetLogSpaceChecked(logspace_id);
+        {
+            auto locked_logspace = logspace_ptr.Lock();
+            RETURN_IF_LOGSPACE_INACTIVE(locked_logspace);
+            old_metalog_position = locked_logspace->metalog_position();
+            for (const MetaLogProto& metalog_proto : metalogs_proto.metalogs()) {
+                locked_logspace->ProvideMetaLog(metalog_proto);
+            }
+            new_metalog_position = locked_logspace->metalog_position();
+        }
+    }
+    if (new_metalog_position > old_metalog_position) {
+        SharedLogMessage response = SharedLogMessageHelper::NewMetaLogProgressMessage(
+            logspace_id, new_metalog_position);
+        uint16_t sequencer_id = bits::LowHalf32(logspace_id);
+        SendSequencerMessage(sequencer_id, &response);
+    }
 }
 
 #undef RETURN_IF_LOGSPACE_INACTIVE

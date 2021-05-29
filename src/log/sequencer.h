@@ -40,6 +40,7 @@ private:
     void ProcessRequests(const std::vector<SharedLogRequest>& requests);
     void PropagateMetaLogs(const View* view,
                            const LogSpaceBase::MetaLogProtoVec& metalogs);
+    void StoreMetaLogAsBackup(MetaLogsProto metalogs_proto);
 
     void MarkNextCutIfDoable() override;
 
