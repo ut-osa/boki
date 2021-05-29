@@ -6,9 +6,9 @@ namespace faas {
 namespace log {
 
 struct IndexFoundResult {
-    uint16_t view_id;
-    uint16_t engine_id;
-    uint64_t seqnum;
+    uint16_t view_id   {0};
+    uint16_t engine_id {0};
+    uint64_t seqnum    {kInvalidLogSeqNum};
 };
 
 struct IndexQuery {

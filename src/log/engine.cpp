@@ -636,11 +636,7 @@ IndexQuery Engine::BuildIndexQuery(LocalOp* op) {
         .user_tag = op->query_tag,
         .query_seqnum = op->seqnum,
         .metalog_progress = op->metalog_progress,
-        .prev_found_result = {
-            .view_id = 0,
-            .engine_id = 0,
-            .seqnum = kInvalidLogSeqNum
-        }
+        .prev_found_result = {}
     };
 }
 

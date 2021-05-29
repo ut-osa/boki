@@ -73,7 +73,7 @@ private:
 struct JournalRecordHeader {
     uint16_t type;
     uint16_t payload_size;
-    uint32_t __padding__;
+    uint32_t __padding__ {0};
     int64_t  timestamp;
 } __attribute__ ((packed));
 

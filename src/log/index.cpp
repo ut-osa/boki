@@ -479,11 +479,7 @@ IndexQueryResult Index::BuildNotFoundResult(const IndexQuery& query) {
                                           : query.metalog_progress,
         .next_view_id = 0,
         .original_query = query,
-        .found_result = IndexFoundResult {
-            .view_id = 0,
-            .engine_id = 0,
-            .seqnum = kInvalidLogSeqNum
-        }
+        .found_result = IndexFoundResult {},
     };
 }
 
@@ -496,11 +492,7 @@ IndexQueryResult Index::BuildContinueResult(const IndexQuery& query, bool found,
                                           : query.metalog_progress,
         .next_view_id = gsl::narrow_cast<uint16_t>(view_->id() - 1),
         .original_query = query,
-        .found_result = IndexFoundResult {
-            .view_id = 0,
-            .engine_id = 0,
-            .seqnum = kInvalidLogSeqNum
-        }
+        .found_result = IndexFoundResult {}
     };
     if (query.direction == IndexQuery::kReadNextB) {
         result.original_query.direction = IndexQuery::kReadNext;
