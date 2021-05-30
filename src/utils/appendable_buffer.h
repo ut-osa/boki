@@ -10,6 +10,7 @@ class AppendableBuffer {
 public:
     static constexpr size_t kInlineBufferSize = 48;
     static constexpr size_t kDefaultInitialSize = kInlineBufferSize;
+    static constexpr size_t kMallocWarnThreshold = 256*1024*1024;  // 256MB
 
     explicit AppendableBuffer(size_t initial_size = kDefaultInitialSize)
         : buf_size_(initial_size), pos_(0) {
@@ -43,6 +44,9 @@ public:
             }
             buf_ = new_buf;
             buf_size_ = new_size;
+            if (new_size >= kMallocWarnThreshold) {
+                LOG(WARNING) << "Large allocation in AppendableBuffer: size=" << new_size;
+            }
         }
         memcpy(buf_ + pos_, data, length);
         pos_ += length;
