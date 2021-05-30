@@ -32,6 +32,10 @@ mkdir -p ${DEPS_INSTALL_PATH}
 
 export PKG_CONFIG_PATH=${DEPS_INSTALL_PATH}/lib/pkgconfig
 
+if [[ ! -z "${OVERLAY_PATH}" ]]; then
+  BASE_DIR=${OVERLAY_PATH}
+fi
+
 # Build abseil-cpp
 cd $BASE_DIR/deps/abseil-cpp && rm -rf build && mkdir -p build && cd build && \
   cmake -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DCMAKE_CXX_STANDARD=17 \
