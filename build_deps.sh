@@ -38,8 +38,8 @@ cd $BASE_DIR/deps/abseil-cpp && rm -rf build && mkdir -p build && cd build && \
 
 # Build jemalloc
 cd $BASE_DIR/deps/jemalloc && ./autogen.sh && \
-  ./configure --prefix=${DEPS_INSTALL_PATH} \
-              --enable-prof --disable-shared && \
+  ./configure --prefix=${DEPS_INSTALL_PATH} --disable-shared \
+              --enable-prof --enable-stats && \
   make clean && make -j$(nproc) install && make clean
 
 # Build zstd

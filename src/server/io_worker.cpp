@@ -298,6 +298,7 @@ void IOWorker::CloseWorkerFds() {
 
 void IOWorker::JournalAppend(uint16_t type, std::span<const char> payload,
                              std::function<void()> cb) {
+    DCHECK(WithinMyEventLoopThread());
     if (current_journal_file_ == nullptr) {
         HLOG(FATAL) << "Journal not enabled!";
     }
@@ -334,6 +335,7 @@ void IOWorker::JournalAppend(uint16_t type, std::span<const char> payload,
 }
 
 void IOWorker::JournalMonitorCallback() {
+    DCHECK(WithinMyEventLoopThread());
     if (current_journal_file_ == nullptr) {
         HLOG(FATAL) << "Journal not enabled!";
     }
@@ -384,6 +386,7 @@ IOWorker::JournalFile* IOWorker::CreateNewJournalFile() {
 }
 
 void IOWorker::RemoveExtraJournalFiles() {
+    DCHECK(WithinMyEventLoopThread());
     while (journal_files_.size() > absl::GetFlag(FLAGS_journal_cap_per_worker)) {
         JournalFile* journal_file = journal_files_.front().get();
         if (journal_file->fd >= 0) {

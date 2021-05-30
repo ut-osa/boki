@@ -12,6 +12,8 @@ ABSL_FLAG(bool, tcp_enable_reuseport, false, "Enable SO_REUSEPORT");
 ABSL_FLAG(bool, tcp_enable_nodelay, true, "Enable TCP_NODELAY");
 ABSL_FLAG(bool, tcp_enable_keepalive, true, "Enable TCP keep-alive");
 
+ABSL_FLAG(int, server_stat_interval_ms, 1000, "Interval of printing server statistics.");
+
 ABSL_FLAG(std::string, zookeeper_host, "localhost:2181", "ZooKeeper host");
 ABSL_FLAG(std::string, zookeeper_root_path, "/faas", "Root path for all znodes");
 

@@ -62,6 +62,7 @@ private:
     std::string node_name_;
 
     int stop_eventfd_;
+    int stat_timerfd_;
     int message_sockfd_;
     base::Thread event_loop_thread_;
     zk::ZKSession zk_session_;
@@ -83,6 +84,7 @@ private:
 
     void EventLoopThreadMain();
     void DoStop();
+    void DoPrintStat();
     void DoReadClosedConnection(int pipefd);
     void DoAcceptConnection(int server_sockfd);
 

@@ -15,6 +15,17 @@ int CreateTimerFd() {
     return fd;
 }
 
+uint64_t TimerFdRead(int fd) {
+    uint64_t value;
+    ssize_t nread = read(fd, &value, sizeof(uint64_t));
+    if (nread < 0) {
+        PLOG(ERROR) << "Failed to read timerfd";
+    } else if (nread != sizeof(uint64_t)) {
+        LOG(FATAL) << "Incorrect read size: " << nread;
+    }
+    return value;
+}
+
 bool SetupTimerFdOneTime(int fd, absl::Duration duration) {
     struct itimerspec spec;
     memset(&spec, 0, sizeof(spec));

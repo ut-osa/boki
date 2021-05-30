@@ -4,6 +4,8 @@
 #include "common/zk_utils.h"
 #include "utils/io.h"
 #include "utils/socket.h"
+#include "utils/timerfd.h"
+#include "utils/jemalloc.h"
 #include "server/constants.h"
 
 #include <sys/types.h>
@@ -20,6 +22,7 @@ ServerBase::ServerBase(std::string_view node_name)
     : state_(kCreated),
       node_name_(node_name),
       stop_eventfd_(eventfd(0, EFD_CLOEXEC)),
+      stat_timerfd_(io_utils::CreateTimerFd()),
       message_sockfd_(-1),
       event_loop_thread_("Srv/EL",
                          absl::bind_front(&ServerBase::EventLoopThreadMain, this)),
@@ -28,10 +31,12 @@ ServerBase::ServerBase(std::string_view node_name)
       next_io_worker_for_pick_(0),
       next_connection_id_(0) {
     PCHECK(stop_eventfd_ >= 0) << "Failed to create eventfd";
+    PCHECK(stat_timerfd_ >= 0) << "Failed to create timerfd";
 }
 
 ServerBase::~ServerBase() {
     PCHECK(close(stop_eventfd_) == 0) << "Failed to close eventfd";
+    PCHECK(close(stat_timerfd_) == 0) << "Failed to close eventfd";
 }
 
 bool ServerBase::journal_enabled() {
@@ -49,6 +54,12 @@ void ServerBase::Start() {
     StartInternal();
     SetupMessageServer();
     node_watcher_.StartWatching(zk_session());
+    bool success = io_utils::SetupTimerFdPeriodic(
+        stat_timerfd_, /* initial= */ absl::Seconds(1),
+        /* duration= */ absl::Milliseconds(absl::GetFlag(FLAGS_server_stat_interval_ms)));
+    if (!success) {
+        HLOG(FATAL) << "Failed to setup stat timer";
+    }
     // Start thread for running event loop
     event_loop_thread_.Start();
     state_.store(kRunning);
@@ -99,6 +110,8 @@ void ServerBase::EventLoopThreadMain() {
     std::vector<struct pollfd> pollfds;
     // Add stop_eventfd_
     pollfds.push_back({ .fd = stop_eventfd_, .events = POLLIN, .revents = 0 });
+    // Add stat_timerfd_
+    pollfds.push_back({ .fd = stat_timerfd_, .events = POLLIN, .revents = 0 });
     // Add all pipe fds to workers
     for (const auto& item : pipes_to_io_worker_) {
         pollfds.push_back({ .fd = item.second, .events = POLLIN, .revents = 0 });
@@ -131,6 +144,9 @@ void ServerBase::EventLoopThreadMain() {
                     DoStop();
                     stopped = true;
                     break;
+                } else if (item.fd == stat_timerfd_) {
+                    io_utils::TimerFdRead(stat_timerfd_);
+                    DoPrintStat();
                 } else if (connection_cbs_.contains(item.fd)) {
                     DoAcceptConnection(item.fd);
                 } else {
@@ -256,6 +272,10 @@ void ServerBase::DoStop() {
         PCHECK(close(message_sockfd_) == 0) << "Failed to close message server fd";
     }
     zk_session_.ScheduleStop();
+}
+
+void ServerBase::DoPrintStat() {
+    jemalloc::PrintStat();
 }
 
 void ServerBase::DoReadClosedConnection(int pipefd) {

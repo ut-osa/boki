@@ -20,6 +20,8 @@ ABSL_DECLARE_FLAG(bool, tcp_enable_reuseport);
 ABSL_DECLARE_FLAG(bool, tcp_enable_nodelay);
 ABSL_DECLARE_FLAG(bool, tcp_enable_keepalive);
 
+ABSL_DECLARE_FLAG(int, server_stat_interval_ms);
+
 ABSL_DECLARE_FLAG(std::string, zookeeper_host);
 ABSL_DECLARE_FLAG(std::string, zookeeper_root_path);
 
