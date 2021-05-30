@@ -17,12 +17,15 @@ do
   shift
 done
 
-if [[ ! -z "${OVERLAY_PATH}" ]]; then
-  BASE_DIR=${OVERLAY_PATH}
+COMPILE_FLAGS="-fdata-sections -ffunction-sections -march=haswell"
+if [ ${ENABLE_DEBUG} == "yes" ]; then
+  COMPILE_FLAGS="${COMPILE_FLAGS} -DDEBUG -g"
+else
+  COMPILE_FLAGS="${COMPILE_FLAGS} -DNDEBUG -O3"
 fi
 
-export CFLAGS="${CFLAGS} -march=haswell -fdata-sections -ffunction-sections"
-export CXXFLAGS="${CXXFLAGS} -std=c++17 -march=haswell -fdata-sections -ffunction-sections"
+export CFLAGS="${CFLAGS} ${COMPILE_FLAGS}"
+export CXXFLAGS="${CXXFLAGS} ${COMPILE_FLAGS} -std=c++17"
 
 rm -rf ${DEPS_INSTALL_PATH}
 mkdir -p ${DEPS_INSTALL_PATH}
