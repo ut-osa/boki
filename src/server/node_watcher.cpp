@@ -111,7 +111,7 @@ using protocol::ConnType;
 typedef std::pair<NodeWatcher::NodeType, NodeWatcher::NodeType> NodeTypePair;
 #define NODE_PAIR(A, B) { NodeWatcher::k##A##Node, NodeWatcher::k##B##Node }
 
-const absl::flat_hash_map<ConnType, NodeTypePair> kNodeTypeTable {
+const std::unordered_map<ConnType, NodeTypePair> kNodeTypeTable {
     { ConnType::GATEWAY_TO_ENGINE,      NODE_PAIR(Gateway, Engine) },
     { ConnType::ENGINE_TO_GATEWAY,      NODE_PAIR(Engine, Gateway) },
     { ConnType::SLOG_ENGINE_TO_ENGINE,  NODE_PAIR(Engine, Engine) },
@@ -129,12 +129,12 @@ const absl::flat_hash_map<ConnType, NodeTypePair> kNodeTypeTable {
 }  // namespace
 
 NodeWatcher::NodeType NodeWatcher::GetSrcNodeType(protocol::ConnType conn_type) {
-    CHECK(kNodeTypeTable.contains(conn_type));
+    CHECK(kNodeTypeTable.count(conn_type) > 0);
     return kNodeTypeTable.at(conn_type).first;
 }
 
 NodeWatcher::NodeType NodeWatcher::GetDstNodeType(protocol::ConnType conn_type) {
-    CHECK(kNodeTypeTable.contains(conn_type));
+    CHECK(kNodeTypeTable.count(conn_type) > 0);
     return kNodeTypeTable.at(conn_type).second;
 }
 

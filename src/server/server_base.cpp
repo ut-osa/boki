@@ -343,7 +343,7 @@ using protocol::ConnType;
 typedef std::pair<int, int> ConnTypeIdPair;
 #define CONN_ID_PAIR(A, B) { k##A##IngressTypeId, k##B##EgressHubTypeId }
 
-const absl::flat_hash_map<ConnType, ConnTypeIdPair> kConnTypeIdTable {
+const std::unordered_map<ConnType, ConnTypeIdPair> kConnTypeIdTable {
     { ConnType::GATEWAY_TO_ENGINE,      CONN_ID_PAIR(Gateway, Engine) },
     { ConnType::ENGINE_TO_GATEWAY,      CONN_ID_PAIR(Engine, Gateway) },
     { ConnType::SLOG_ENGINE_TO_ENGINE,  CONN_ID_PAIR(Engine, Engine) },
@@ -361,12 +361,12 @@ const absl::flat_hash_map<ConnType, ConnTypeIdPair> kConnTypeIdTable {
 }  // namespace
 
 int ServerBase::GetIngressConnTypeId(protocol::ConnType conn_type, uint16_t node_id) {
-    CHECK(kConnTypeIdTable.contains(conn_type));
+    CHECK(kConnTypeIdTable.count(conn_type) > 0);
     return kConnTypeIdTable.at(conn_type).first + node_id;
 }
 
 int ServerBase::GetEgressHubTypeId(protocol::ConnType conn_type, uint16_t node_id) {
-    CHECK(kConnTypeIdTable.contains(conn_type));
+    CHECK(kConnTypeIdTable.count(conn_type) > 0);
     return kConnTypeIdTable.at(conn_type).second + node_id;
 }
 
