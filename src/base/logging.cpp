@@ -49,6 +49,8 @@ namespace logging {
 namespace {
 
 int vlog_level = 0;
+FILE* log_stream = stderr;
+bool FLAGS_alsologtostderr = false;
 
 const char* GetBasename(const char* file_path) {
     const char* slash = strrchr(file_path, '/');
@@ -68,8 +70,19 @@ void Abort() {
 void set_vlog_level(int level) { vlog_level = level; }
 int get_vlog_level() { return vlog_level; }
 
-void Init(int level) {
+void Init(int level, const char* log_path, bool alsologtostderr) {
     set_vlog_level(level);
+    if (log_path != nullptr) {
+        FILE* stream = fopen(log_path, "a");
+        if (stream != nullptr) {
+            log_stream = stream;
+        } else {
+            fprintf(stderr, "Failed to open %s for logging\n", log_path);
+            fflush(stderr);
+            Abort();
+        }
+        FLAGS_alsologtostderr = alsologtostderr;
+    }
 }
 
 __ATTRIBUTE_UNUSED static constexpr const char* kLogSeverityNames[4] = {
@@ -132,19 +145,23 @@ LogMessageFatal::~LogMessageFatal() {
 }
 
 #ifdef __FAAS_SRC
-absl::Mutex stderr_mu;
+absl::Mutex log_mu;
 #elif defined(__FAAS_CPP_WORKER)
-std::mutex stderr_mu;
+std::mutex log_mu;
 #endif
 
 void LogMessage::SendToLog(const std::string& message_text) {
 #ifdef __FAAS_SRC
-    absl::MutexLock lk(&stderr_mu);
+    absl::MutexLock lk(&log_mu);
 #elif defined(__FAAS_CPP_WORKER)
-    std::lock_guard<std::mutex> lk(stderr_mu);
+    std::lock_guard<std::mutex> lk(log_mu);
 #endif
-    fprintf(stderr, "%s\n", message_text.c_str());
-    fflush(stderr);
+    fprintf(log_stream, "%s\n", message_text.c_str());
+    fflush(log_stream);
+    if (FLAGS_alsologtostderr) {
+        fprintf(stderr, "%s\n", message_text.c_str());
+        fflush(stderr);
+    }
 }
 
 void LogMessage::AppendErrStrIfNecessary() {

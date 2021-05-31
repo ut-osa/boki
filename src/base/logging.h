@@ -12,7 +12,9 @@
 namespace faas {
 namespace logging {
 
-void Init(int level);
+void Init(int level,
+          const char* log_path = nullptr,
+          bool alsologtostderr = false);
 
 enum LogSeverity { INFO, WARNING, ERROR, FATAL };
 

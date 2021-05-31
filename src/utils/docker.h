@@ -14,10 +14,13 @@ void SetCgroupFsRoot(std::string_view path);
 
 constexpr size_t kContainerIdLength = 64;
 extern const std::string kInvalidContainerId;
+constexpr size_t kContainerShortIdLength = 12;
+extern const std::string kInvalidContainerShortId;
 
 // Get container ID of the running process
 // Will return kInvalidContainerId if failed
 std::string GetSelfContainerId();
+std::string GetSelfContainerShortId();
 
 struct ContainerStat {
     int64_t timestamp;      // in ns

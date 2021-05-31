@@ -46,6 +46,7 @@ void SetCgroupFsRoot(std::string_view path) {
 }
 
 const std::string kInvalidContainerId(kContainerIdLength, '0');
+const std::string kInvalidContainerShortId(kContainerShortIdLength, '0');
 
 std::string GetSelfContainerId() {
     std::string contents;
@@ -60,6 +61,15 @@ std::string GetSelfContainerId() {
         return kInvalidContainerId;
     }
     return contents.substr(pos + strlen("/docker/"), kContainerIdLength);
+}
+
+std::string GetSelfContainerShortId() {
+    std::string container_id = GetSelfContainerId();
+    if (container_id == kInvalidContainerId) {
+        return kInvalidContainerShortId;
+    } else {
+        return container_id.substr(0, kContainerShortIdLength);
+    }
 }
 
 bool ReadContainerStat(std::string_view container_id, ContainerStat* stat) {

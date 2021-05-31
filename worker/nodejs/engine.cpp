@@ -7,8 +7,6 @@ namespace faas {
 namespace nodejs {
 
 Napi::Object Engine::Init(Napi::Env env, Napi::Object exports) {
-    logging::Init(utils::GetEnvVariableAsInt("FAAS_VLOG_LEVEL", 0));
-
     Napi::Function func = DefineClass(
         env, "Engine",
         {

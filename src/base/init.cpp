@@ -2,6 +2,7 @@
 #include "base/init.h"
 #include "base/logging.h"
 #include "base/thread.h"
+#include "utils/docker.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -17,6 +18,10 @@ __BEGIN_THIRD_PARTY_HEADERS
 __END_THIRD_PARTY_HEADERS
 
 ABSL_FLAG(int, v, 0, "Show all VLOG(m) messages for m <= this.");
+ABSL_FLAG(std::string, log_path, "",
+          "Set file path for logging. If not set, stderr is used.");
+ABSL_FLAG(bool, alsologtostderr, false,
+          "If set, will log to stderr in addition to log_path");
 
 #define RAW_CHECK(EXPR, MSG)             \
     do {                                 \
@@ -81,7 +86,18 @@ void InitMain(int argc, char* argv[],
     absl::InstallFailureSignalHandler(options);
 
     std::vector<char*> unparsed_args = absl::ParseCommandLine(argc, argv);
-    logging::Init(absl::GetFlag(FLAGS_v));
+    std::string log_path = absl::GetFlag(FLAGS_log_path);
+    if (!log_path.empty()) {
+        std::string container_id = docker_utils::GetSelfContainerShortId();
+        if (container_id != docker_utils::kInvalidContainerShortId) {
+            log_path = fmt::format("{}.{}", log_path, container_id);
+        }
+        logging::Init(absl::GetFlag(FLAGS_v),
+                      log_path.c_str(),
+                      absl::GetFlag(FLAGS_alsologtostderr));
+    } else {
+        logging::Init(absl::GetFlag(FLAGS_v));
+    }
 
     if (positional_args == nullptr && unparsed_args.size() > 1) {
         LOG(FATAL) << "This program does not accept positional arguments";
