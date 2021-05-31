@@ -3,6 +3,7 @@
 #include "log/storage_base.h"
 #include "log/log_space.h"
 #include "log/utils.h"
+#include "common/stat.h"
 
 namespace faas {
 namespace log {
@@ -22,6 +23,12 @@ private:
         storage_collection_        ABSL_GUARDED_BY(view_mu_);
 
     log_utils::FutureRequests future_requests_;
+
+    absl::Mutex flush_thread_mu_;
+    absl::InlinedVector<const LogEntry*, 32>
+        log_entires_for_flush_     ABSL_GUARDED_BY(flush_thread_mu_);
+    stat::StatisticsCollector<int>
+        log_entires_flush_stat_    ABSL_GUARDED_BY(flush_thread_mu_);
 
     void OnViewCreated(const View* view) override;
     void OnViewFinalized(const FinalizedView* finalized_view) override;
@@ -43,7 +50,7 @@ private:
                              std::span<const char> tags_data,
                              std::span<const char> log_data);
 
-    void BackgroundThreadMain() override;
+    void BackgroundThreadMain(int eventfd) override;
     void SendShardProgressIfNeeded() override;
     void FlushLogEntries();
 

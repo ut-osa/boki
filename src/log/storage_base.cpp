@@ -4,6 +4,8 @@
 #include "server/constants.h"
 #include "utils/fs.h"
 
+#include <sys/eventfd.h>
+
 #define log_header_ "StorageBase: "
 
 namespace faas {
@@ -23,9 +25,12 @@ StorageBase::StorageBase(uint16_t node_id)
     : ServerBase(fmt::format("storage_{}", node_id)),
       node_id_(node_id),
       db_(nullptr),
-      background_thread_("BG", [this] { this->BackgroundThreadMain(); }) {}
+      background_thread_("BG", [this] { this->BackgroundThreadMain(bg_thread_eventfd_); }),
+      bg_thread_eventfd_(eventfd(0, EFD_CLOEXEC)) {}
 
-StorageBase::~StorageBase() {}
+StorageBase::~StorageBase() {
+    PCHECK(close(bg_thread_eventfd_) == 0) << "Failed to close eventfd";
+}
 
 void StorageBase::StartInternal() {
     SetupDB();
@@ -36,6 +41,7 @@ void StorageBase::StartInternal() {
 }
 
 void StorageBase::StopInternal() {
+    NotifyBackgroundThread();
     background_thread_.Join();
 }
 
@@ -80,6 +86,11 @@ void StorageBase::SetupTimers() {
         absl::Microseconds(absl::GetFlag(FLAGS_slog_local_cut_interval_us)),
         [this] () { this->SendShardProgressIfNeeded(); }
     );
+}
+
+void StorageBase::NotifyBackgroundThread() {
+    DCHECK(bg_thread_eventfd_ >= 0);
+    PCHECK(eventfd_write(bg_thread_eventfd_, 1) == 0) << "eventfd_write failed";
 }
 
 void StorageBase::MessageHandler(const SharedLogMessage& message,

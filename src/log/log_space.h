@@ -1,6 +1,7 @@
 #pragma once
 
 #include "log/log_space_base.h"
+#include "common/stat.h"
 
 namespace faas {
 namespace log {
@@ -90,9 +91,8 @@ public:
                std::span<const char> log_data);
     void ReadAt(const protocol::SharedLogMessage& request);
 
-    bool GrabLogEntriesForPersistence(
-            std::vector<std::shared_ptr<const LogEntry>>* log_entries,
-            uint64_t* new_position) const;
+    using LogEntryVec = absl::InlinedVector<const LogEntry*, 4>;
+    void GrabLogEntriesForPersistence(LogEntryVec* log_entires);
     void LogEntriesPersisted(uint64_t new_position);
 
     struct ReadResult {
@@ -119,6 +119,7 @@ private:
     absl::flat_hash_map</* seqnum */ uint64_t,
                         std::shared_ptr<const LogEntry>>
         live_log_entries_;
+    LogEntryVec entries_for_persistence_;
 
     absl::flat_hash_map</* localid */ uint64_t,
                         std::unique_ptr<LogEntry>>
@@ -129,6 +130,8 @@ private:
     ReadResultVec pending_read_results_;
 
     IndexDataProto index_data_;
+
+    stat::StatisticsCollector<int> live_entries_stat_;
 
     void OnNewLogs(uint32_t metalog_seqnum,
                    uint64_t start_seqnum, uint64_t start_localid,

@@ -219,7 +219,9 @@ LogStorage::LogStorage(uint16_t storage_id, const View* view, uint16_t sequencer
     : LogSpaceBase(LogSpaceBase::kLiteMode, view, sequencer_id),
       storage_node_(view_->GetStorageNode(storage_id)),
       shard_progrss_dirty_(false),
-      persisted_seqnum_position_(0) {
+      persisted_seqnum_position_(0),
+      live_entries_stat_(stat::StatisticsCollector<int>::StandardReportCallback(
+          fmt::format("log_space[{}-{}]: live_entries", view->id(), sequencer_id))) {
     for (uint16_t engine_id : storage_node_->GetSourceEngineNodes()) {
         AddInterestedShard(engine_id);
         shard_progrsses_[engine_id] = 0;
@@ -275,24 +277,12 @@ void LogStorage::ReadAt(const protocol::SharedLogMessage& request) {
     pending_read_results_.push_back(std::move(result));
 }
 
-bool LogStorage::GrabLogEntriesForPersistence(
-        std::vector<std::shared_ptr<const LogEntry>>* log_entries,
-        uint64_t* new_position) const {
-    if (live_seqnums_.empty() || live_seqnums_.back() < persisted_seqnum_position_) {
-        return false;
+void LogStorage::GrabLogEntriesForPersistence(LogEntryVec* log_entires) {
+    if (entries_for_persistence_.empty()) {
+        return;
     }
-    auto iter = absl::c_lower_bound(live_seqnums_, persisted_seqnum_position_);
-    DCHECK(iter != live_seqnums_.end());
-    DCHECK_GE(*iter, persisted_seqnum_position_);
-    log_entries->clear();
-    while (iter != live_seqnums_.end()) {
-        uint64_t seqnum = *(iter++);
-        DCHECK(live_log_entries_.contains(seqnum));
-        log_entries->push_back(live_log_entries_.at(seqnum));
-    }
-    DCHECK(!log_entries->empty());
-    *new_position = live_seqnums_.back() + 1;
-    return true;
+    *log_entires = std::move(entries_for_persistence_);
+    entries_for_persistence_.clear();
 }
 
 void LogStorage::LogEntriesPersisted(uint64_t new_position) {
@@ -370,6 +360,10 @@ void LogStorage::OnNewLogs(uint32_t metalog_seqnum,
         live_log_entries_[seqnum] = log_entry_ptr;
         DCHECK_EQ(live_seqnums_.size(), live_log_entries_.size());
         ShrinkLiveEntriesIfNeeded();
+        // Will persist the new entry to DB
+        DCHECK(entries_for_persistence_.empty()
+                 || seqnum > entries_for_persistence_.back()->metadata.seqnum);
+        entries_for_persistence_.push_back(log_entry_ptr.get());
         // Check if we have read request on it
         while (iter != pending_read_requests_.end() && iter->first == seqnum) {
             pending_read_results_.push_back(ReadResult {
@@ -415,6 +409,7 @@ void LogStorage::ShrinkLiveEntriesIfNeeded() {
         live_seqnums_.pop_front();
         DCHECK_EQ(live_seqnums_.size(), live_log_entries_.size());
     }
+    live_entries_stat_.AddSample(gsl::narrow_cast<int>(live_seqnums_.size()));
 }
 
 }  // namespace log

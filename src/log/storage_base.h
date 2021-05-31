@@ -34,7 +34,7 @@ protected:
     virtual void OnRecvLogAuxData(const protocol::SharedLogMessage& message,
                                   std::span<const char> payload) = 0;
 
-    virtual void BackgroundThreadMain() = 0;
+    virtual void BackgroundThreadMain(int eventfd) = 0;
     virtual void SendShardProgressIfNeeded() = 0;
 
     void LogCachePutAuxData(uint64_t seqnum, std::span<const char> data);
@@ -55,6 +55,8 @@ protected:
                             std::span<const char> payload2 = EMPTY_CHAR_SPAN,
                             std::span<const char> payload3 = EMPTY_CHAR_SPAN);
 
+    void NotifyBackgroundThread();
+
 private:
     const uint16_t node_id_;
 
@@ -64,6 +66,7 @@ private:
     std::unique_ptr<DBInterface> db_;
 
     base::Thread background_thread_;
+    int bg_thread_eventfd_;
 
     absl::flat_hash_map</* id */ int, std::unique_ptr<server::IngressConnection>>
         ingress_conns_;

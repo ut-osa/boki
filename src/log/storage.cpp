@@ -17,7 +17,9 @@ Storage::Storage(uint16_t node_id)
     : StorageBase(node_id),
       log_header_(fmt::format("Storage[{}-N]: ", node_id)),
       current_view_(nullptr),
-      view_finalized_(false) {}
+      view_finalized_(false),
+      log_entires_flush_stat_(stat::StatisticsCollector<int>::StandardReportCallback(
+          "log_entries_for_flush")) {}
 
 Storage::~Storage() {}
 
@@ -181,6 +183,7 @@ void Storage::OnRecvNewMetaLogs(const SharedLogMessage& message,
     const View* view = nullptr;
     LogStorage::ReadResultVec results;
     std::optional<IndexDataProto> index_data;
+    bool need_notify_bg_thread = false;
     {
         absl::ReaderMutexLock view_lk(&view_mu_);
         ONHOLD_IF_FROM_FUTURE_VIEW(message, payload);
@@ -195,11 +198,25 @@ void Storage::OnRecvNewMetaLogs(const SharedLogMessage& message,
             }
             locked_storage->PollReadResults(&results);
             index_data = locked_storage->PollIndexData();
+            LogStorage::LogEntryVec new_log_entires;
+            locked_storage->GrabLogEntriesForPersistence(&new_log_entires);
+            if (!new_log_entires.empty()) {
+                absl::MutexLock lk(&flush_thread_mu_);
+                need_notify_bg_thread = log_entires_for_flush_.empty();
+                log_entires_for_flush_.insert(
+                    log_entires_for_flush_.end(),
+                    new_log_entires.begin(), new_log_entires.end());
+                log_entires_flush_stat_.AddSample(
+                    gsl::narrow_cast<int>(log_entires_for_flush_.size()));
+            }
         }
     }
     ProcessReadResults(results);
     if (index_data.has_value()) {
         SendIndexData(DCHECK_NOTNULL(view), *index_data);
+    }
+    if (need_notify_bg_thread) {
+        NotifyBackgroundThread();
     }
 }
 
@@ -297,20 +314,13 @@ void Storage::SendEngineLogResult(const protocol::SharedLogMessage& request,
     SendEngineResponse(request, response, tags_data, log_data, aux_data);
 }
 
-void Storage::BackgroundThreadMain() {
-    int timerfd = io_utils::CreateTimerFd();
-    CHECK(timerfd != -1) << "Failed to create timerfd";
-    io_utils::FdUnsetNonblocking(timerfd);
-    absl::Duration interval = absl::Milliseconds(
-        absl::GetFlag(FLAGS_slog_storage_bgthread_interval_ms));
-    CHECK(io_utils::SetupTimerFdPeriodic(timerfd, absl::Milliseconds(100), interval))
-        << "Failed to setup timerfd with interval " << interval;
+void Storage::BackgroundThreadMain(int eventfd) {
     bool running = true;
     while (running) {
         uint64_t exp;
-        ssize_t nread = read(timerfd, &exp, sizeof(uint64_t));
+        ssize_t nread = read(eventfd, &exp, sizeof(uint64_t));
         if (nread < 0) {
-            PLOG(FATAL) << "Failed to read on timerfd";
+            PLOG(FATAL) << "Failed to read on eventfd";
         }
         CHECK_EQ(gsl::narrow_cast<size_t>(nread), sizeof(uint64_t));
         FlushLogEntries();
@@ -349,42 +359,43 @@ void Storage::SendShardProgressIfNeeded() {
 }
 
 void Storage::FlushLogEntries() {
-    std::vector<std::shared_ptr<const LogEntry>> log_entires;
-    std::vector<std::pair<LockablePtr<LogStorage>, uint64_t>> storages;
+    absl::InlinedVector<const LogEntry*, 32> log_entires;
     {
-        absl::ReaderMutexLock view_lk(&view_mu_);
-        storage_collection_.ForEachActiveLogSpace(
-            [&log_entires, &storages] (uint32_t logspace_id,
-                                       LockablePtr<LogStorage> storage_ptr) {
-                auto locked_storage = storage_ptr.ReaderLock();
-                std::vector<std::shared_ptr<const LogEntry>> tmp;
-                uint64_t new_position;
-                if (locked_storage->GrabLogEntriesForPersistence(&tmp, &new_position)) {
-                    storages.emplace_back(storage_ptr, new_position);
-                    log_entires.insert(log_entires.end(), tmp.begin(), tmp.end());
-                }
-            }
-        );
+        absl::MutexLock lk(&flush_thread_mu_);
+        log_entires = std::move(log_entires_for_flush_);
+        log_entires_for_flush_.clear();
     }
-
     if (log_entires.empty()) {
         return;
     }
+
+    absl::flat_hash_map<uint32_t, uint64_t> new_positions;
     HVLOG_F(1, "Will flush {} log entries", log_entires.size());
-    for (size_t i = 0; i < log_entires.size(); i++) {
-        PutLogEntryToDB(*log_entires[i]);
+    for (const auto& log_entry : log_entires) {
+        PutLogEntryToDB(*log_entry);
+        uint64_t seqnum = log_entry->metadata.seqnum;
+        uint32_t logspace_id = bits::HighHalf64(seqnum);
+        if (new_positions.contains(logspace_id)) {
+            DCHECK_GE(seqnum, new_positions.at(logspace_id));
+        }
+        new_positions[logspace_id] = seqnum + 1;
     }
 
     std::vector<uint32_t> finalized_logspaces;
-    for (auto& [storage_ptr, new_position] : storages) {
-        auto locked_storage = storage_ptr.Lock();
-        locked_storage->LogEntriesPersisted(new_position);
-        if (locked_storage->finalized()
-                && new_position >= locked_storage->seqnum_position()) {
-            finalized_logspaces.push_back(locked_storage->identifier());
+    {
+        absl::ReaderMutexLock view_lk(&view_mu_);
+        for (const auto& [logspace_id, new_position] : new_positions) {
+            auto storage_ptr = storage_collection_.GetLogSpaceChecked(logspace_id);
+            {
+                auto locked_storage = storage_ptr.Lock();
+                locked_storage->LogEntriesPersisted(new_position);
+                if (locked_storage->finalized()
+                        && new_position >= locked_storage->seqnum_position()) {
+                    finalized_logspaces.push_back(locked_storage->identifier());
+                }
+            }
         }
     }
-
     if (!finalized_logspaces.empty()) {
         absl::MutexLock view_lk(&view_mu_);
         for (uint32_t logspace_id : finalized_logspaces) {

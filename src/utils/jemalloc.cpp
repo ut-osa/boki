@@ -10,8 +10,8 @@
 namespace faas {
 namespace jemalloc {
 
-static constexpr size_t kAllocatedThresholdForReport   = 1024;           // 1KB
-static constexpr size_t kAllocatedThresholdForProfDump = 1024*1024*1024; // 1GB
+static constexpr size_t kAllocatedThresholdForReport   = 1024;          // 1KB
+static constexpr size_t kAllocatedThresholdForProfDump = size_t{4}<<30; // 4GB
 
 namespace {
 bool UpdateEpoch() {
