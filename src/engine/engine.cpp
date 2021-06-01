@@ -32,7 +32,7 @@ using server::EgressHub;
 using server::NodeWatcher;
 
 Engine::Engine(uint16_t node_id)
-    : ServerBase(fmt::format("engine_{}", node_id)),
+    : ServerBase(fmt::format("engine_{}", node_id), /* enable_journal= */ false),
       engine_tcp_port_(-1),
       enable_shared_log_(false),
       node_id_(node_id),

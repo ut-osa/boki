@@ -35,7 +35,6 @@ protected:
     int id_;
 
     static IOUring* current_io_uring();
-    static bool journal_enabled();
 
 private:
     char pipe_write_buf_for_transfer_[__FAAS_PTR_SIZE];
@@ -54,7 +53,7 @@ public:
     // Return current IOWorker within event loop thread
     static IOWorker* current() { return current_; }
 
-    void Start(int pipe_to_server_fd);
+    void Start(int pipe_to_server_fd, bool enable_journal);
     void ScheduleStop();
     void WaitForFinish();
     bool WithinMyEventLoopThread();

@@ -22,7 +22,7 @@ using server::EgressHub;
 using server::NodeWatcher;
 
 StorageBase::StorageBase(uint16_t node_id)
-    : ServerBase(fmt::format("storage_{}", node_id)),
+    : ServerBase(fmt::format("storage_{}", node_id), /* enable_journal= */ true),
       node_id_(node_id),
       db_(nullptr),
       background_thread_("BG", [this] { this->BackgroundThreadMain(bg_thread_eventfd_); }),

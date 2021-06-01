@@ -17,8 +17,6 @@ ABSL_FLAG(int, server_stat_interval_ms, 1000, "Interval of printing server stati
 ABSL_FLAG(std::string, zookeeper_host, "localhost:2181", "ZooKeeper host");
 ABSL_FLAG(std::string, zookeeper_root_path, "/faas", "Root path for all znodes");
 
-ABSL_FLAG(bool, enable_journal, false,
-          "Enable IO worker journals (for write-ahead logging)");
 ABSL_FLAG(std::string, journal_save_path, "",
           "The directory for storing journal files");
 ABSL_FLAG(size_t, journal_file_max_size_mb, 256,

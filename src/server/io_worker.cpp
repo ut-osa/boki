@@ -17,10 +17,6 @@ IOUring* ConnectionBase::current_io_uring() {
     return IOWorker::current()->io_uring();
 }
 
-bool ConnectionBase::journal_enabled() {
-    return absl::GetFlag(FLAGS_enable_journal);
-}
-
 thread_local IOWorker* IOWorker::current_ = nullptr;
 
 IOWorker::IOWorker(std::string_view worker_name, size_t write_buffer_size)
@@ -42,7 +38,7 @@ IOWorker::~IOWorker() {
     DCHECK_EQ(connections_on_closing_, 0);
 }
 
-void IOWorker::Start(int pipe_to_server_fd) {
+void IOWorker::Start(int pipe_to_server_fd, bool enable_journal) {
     DCHECK(state_.load() == kCreated);
     // Setup eventfd for scheduling functions
     eventfd_ = eventfd(0, EFD_CLOEXEC);
@@ -79,7 +75,7 @@ void IOWorker::Start(int pipe_to_server_fd) {
             return true;
         }
     ));
-    if (absl::GetFlag(FLAGS_enable_journal)) {
+    if (enable_journal) {
         current_journal_file_ = CreateNewJournalFile();
     }
     // Start event loop thread

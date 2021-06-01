@@ -22,7 +22,7 @@ using protocol::GatewayMessage;
 using protocol::GatewayMessageHelper;
 
 Server::Server()
-    : ServerBase("gateway"),
+    : ServerBase("gateway", /* enable_journal= */ false),
       http_port_(-1),
       grpc_port_(-1),
       http_sockfd_(-1),

@@ -15,7 +15,7 @@ class ServerBase {
 public:
     static constexpr size_t kDefaultIOWorkerBufferSize = 65536;
 
-    explicit ServerBase(std::string_view node_name);
+    ServerBase(std::string_view node_name, bool enable_journal);
     virtual ~ServerBase();
 
     void Start();
@@ -26,7 +26,7 @@ protected:
     enum State { kCreated, kBootstrapping, kRunning, kStopping, kStopped };
     std::atomic<State> state_;
 
-    static bool journal_enabled();
+    bool journal_enabled();
 
     zk::ZKSession* zk_session() { return &zk_session_; }
     NodeWatcher* node_watcher() { return &node_watcher_; }
@@ -60,6 +60,7 @@ protected:
 
 private:
     std::string node_name_;
+    bool enable_journal_;
 
     int stop_eventfd_;
     int stat_timerfd_;

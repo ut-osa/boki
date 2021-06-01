@@ -18,9 +18,10 @@
 namespace faas {
 namespace server {
 
-ServerBase::ServerBase(std::string_view node_name)
+ServerBase::ServerBase(std::string_view node_name, bool enable_journal)
     : state_(kCreated),
       node_name_(node_name),
+      enable_journal_(enable_journal),
       stop_eventfd_(eventfd(0, EFD_CLOEXEC)),
       stat_timerfd_(io_utils::CreateTimerFd()),
       message_sockfd_(-1),
@@ -32,6 +33,9 @@ ServerBase::ServerBase(std::string_view node_name)
       next_connection_id_(0) {
     PCHECK(stop_eventfd_ >= 0) << "Failed to create eventfd";
     PCHECK(stat_timerfd_ >= 0) << "Failed to create timerfd";
+    if (enable_journal_) {
+        HLOG(INFO) << "Journal enabled";
+    }
 }
 
 ServerBase::~ServerBase() {
@@ -40,7 +44,7 @@ ServerBase::~ServerBase() {
 }
 
 bool ServerBase::journal_enabled() {
-    return absl::GetFlag(FLAGS_enable_journal);
+    return enable_journal_;
 }
 
 void ServerBase::Start() {
@@ -48,7 +52,7 @@ void ServerBase::Start() {
     zk_session_.Start();
     SetupIOWorkers();
     state_.store(kBootstrapping);
-    if (absl::GetFlag(FLAGS_enable_journal)) {
+    if (enable_journal_) {
         SetupJournalMonitorTimers();
     }
     StartInternal();
@@ -173,7 +177,7 @@ void ServerBase::SetupIOWorkers() {
         if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pipe_fds) < 0) {
             PLOG(FATAL) << "socketpair failed";
         }
-        io_worker->Start(pipe_fds[1]);
+        io_worker->Start(pipe_fds[1], enable_journal_);
         pipes_to_io_worker_[io_worker.get()] = pipe_fds[0];
         io_workers_.push_back(std::move(io_worker));
     }
