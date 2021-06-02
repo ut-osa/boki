@@ -8,17 +8,17 @@ namespace utils {
 // AppendableBuffer is NOT thread-safe
 class AppendableBuffer {
 public:
-    static constexpr size_t kInlineBufferSize = 48;
-    static constexpr size_t kDefaultInitialSize = kInlineBufferSize;
+    static constexpr size_t kInlineBufferSize    = 48;
     static constexpr size_t kMallocWarnThreshold = 256*1024*1024;  // 256MB
 
-    explicit AppendableBuffer(size_t initial_size = kDefaultInitialSize)
+    explicit AppendableBuffer(size_t initial_size = kInlineBufferSize)
         : buf_size_(initial_size), pos_(0) {
         if (initial_size <= kInlineBufferSize) {
             buf_ = inline_buf_;
             buf_size_ = kInlineBufferSize;
         } else {
-            buf_ = reinterpret_cast<char*>(malloc(initial_size));
+            buf_ = reinterpret_cast<char*>(DCHECK_NOTNULL(
+                malloc(initial_size)));
         }
     }
 
@@ -37,16 +37,19 @@ public:
             new_size *= 2;
         }
         if (new_size > buf_size_) {
-            char* new_buf = reinterpret_cast<char*>(malloc(new_size));
-            memcpy(new_buf, buf_, pos_);
-            if (buf_ != inline_buf_) {
-                free(buf_);
-            }
-            buf_ = new_buf;
-            buf_size_ = new_size;
             if (new_size >= kMallocWarnThreshold) {
                 LOG(WARNING) << "Large allocation in AppendableBuffer: size=" << new_size;
             }
+            if (buf_ != inline_buf_) {
+                buf_ = reinterpret_cast<char*>(DCHECK_NOTNULL(
+                    realloc(buf_, new_size)));
+            } else {
+                char* new_buf = reinterpret_cast<char*>(DCHECK_NOTNULL(
+                    malloc(new_size)));
+                memcpy(new_buf, buf_, pos_);
+                buf_ = new_buf;
+            }
+            buf_size_ = new_size;            
         }
         memcpy(buf_ + pos_, data, length);
         pos_ += length;

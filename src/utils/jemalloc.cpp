@@ -1,6 +1,6 @@
 #include "utils/jemalloc.h"
 
-#include <jemalloc/jemalloc.h>
+#ifdef __FAAS_HAVE_JEMALLOC
 
 #define CTL_GET(n, v, t) do {              \
     size_t sz = sizeof(t);                 \
@@ -109,3 +109,5 @@ void PrintStat() {
 
 }  // namespace jemalloc
 }  // namespace faas
+
+#endif  // __FAAS_HAVE_JEMALLOC

@@ -74,6 +74,7 @@
 
 #ifdef __FAAS_SRC
 #define __FAAS_HAVE_ABSL
+#define __FAAS_HAVE_JEMALLOC
 #endif
 
 #if defined(__FAAS_HAVE_ABSL) && !defined(__FAAS_USED_IN_BINDING)

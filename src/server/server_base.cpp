@@ -278,7 +278,9 @@ void ServerBase::DoStop() {
 }
 
 void ServerBase::DoPrintStat() {
+#ifdef __FAAS_HAVE_JEMALLOC
     jemalloc::PrintStat();
+#endif
 }
 
 void ServerBase::DoReadClosedConnection(int pipefd) {
