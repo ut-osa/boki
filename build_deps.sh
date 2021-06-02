@@ -19,7 +19,7 @@ done
 
 COMPILE_FLAGS="-fdata-sections -ffunction-sections -march=haswell"
 if [ ${ENABLE_DEBUG} == "yes" ]; then
-  COMPILE_FLAGS="${COMPILE_FLAGS} -DDEBUG -g"
+  COMPILE_FLAGS="${COMPILE_FLAGS} -DDEBUG -g -Og"
 else
   COMPILE_FLAGS="${COMPILE_FLAGS} -DNDEBUG -O3"
 fi
