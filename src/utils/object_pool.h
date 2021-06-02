@@ -1,6 +1,7 @@
 #pragma once
 
 #include "base/common.h"
+#include "utils/malloc.h"
 
 #ifdef __FAAS_HAVE_ABSL
 __BEGIN_THIRD_PARTY_HEADERS
@@ -22,20 +23,24 @@ namespace utils {
 template<class T>
 class SimpleObjectPool {
 public:
-    SimpleObjectPool() {}
+    SimpleObjectPool() {
+        total_capacity_ = 0;
+        AllocBlock(/* min_capacity= */ 1);
+    }
 
-    ~SimpleObjectPool() {}
+    ~SimpleObjectPool() {
+        for (const auto& block : blocks_) {
+            FreeBlock(block);
+        }
+    }
 
     T* Get() {
-        if (free_objs_.empty()) {
-            T* new_obj = new T();
-            free_objs_.push_back(new_obj);
-            objs_.emplace_back(new_obj);
+        if (!free_objs_.empty()) {
+            T* obj = free_objs_.back();
+            free_objs_.pop_back();
+            return obj;
         }
-        DCHECK(!free_objs_.empty());
-        T* obj = free_objs_.back();
-        free_objs_.pop_back();
-        return obj;
+        return GetSlowPath();
     }
 
     void Return(T* obj) {
@@ -44,12 +49,70 @@ public:
 
 private:
 #ifdef __FAAS_HAVE_ABSL
-    absl::InlinedVector<std::unique_ptr<T>, 16> objs_;
-    absl::InlinedVector<T*, 16> free_objs_;
+    absl::InlinedVector<T*, 15> free_objs_;
 #else
-    std::vector<std::unique_ptr<T>> objs_;
     std::vector<T*> free_objs_;
 #endif
+
+    struct Block {
+        char*  base;
+        size_t malloc_size;
+        size_t capacity;
+        size_t used;
+    };
+    std::vector<Block> blocks_;
+    size_t total_capacity_;
+
+    inline T* ObjectPtr(const Block& block, size_t idx) {
+        DCHECK_LT(idx, block.capacity);
+        T* obj = reinterpret_cast<T*>(block.base + sizeof(T) * idx);
+        return obj;
+    }
+
+    inline T* NextObject(Block& block) {
+        DCHECK_LT(block.used, block.capacity);
+        T* obj = ObjectPtr(block, block.used++);
+        new(obj) T();
+        return obj;
+    }
+
+    bool TryGrowBlock(Block& block) {
+        return false;
+    }
+
+    T* GetNewBlockPath() {
+        size_t delta_capacity = total_capacity_;
+        AllocBlock(delta_capacity);
+        return NextObject(blocks_.back());
+    }
+
+    T* GetSlowPath() {
+        Block& block = blocks_.back();
+        if (block.used == block.capacity && !TryGrowBlock(block)) {
+            return GetNewBlockPath();
+        }
+        return NextObject(block);
+    }
+
+    void AllocBlock(size_t min_capacity) {
+        size_t size = std::max<size_t>(__FAAS_PAGE_SIZE, min_capacity * sizeof(T));
+        size = GoodMallocSize(size);
+        VLOG_F(1, "Allocate pool block: size={}, capacity={}", size, size / sizeof(T));
+        blocks_.push_back(Block {
+            .base        = reinterpret_cast<char*>(DCHECK_NOTNULL(malloc(size))),
+            .malloc_size = size,
+            .capacity    = size / sizeof(T),
+            .used        = 0,
+        });
+        total_capacity_ += size / sizeof(T);
+    }
+
+    void FreeBlock(const Block& block) {
+        for (size_t i = 0; i < block.used; i++) {
+            ObjectPtr(block, i)->~T();
+        }
+        free(block.base);
+    }
 
     DISALLOW_COPY_AND_ASSIGN(SimpleObjectPool);
 };

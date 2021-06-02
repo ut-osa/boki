@@ -1,14 +1,22 @@
-#include "utils/jemalloc.h"
+#include "utils/malloc.h"
 
-#ifdef __FAAS_HAVE_JEMALLOC
+#ifdef __FAAS_USE_JEMALLOC
+
+__BEGIN_THIRD_PARTY_HEADERS
+#include <jemalloc/jemalloc.h>
+__END_THIRD_PARTY_HEADERS
 
 #define CTL_GET(n, v, t) do {              \
     size_t sz = sizeof(t);                 \
     mallctl(n, (void*)v, &sz, nullptr, 0); \
 } while (0)
 
+#endif  // __FAAS_USE_JEMALLOC
+
 namespace faas {
-namespace jemalloc {
+namespace utils {
+
+#ifdef __FAAS_USE_JEMALLOC
 
 static constexpr size_t kAllocatedThresholdForReport   = 1024;          // 1KB
 static constexpr size_t kAllocatedThresholdForProfDump = size_t{4}<<30; // 4GB
@@ -58,7 +66,7 @@ std::string GetMallocStats(const char* opts) {
 std::atomic<size_t> prev_allocated{0};
 }  // namespace
 
-void PrintStat() {
+void PrintMallocStat() {
     if (!UpdateEpoch()) {
         LOG(WARNING) << "Failed to update epoch for jemalloc, will not print stat";
         return;
@@ -107,7 +115,23 @@ void PrintStat() {
     }
 }
 
-}  // namespace jemalloc
-}  // namespace faas
+size_t GoodMallocSize(size_t min_size) {
+    if (min_size == 0) {
+        return 0;
+    }
+    size_t ret = nallocx(min_size, 0);
+    return ret != 0 ? ret : min_size;
+}
 
-#endif  // __FAAS_HAVE_JEMALLOC
+#else  // __FAAS_USE_JEMALLOC
+
+void PrintMallocStat() {}
+
+size_t GoodMallocSize(size_t min_size) {
+    return min_size;
+}
+
+#endif  // __FAAS_USE_JEMALLOC
+
+}  // namespace utils
+}  // namespace faas

@@ -25,7 +25,7 @@
 #if !defined(__FAAS_USED_IN_BINDING) && !defined(__FAAS_PYTHON_BINDING_SRC)
 #error Need the source file to have __FAAS_USED_IN_BINDING defined
 #endif
-#include <Python.h>
+#include <Python.h> 
 #if PY_VERSION_HEX < 0x03070000
 #error FaaS Python binding requires Python 3.7+
 #endif
@@ -74,7 +74,7 @@
 
 #ifdef __FAAS_SRC
 #define __FAAS_HAVE_ABSL
-#define __FAAS_HAVE_JEMALLOC
+#define __FAAS_USE_JEMALLOC
 #endif
 
 #if defined(__FAAS_HAVE_ABSL) && !defined(__FAAS_USED_IN_BINDING)

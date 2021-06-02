@@ -5,7 +5,7 @@
 #include "utils/io.h"
 #include "utils/socket.h"
 #include "utils/timerfd.h"
-#include "utils/jemalloc.h"
+#include "utils/malloc.h"
 #include "server/constants.h"
 
 #include <sys/types.h>
@@ -278,9 +278,7 @@ void ServerBase::DoStop() {
 }
 
 void ServerBase::DoPrintStat() {
-#ifdef __FAAS_HAVE_JEMALLOC
-    jemalloc::PrintStat();
-#endif
+    utils::PrintMallocStat();
 }
 
 void ServerBase::DoReadClosedConnection(int pipefd) {
