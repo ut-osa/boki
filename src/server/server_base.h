@@ -13,8 +13,6 @@ namespace server {
 
 class ServerBase {
 public:
-    static constexpr size_t kDefaultIOWorkerBufferSize = 65536;
-
     ServerBase(std::string_view node_name, bool enable_journal);
     virtual ~ServerBase();
 

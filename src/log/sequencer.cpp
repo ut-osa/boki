@@ -234,7 +234,10 @@ void Sequencer::OnRecvNewMetaLogs(const SharedLogMessage& message,
     if (journal_enabled()) {
         CurrentIOWorkerChecked()->JournalAppend(
             kMetalogBackupJournalRecordType, payload,
-            absl::bind_front(&Sequencer::StoreMetaLogAsBackup, this, metalogs_proto));
+            [this, metalogs_proto] (server::JournalFile* journal_file, size_t offset) {
+                StoreMetaLogAsBackup(metalogs_proto);
+            }
+        );
     } else {
         StoreMetaLogAsBackup(std::move(metalogs_proto));
     }
@@ -292,9 +295,10 @@ void Sequencer::MarkNextCutIfDoable() {
     }
     std::string serialized;
     CHECK(meta_log_proto.SerializeToString(&serialized));
+    uint32_t metalog_seqnum = meta_log_proto.metalog_seqnum();
     CurrentIOWorkerChecked()->JournalAppend(
         kMetalogPrimaryJournalRecordType, STRING_AS_SPAN(serialized),
-        [this, view, metalog_seqnum = meta_log_proto.metalog_seqnum()] () {
+        [this, view, metalog_seqnum] (server::JournalFile* journal_file, size_t offset) {
             absl::ReaderMutexLock view_lk(&view_mu_);
             if (current_view_ != view) {
                 return;

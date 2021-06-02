@@ -5,6 +5,7 @@
 #include "utils/buffer_pool.h"
 #include "utils/round_robin_set.h"
 #include "server/io_uring.h"
+#include "server/journal.h"
 
 namespace faas {
 namespace server {
@@ -44,7 +45,9 @@ private:
 
 class IOWorker final {
 public:
-    IOWorker(std::string_view worker_name, size_t write_buffer_size);
+    static constexpr size_t kWriteBufferSize = 65536;  // 64KB
+
+    explicit IOWorker(std::string_view worker_name);
     ~IOWorker();
 
     std::string_view worker_name() const { return worker_name_; }
@@ -88,13 +91,12 @@ public:
     // Idle functions will be invoked at the end of each event loop iteration.
     void ScheduleIdleFunction(ConnectionBase* owner, std::function<void()> fn);
 
+    using JournalAppendCallback = JournalFile::AppendCallback;
     void JournalAppend(uint16_t type, std::span<const char> payload,
-                       std::function<void()> cb);
+                       JournalAppendCallback cb);
     void JournalMonitorCallback();
 
 private:
-    static constexpr size_t kJournalBufSize = 65536;
-
     enum State { kCreated, kRunning, kStopping, kStopped };
 
     std::string worker_name_;
@@ -123,14 +125,8 @@ private:
         scheduled_functions_ ABSL_GUARDED_BY(scheduled_function_mu_);
     absl::InlinedVector<ScheduledFunction, 16> idle_functions_;
 
-    struct JournalFile {
-        std::string file_path;
-        int         fd;
-        size_t      size;
-    };
-    utils::BufferPool journal_buffer_pool_;
     int next_journal_file_id_;
-    std::deque<std::unique_ptr<JournalFile>> journal_files_;
+    std::map</* file_id */ int, std::unique_ptr<JournalFile>> journal_files_;
     JournalFile* current_journal_file_; 
 
     void EventLoopThreadMain();

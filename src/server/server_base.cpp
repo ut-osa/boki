@@ -171,8 +171,7 @@ void ServerBase::SetupIOWorkers() {
     CHECK_GT(num_io_workers, 0);
     HLOG_F(INFO, "Start {} IO workers", num_io_workers);
     for (int i = 0; i < num_io_workers; i++) {
-        auto io_worker = std::make_unique<IOWorker>(
-            fmt::format("IO-{}", i), kDefaultIOWorkerBufferSize);
+        auto io_worker = std::make_unique<IOWorker>(fmt::format("IO-{}", i));
         int pipe_fds[2] = { -1, -1 };
         if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pipe_fds) < 0) {
             PLOG(FATAL) << "socketpair failed";
