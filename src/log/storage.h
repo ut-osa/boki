@@ -49,10 +49,16 @@ private:
                              protocol::SharedLogMessage* response,
                              std::span<const char> tags_data,
                              std::span<const char> log_data);
+    void SendEngineLogResult(const protocol::SharedLogMessage& request,
+                             protocol::SharedLogMessage* response,
+                             const LogEntry& log_entry);
 
     void BackgroundThreadMain(int eventfd) override;
     void SendShardProgressIfNeeded() override;
     void FlushLogEntries();
+
+    LogEntry ReadLogEntryFromJournal(uint64_t seqnum,
+                                     server::JournalFile* file, size_t offset);
 
     DISALLOW_COPY_AND_ASSIGN(Storage);
 };

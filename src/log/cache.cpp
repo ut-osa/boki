@@ -1,8 +1,11 @@
 #include "log/cache.h"
 
 __BEGIN_THIRD_PARTY_HEADERS
+#include <absl/flags/flag.h>
 #include <tkrzw_dbm_cache.h>
 __END_THIRD_PARTY_HEADERS
+
+ABSL_FLAG(bool, enforce_cache_miss_for_debug, false, "");
 
 namespace faas {
 namespace log {
@@ -70,7 +73,16 @@ void LRUCache::PutBySeqnum(const LogMetaData& log_metadata,
     dbm_->Set(seqnum_key(log_metadata.seqnum), data, /* overwrite= */ false);
 }
 
+void LRUCache::PutBySeqnum(const LogEntry& log_entry) {
+    PutBySeqnum(log_entry.metadata,
+                VECTOR_AS_SPAN(log_entry.user_tags),
+                STRING_AS_SPAN(log_entry.data));
+}
+
 std::optional<LogEntry> LRUCache::GetBySeqnum(uint64_t seqnum) {
+    if (absl::GetFlag(FLAGS_enforce_cache_miss_for_debug)) {
+        return std::nullopt;
+    }
     std::string data;
     auto status = dbm_->Get(seqnum_key(seqnum), &data);
     if (status.IsOK()) {
@@ -92,7 +104,16 @@ void LRUCache::PutByLocalId(const LogMetaData& log_metadata,
               /* overwrite= */ false);
 }
 
+void LRUCache::PutByLocalId(const LogEntry& log_entry) {
+    PutByLocalId(log_entry.metadata,
+                 VECTOR_AS_SPAN(log_entry.user_tags),
+                 STRING_AS_SPAN(log_entry.data));
+}
+
 std::optional<LogEntry> LRUCache::GetByLocalId(uint32_t logspace_id, uint64_t localid) {
+    if (absl::GetFlag(FLAGS_enforce_cache_miss_for_debug)) {
+        return std::nullopt;
+    }
     std::string data;
     auto status = dbm_->Get(localid_key(logspace_id, localid), &data);
     if (status.IsOK()) {

@@ -116,6 +116,21 @@ void SplitPayloadForMessage(const protocol::SharedLogMessage& message,
     }
 }
 
+void SplitLogEntryProto(const log::LogEntryProto& log_entry_proto,
+                        log::LogMetaData* metadata,
+                        std::span<const uint64_t>* user_tags,
+                        std::span<const char>* log_data) {
+    metadata->user_logspace = log_entry_proto.user_logspace();
+    metadata->seqnum = log_entry_proto.seqnum();
+    metadata->localid = log_entry_proto.localid();
+    metadata->num_tags = static_cast<size_t>(log_entry_proto.user_tags_size());
+    metadata->data_size = log_entry_proto.data().size();
+    *user_tags = std::span<const uint64_t>(
+        reinterpret_cast<const uint64_t*>(log_entry_proto.user_tags().data()),
+        static_cast<size_t>(log_entry_proto.user_tags().size()));
+    *log_data = STRING_AS_SPAN(log_entry_proto.data());
+}
+
 void PopulateMetaDataToMessage(const LogMetaData& metadata, SharedLogMessage* message) {
     message->logspace_id = bits::HighHalf64(metadata.seqnum);
     message->user_logspace = metadata.user_logspace;
@@ -124,13 +139,13 @@ void PopulateMetaDataToMessage(const LogMetaData& metadata, SharedLogMessage* me
     message->localid = metadata.localid;
 }
 
-void PopulateMetaDataToMessage(const LogEntryProto& log_entry, SharedLogMessage* message) {
-    message->logspace_id = bits::HighHalf64(log_entry.seqnum());
-    message->user_logspace = log_entry.user_logspace();
-    message->seqnum_lowhalf = bits::LowHalf64(log_entry.seqnum());
-    message->num_tags = gsl::narrow_cast<uint16_t>(log_entry.user_tags_size());
-    message->localid = log_entry.localid();
-}
+// void PopulateMetaDataToMessage(const LogEntryProto& log_entry, SharedLogMessage* message) {
+//     message->logspace_id = bits::HighHalf64(log_entry.seqnum());
+//     message->user_logspace = log_entry.user_logspace();
+//     message->seqnum_lowhalf = bits::LowHalf64(log_entry.seqnum());
+//     message->num_tags = gsl::narrow_cast<uint16_t>(log_entry.user_tags_size());
+//     message->localid = log_entry.localid();
+// }
 
 }  // namespace log_utils
 }  // namespace faas

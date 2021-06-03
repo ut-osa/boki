@@ -84,7 +84,7 @@ size_t JournalFile::ReadRecord(size_t offset, uint16_t* type,
     }
     protocol::JournalRecordHeader hdr;
     ReadBytes(fd_, offset, sizeof(hdr), reinterpret_cast<char*>(&hdr));
-    buffer->AppendEmptyData(hdr.payload_size);
+    buffer->AppendUninitializedData(hdr.payload_size);
     char* buf_ptr = buffer->data() + (buffer->length() - hdr.payload_size);
     ReadBytes(fd_, offset + sizeof(hdr), hdr.payload_size, buf_ptr);
     *type = hdr.type;

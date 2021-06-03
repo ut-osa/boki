@@ -63,11 +63,15 @@ void SplitPayloadForMessage(const protocol::SharedLogMessage& message,
                             std::span<const uint64_t>* user_tags,
                             std::span<const char>* log_data,
                             std::span<const char>* aux_data);
+void SplitLogEntryProto(const log::LogEntryProto& log_entry_proto,
+                        log::LogMetaData* metadata,
+                        std::span<const uint64_t>* user_tags,
+                        std::span<const char>* log_data);
 
 void PopulateMetaDataToMessage(const log::LogMetaData& metadata,
                                protocol::SharedLogMessage* message);
-void PopulateMetaDataToMessage(const log::LogEntryProto& log_entry,
-                               protocol::SharedLogMessage* message);
+// void PopulateMetaDataToMessage(const log::LogEntryProto& log_entry,
+//                                protocol::SharedLogMessage* message);
 
 // Start implementation of ThreadedMap
 

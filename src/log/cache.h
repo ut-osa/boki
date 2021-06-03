@@ -16,11 +16,13 @@ public:
     void PutBySeqnum(const LogMetaData& log_metadata,
                      std::span<const uint64_t> user_tags,
                      std::span<const char> log_data);
+    void PutBySeqnum(const LogEntry& log_entry);
     std::optional<LogEntry> GetBySeqnum(uint64_t seqnum);
 
     void PutByLocalId(const LogMetaData& log_metadata,
                       std::span<const uint64_t> user_tags,
                       std::span<const char> log_data);
+    void PutByLocalId(const LogEntry& log_entry);
     std::optional<LogEntry> GetByLocalId(uint32_t logspace_id, uint64_t localid);
 
     void PutAuxData(uint64_t seqnum, std::span<const char> data);

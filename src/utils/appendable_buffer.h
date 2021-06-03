@@ -32,7 +32,7 @@ public:
         if (length == 0) {
             return;
         }
-        ExpandBuffer(pos_ + length);
+        ExpandBufferIfNeeded(pos_ + length);
         DCHECK_LE(pos_ + length, buf_size_);
         memcpy(buf_ + pos_, data, length);
         pos_ += length;
@@ -42,11 +42,11 @@ public:
         AppendData(data.data(), data.size());
     }
 
-    void AppendEmptyData(size_t length) {
+    void AppendUninitializedData(size_t length) {
         if (length == 0) {
             return;
         }
-        ExpandBuffer(pos_ + length);
+        ExpandBufferIfNeeded(pos_ + length);
         DCHECK_LE(pos_ + length, buf_size_);
         pos_ += length;
     }
@@ -116,7 +116,7 @@ private:
     char* buf_;
     char inline_buf_[kInlineBufferSize];
 
-    void ExpandBuffer(size_t min_size) {
+    void ExpandBufferIfNeeded(size_t min_size) {
         size_t new_size = buf_size_;
         while (min_size > new_size) {
             new_size *= 2;

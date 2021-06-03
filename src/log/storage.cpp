@@ -258,22 +258,34 @@ void Storage::OnRecvLogAuxData(const protocol::SharedLogMessage& message,
 #undef RETURN_IF_LOGSPACE_FINALIZED
 
 void Storage::ProcessReadResults(const LogStorage::ReadResultVec& results) {
+    LogEntry log_entry;
     for (const LogStorage::ReadResult& result : results) {
         const SharedLogMessage& request = result.original_request;
         SharedLogMessage response;
+        uint64_t seqnum = bits::JoinTwo32(request.logspace_id, request.seqnum_lowhalf);
+        if (result.status == LogStorage::ReadResult::kFailed) {
+            auto log_entry = log_cache()->GetBySeqnum(seqnum);
+            if (log_entry.has_value()) {
+                response = SharedLogMessageHelper::NewReadOkResponse();
+                response.user_metalog_progress = request.user_metalog_progress;
+                SendEngineLogResult(request, &response, *log_entry);
+                continue;
+            }
+        }
         switch (result.status) {
         case LogStorage::ReadResult::kLookupJournal:
-/*
+            if (auto tmp = log_cache()->GetByLocalId(request.logspace_id, result.localid);
+                    tmp.has_value()) {
+                log_entry = std::move(tmp.value());
+                log_entry.metadata.seqnum = seqnum;
+            } else {
+                log_entry = ReadLogEntryFromJournal(seqnum, result.journal_file,
+                                                    result.journal_offset);
+            }
             response = SharedLogMessageHelper::NewReadOkResponse();
-            log_utils::PopulateMetaDataToMessage(result.log_entry->metadata, &response);
-            DCHECK_EQ(response.logspace_id, request.logspace_id);
-            DCHECK_EQ(response.seqnum_lowhalf, request.seqnum_lowhalf);
             response.user_metalog_progress = request.user_metalog_progress;
-            SendEngineLogResult(request, &response,
-                                VECTOR_AS_CHAR_SPAN(result.log_entry->user_tags),
-                                STRING_AS_SPAN(result.log_entry->data));
-*/
-            NOT_IMPLEMENTED();
+            SendEngineLogResult(request, &response, log_entry);
+            log_cache()->PutBySeqnum(log_entry);
             break;
         case LogStorage::ReadResult::kLookupDB:
             ProcessReadFromDB(request);
@@ -292,9 +304,9 @@ void Storage::ProcessReadResults(const LogStorage::ReadResultVec& results) {
 
 void Storage::ProcessReadFromDB(const SharedLogMessage& request) {
     uint64_t seqnum = bits::JoinTwo32(request.logspace_id, request.seqnum_lowhalf);
-    LogEntryProto log_entry;
+    LogEntryProto log_entry_proto;
     if (auto tmp = GetLogEntryFromDB(seqnum); tmp.has_value()) {
-        log_entry = std::move(*tmp);
+        log_entry_proto = std::move(*tmp);
     } else {
         HLOG_F(ERROR, "Failed to read log data (seqnum={})", bits::HexStr0x(seqnum));
         SharedLogMessage response = SharedLogMessageHelper::NewDataLostResponse();
@@ -302,15 +314,13 @@ void Storage::ProcessReadFromDB(const SharedLogMessage& request) {
         return;
     }
     SharedLogMessage response = SharedLogMessageHelper::NewReadOkResponse();
-    log_utils::PopulateMetaDataToMessage(log_entry, &response);
-    DCHECK_EQ(response.logspace_id, request.logspace_id);
-    DCHECK_EQ(response.seqnum_lowhalf, request.seqnum_lowhalf);
     response.user_metalog_progress = request.user_metalog_progress;
-    std::span<const char> user_tags_data(
-        reinterpret_cast<const char*>(log_entry.user_tags().data()),
-        static_cast<size_t>(log_entry.user_tags().size()) * sizeof(uint64_t));
-    SendEngineLogResult(request, &response, user_tags_data,
-                        STRING_AS_SPAN(log_entry.data()));
+    LogMetaData metadata;
+    std::span<const uint64_t> user_tags;
+    std::span<const char> log_data;
+    log_utils::SplitLogEntryProto(log_entry_proto, &metadata, &user_tags, &log_data);
+    SendEngineLogResult(request, &response, VECTOR_AS_CHAR_SPAN(user_tags), log_data);
+    log_cache()->PutBySeqnum(metadata, user_tags, log_data);
 }
 
 void Storage::ProcessRequests(const std::vector<SharedLogRequest>& requests) {
@@ -341,6 +351,15 @@ void Storage::SendEngineLogResult(const protocol::SharedLogMessage& request,
     }
     response->aux_data_size = gsl::narrow_cast<uint16_t>(aux_data.size());
     SendEngineResponse(request, response, tags_data, log_data, aux_data);
+}
+
+void Storage::SendEngineLogResult(const protocol::SharedLogMessage& request,
+                                  protocol::SharedLogMessage* response,
+                                  const LogEntry& log_entry) {
+    log_utils::PopulateMetaDataToMessage(log_entry.metadata, response);
+    SendEngineLogResult(request, response,
+                        VECTOR_AS_CHAR_SPAN(log_entry.user_tags),
+                        STRING_AS_SPAN(log_entry.data));
 }
 
 void Storage::BackgroundThreadMain(int eventfd) {
@@ -401,38 +420,19 @@ void Storage::FlushLogEntries() {
     HVLOG_F(1, "There are {} log entries to flush", entries.size());
     HVLOG(1) << "First grab their data from either cache or journal";
 
-    utils::AppendableBuffer read_buffer;
     absl::InlinedVector<LogEntry, 32> log_entries;
     for (const LogStorage::Entry* entry : entries) {
         uint32_t logspace_id = bits::HighHalf64(entry->metadata.seqnum);
         uint64_t localid = entry->metadata.localid;
-        auto log_entry = log_cache()->GetByLocalId(logspace_id, localid);
-        if (log_entry.has_value()) {
-            log_entries.push_back(std::move(log_entry.value()));
+        if (auto tmp = log_cache()->GetByLocalId(logspace_id, localid); tmp.has_value()) {
+            LogEntry log_entry = std::move(tmp.value());
+            log_entry.metadata.seqnum = entry->metadata.seqnum;
+            log_entries.push_back(std::move(log_entry));
         } else {
-            uint16_t record_type;
-            size_t nread = entry->journal_file->ReadRecord(
-                entry->journal_offset, &record_type, &read_buffer);
-            DCHECK_EQ(record_type, kLogEntryJournalRecordType);
-            const char* buf_ptr = read_buffer.data();
-            auto message = reinterpret_cast<const SharedLogMessage*>(buf_ptr);
-            std::span<const char> payload(buf_ptr + sizeof(SharedLogMessage),
-                                          nread - sizeof(SharedLogMessage));
-#if DCHECK_IS_ON()
-            LogMetaData metadata = log_utils::GetMetaDataFromMessage(*message);
-            CHECK_EQ(metadata.localid, localid);
-            CHECK_EQ(bits::HighHalf64(metadata.seqnum), logspace_id);
-#endif
-            std::span<const uint64_t> user_tags;
-            std::span<const char> log_data;
-            log_utils::SplitPayloadForMessage(*message, payload, &user_tags, &log_data,
-                                              /* aux_data= */ nullptr);
-            log_entries.push_back(LogEntry {
-                .metadata = entry->metadata,
-                .user_tags = UserTagVec(user_tags.begin(), user_tags.end()),
-                .data = std::string(log_data.data(), log_data.size()),
-            });
-            read_buffer.Reset();
+            LogEntry log_entry = ReadLogEntryFromJournal(
+                entry->metadata.seqnum, entry->journal_file, entry->journal_offset);
+            DCHECK_EQ(log_entry.metadata.localid, localid);
+            log_entries.push_back(std::move(log_entry));
         }
     }
 
@@ -476,11 +476,33 @@ void Storage::FlushLogEntries() {
     }
 
     for (const LogEntry& log_entry : log_entries) {
-        log_cache()->PutBySeqnum(
-            log_entry.metadata,
-            VECTOR_AS_SPAN(log_entry.user_tags),
-            STRING_AS_SPAN(log_entry.data));
+        log_cache()->PutBySeqnum(log_entry);
     }
+}
+
+LogEntry Storage::ReadLogEntryFromJournal(uint64_t seqnum,
+                                          server::JournalFile* file, size_t offset) {
+    static thread_local utils::AppendableBuffer read_buffer;
+    uint16_t record_type;
+    read_buffer.Reset();
+    size_t nread = file->ReadRecord(offset,  &record_type, &read_buffer);
+    DCHECK_EQ(record_type, kLogEntryJournalRecordType);
+    const char* buf_ptr = read_buffer.data();
+    auto message = reinterpret_cast<const SharedLogMessage*>(buf_ptr);
+    std::span<const char> payload(buf_ptr + sizeof(SharedLogMessage),
+                                  nread - sizeof(SharedLogMessage));
+    LogMetaData metadata = log_utils::GetMetaDataFromMessage(*message);
+    DCHECK_EQ(bits::HighHalf64(seqnum), bits::HighHalf64(metadata.seqnum));
+    metadata.seqnum = seqnum;
+    std::span<const uint64_t> user_tags;
+    std::span<const char> log_data;
+    log_utils::SplitPayloadForMessage(*message, payload, &user_tags, &log_data,
+                                        /* aux_data= */ nullptr);
+    return LogEntry {
+        .metadata = metadata,
+        .user_tags = UserTagVec(user_tags.begin(), user_tags.end()),
+        .data = std::string(log_data.data(), log_data.size()),
+    };
 }
 
 }  // namespace log
