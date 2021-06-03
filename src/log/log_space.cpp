@@ -404,11 +404,17 @@ void LogStorage::AdvanceShardProgress(uint16_t engine_id) {
 
 void LogStorage::ShrinkLiveEntriesIfNeeded() {
     size_t max_size = absl::GetFlag(FLAGS_slog_storage_max_live_entries);
-    while (live_seqnums_.size() > max_size
-             && live_seqnums_.front() < persisted_seqnum_position_) {
-        live_log_entries_.erase(live_seqnums_.front());
+    while (live_seqnums_.size() > max_size) {
+        uint64_t seqnum = live_seqnums_.front();
+        if (seqnum >= persisted_seqnum_position_) {
+            break;
+        }
+        const Entry* log_entry = live_log_entries_.at(seqnum);
+        live_log_entries_.erase(seqnum);
         live_seqnums_.pop_front();
         DCHECK_EQ(live_seqnums_.size(), live_log_entries_.size());
+        log_entry->journal_file->Unref();
+        entry_pool_.Return(const_cast<Entry*>(log_entry));
     }
     live_entries_stat_.AddSample(gsl::narrow_cast<int>(live_seqnums_.size()));
 }

@@ -63,14 +63,14 @@ static inline void DecodeLogEntry(std::string encoded, LogEntry* log_entry) {
 }
 }  // namespace
 
-void LRUCache::Put(const LogMetaData& log_metadata,
-                   std::span<const uint64_t> user_tags,
-                   std::span<const char> log_data) {
+void LRUCache::PutBySeqnum(const LogMetaData& log_metadata,
+                           std::span<const uint64_t> user_tags,
+                           std::span<const char> log_data) {
     std::string data = EncodeLogEntry(log_metadata, user_tags, log_data);
     dbm_->Set(seqnum_key(log_metadata.seqnum), data, /* overwrite= */ false);
 }
 
-std::optional<LogEntry> LRUCache::Get(uint64_t seqnum) {
+std::optional<LogEntry> LRUCache::GetBySeqnum(uint64_t seqnum) {
     std::string data;
     auto status = dbm_->Get(seqnum_key(seqnum), &data);
     if (status.IsOK()) {

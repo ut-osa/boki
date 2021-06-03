@@ -13,10 +13,10 @@ public:
     explicit LRUCache(int mem_cap_mb);
     ~LRUCache();
 
-    void Put(const LogMetaData& log_metadata,
-             std::span<const uint64_t> user_tags,
-             std::span<const char> log_data);
-    std::optional<LogEntry> Get(uint64_t seqnum);
+    void PutBySeqnum(const LogMetaData& log_metadata,
+                     std::span<const uint64_t> user_tags,
+                     std::span<const char> log_data);
+    std::optional<LogEntry> GetBySeqnum(uint64_t seqnum);
 
     void PutByLocalId(const LogMetaData& log_metadata,
                       std::span<const uint64_t> user_tags,

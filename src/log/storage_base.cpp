@@ -146,28 +146,6 @@ void StorageBase::PutLogEntryToDB(const LogEntry& log_entry) {
     db_->Put(bits::HighHalf64(seqnum), bits::LowHalf64(seqnum), STRING_AS_SPAN(data));
 }
 
-void StorageBase::LogCachePut(const LogMetaData& log_metadata,
-                              std::span<const uint64_t> user_tags,
-                              std::span<const char> log_data) {
-    DCHECK(log_cache_.has_value());
-    log_cache_->PutByLocalId(log_metadata, user_tags, log_data);
-}
-
-std::optional<LogEntry> StorageBase::LogCacheGet(uint32_t logspace_id, uint64_t localid) {
-    DCHECK(log_cache_.has_value());
-    return log_cache_->GetByLocalId(logspace_id, localid);
-}
-
-void StorageBase::LogCachePutAuxData(uint64_t seqnum, std::span<const char> data) {
-    DCHECK(log_cache_.has_value());
-    log_cache_->PutAuxData(seqnum, data);
-}
-
-std::optional<std::string> StorageBase::LogCacheGetAuxData(uint64_t seqnum) {
-    DCHECK(log_cache_.has_value());
-    return log_cache_->GetAuxData(seqnum);
-}
-
 void StorageBase::SendIndexData(const View* view,
                                 const IndexDataProto& index_data_proto) {
     uint32_t logspace_id = index_data_proto.logspace_id();

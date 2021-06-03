@@ -169,7 +169,7 @@ void Storage::HandleReplicateRequest(const SharedLogMessage& message,
     std::span<const char> log_data;
     log_utils::SplitPayloadForMessage(message, payload, &user_tags, &log_data,
                                       /* aux_data= */ nullptr);
-    LogCachePut(metadata, user_tags, log_data);
+    log_cache()->PutByLocalId(metadata, user_tags, log_data);
 
     UserTagVec tag_vec(user_tags.begin(), user_tags.end());
     auto callback = [this, view, metadata, tag_vec] (server::JournalFile* journal_file,
@@ -227,7 +227,7 @@ void Storage::OnRecvNewMetaLogs(const SharedLogMessage& message,
             LogStorage::LogEntryVec new_log_entires;
             locked_storage->GrabLogEntriesForPersistence(&new_log_entires);
             if (!new_log_entires.empty()) {
-                absl::MutexLock lk(&flush_thread_mu_);
+                absl::MutexLock lk(&flush_mu_);
                 need_notify_bg_thread = log_entires_for_flush_.empty();
                 log_entires_for_flush_.insert(
                     log_entires_for_flush_.end(),
@@ -250,7 +250,7 @@ void Storage::OnRecvLogAuxData(const protocol::SharedLogMessage& message,
                                std::span<const char> payload) {
     DCHECK(SharedLogMessageHelper::GetOpType(message) == SharedLogOpType::SET_AUXDATA);
     uint64_t seqnum = bits::JoinTwo32(message.logspace_id, message.seqnum_lowhalf);
-    LogCachePutAuxData(seqnum, payload);
+    log_cache()->PutAuxData(seqnum, payload);
 }
 
 #undef ONHOLD_IF_FROM_FUTURE_VIEW
@@ -324,7 +324,7 @@ void Storage::SendEngineLogResult(const protocol::SharedLogMessage& request,
                                   std::span<const char> tags_data,
                                   std::span<const char> log_data) {
     uint64_t seqnum = bits::JoinTwo32(response->logspace_id, response->seqnum_lowhalf);
-    std::optional<std::string> cached_aux_data = LogCacheGetAuxData(seqnum);
+    std::optional<std::string> cached_aux_data = log_cache()->GetAuxData(seqnum);
     std::span<const char> aux_data;
     if (cached_aux_data.has_value()) {
         size_t full_size = log_data.size() + tags_data.size() + cached_aux_data->size();
@@ -388,22 +388,59 @@ void Storage::SendShardProgressIfNeeded() {
 }
 
 void Storage::FlushLogEntries() {
-    absl::InlinedVector<const LogStorage::Entry*, 32> log_entires;
+    absl::InlinedVector<const LogStorage::Entry*, 32> entries;
     {
-        absl::MutexLock lk(&flush_thread_mu_);
-        log_entires = std::move(log_entires_for_flush_);
+        absl::MutexLock lk(&flush_mu_);
+        entries = std::move(log_entires_for_flush_);
         log_entires_for_flush_.clear();
     }
-    if (log_entires.empty()) {
+    if (entries.empty()) {
         return;
     }
 
+    HVLOG_F(1, "There are {} log entries to flush", entries.size());
+    HVLOG(1) << "First grab their data from either cache or journal";
+
+    utils::AppendableBuffer read_buffer;
+    absl::InlinedVector<LogEntry, 32> log_entries;
+    for (const LogStorage::Entry* entry : entries) {
+        uint32_t logspace_id = bits::HighHalf64(entry->metadata.seqnum);
+        uint64_t localid = entry->metadata.localid;
+        auto log_entry = log_cache()->GetByLocalId(logspace_id, localid);
+        if (log_entry.has_value()) {
+            log_entries.push_back(std::move(log_entry.value()));
+        } else {
+            uint16_t record_type;
+            size_t nread = entry->journal_file->ReadRecord(
+                entry->journal_offset, &record_type, &read_buffer);
+            DCHECK_EQ(record_type, kLogEntryJournalRecordType);
+            const char* buf_ptr = read_buffer.data();
+            auto message = reinterpret_cast<const SharedLogMessage*>(buf_ptr);
+            std::span<const char> payload(buf_ptr + sizeof(SharedLogMessage),
+                                          nread - sizeof(SharedLogMessage));
+#if DCHECK_IS_ON()
+            LogMetaData metadata = log_utils::GetMetaDataFromMessage(*message);
+            CHECK_EQ(metadata.localid, localid);
+            CHECK_EQ(bits::HighHalf64(metadata.seqnum), logspace_id);
+#endif
+            std::span<const uint64_t> user_tags;
+            std::span<const char> log_data;
+            log_utils::SplitPayloadForMessage(*message, payload, &user_tags, &log_data,
+                                              /* aux_data= */ nullptr);
+            log_entries.push_back(LogEntry {
+                .metadata = entry->metadata,
+                .user_tags = UserTagVec(user_tags.begin(), user_tags.end()),
+                .data = std::string(log_data.data(), log_data.size()),
+            });
+            read_buffer.Reset();
+        }
+    }
+
+    HVLOG(1) << "Then write log data to DB";
     absl::flat_hash_map<uint32_t, uint64_t> new_positions;
-    HVLOG_F(1, "Will flush {} log entries", log_entires.size());
-    for (const auto& log_entry : log_entires) {
-        NOT_IMPLEMENTED();
-        /* PutLogEntryToDB(*log_entry); */ 
-        uint64_t seqnum = log_entry->metadata.seqnum;
+    for (const LogEntry& log_entry : log_entries) {
+        PutLogEntryToDB(log_entry);
+        uint64_t seqnum = log_entry.metadata.seqnum;
         uint32_t logspace_id = bits::HighHalf64(seqnum);
         if (new_positions.contains(logspace_id)) {
             DCHECK_GE(seqnum, new_positions.at(logspace_id));
@@ -436,6 +473,13 @@ void Storage::FlushLogEntries() {
                        bits::HexStr0x(logspace_id));
             }
         }
+    }
+
+    for (const LogEntry& log_entry : log_entries) {
+        log_cache()->PutBySeqnum(
+            log_entry.metadata,
+            VECTOR_AS_SPAN(log_entry.user_tags),
+            STRING_AS_SPAN(log_entry.data));
     }
 }
 

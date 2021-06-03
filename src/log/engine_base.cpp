@@ -286,11 +286,11 @@ void EngineBase::LogCachePut(const LogMetaData& log_metadata,
         return;
     }
     HVLOG_F(1, "Store cache for log entry (seqnum {})", bits::HexStr0x(log_metadata.seqnum));
-    log_cache_->Put(log_metadata, user_tags, log_data);
+    log_cache_->PutBySeqnum(log_metadata, user_tags, log_data);
 }
 
 std::optional<LogEntry> EngineBase::LogCacheGet(uint64_t seqnum) {
-    return log_cache_.has_value() ? log_cache_->Get(seqnum) : std::nullopt;
+    return log_cache_.has_value() ? log_cache_->GetBySeqnum(seqnum) : std::nullopt;
 }
 
 void EngineBase::LogCachePutAuxData(uint64_t seqnum, std::span<const char> data) {
