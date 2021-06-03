@@ -30,6 +30,8 @@ private:
     stat::StatisticsCollector<int>
         log_entires_flush_stat_    ABSL_GUARDED_BY(flush_mu_);
 
+    stat::CategoryCounter flush_thread_entry_src_stat_;
+
     void OnViewCreated(const View* view) override;
     void OnViewFinalized(const FinalizedView* finalized_view) override;
 

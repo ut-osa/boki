@@ -20,7 +20,9 @@ Storage::Storage(uint16_t node_id)
       current_view_(nullptr),
       view_finalized_(false),
       log_entires_flush_stat_(stat::StatisticsCollector<int>::StandardReportCallback(
-          "log_entries_for_flush")) {}
+          "log_entries_for_flush")),
+      flush_thread_entry_src_stat_(stat::CategoryCounter::StandardReportCallback(
+          "flush_thread_entry_src")) {}
 
 Storage::~Storage() {}
 
@@ -428,11 +430,16 @@ void Storage::FlushLogEntries() {
             LogEntry log_entry = std::move(tmp.value());
             log_entry.metadata.seqnum = entry->metadata.seqnum;
             log_entries.push_back(std::move(log_entry));
+            flush_thread_entry_src_stat_.Tick(0);
         } else {
+            HVLOG_F(1, "Failed to find log entry (seqnum {}, localid {}) from cache, "
+                       "read from journal instead",
+                    bits::HexStr0x(entry->metadata.seqnum), bits::HexStr0x(localid));
             LogEntry log_entry = ReadLogEntryFromJournal(
                 entry->metadata.seqnum, entry->journal_file, entry->journal_offset);
             DCHECK_EQ(log_entry.metadata.localid, localid);
             log_entries.push_back(std::move(log_entry));
+            flush_thread_entry_src_stat_.Tick(1);
         }
     }
 
