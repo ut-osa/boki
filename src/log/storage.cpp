@@ -160,6 +160,8 @@ void Storage::HandleReplicateRequest(const SharedLogMessage& message,
     std::span<const char> log_data;
     log_utils::SplitPayloadForMessage(message, payload, &user_tags, &log_data,
                                       /* aux_data= */ nullptr);
+    LogCachePut(metadata, user_tags, log_data);
+    
     {
         absl::ReaderMutexLock view_lk(&view_mu_);
         ONHOLD_IF_FROM_FUTURE_VIEW(message, payload);

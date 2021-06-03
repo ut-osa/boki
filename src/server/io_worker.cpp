@@ -307,9 +307,7 @@ void IOWorker::JournalMonitorCallback() {
     }
     JournalFile* old_journal_file = current_journal_file_;
     current_journal_file_ = CreateNewJournalFile();
-    old_journal_file->Close([this] {
-        RemoveExtraJournalFiles();
-    });
+    old_journal_file->Finalize();
 }
 
 JournalFile* IOWorker::CreateNewJournalFile() {

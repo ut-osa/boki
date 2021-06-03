@@ -32,31 +32,23 @@ public:
         if (length == 0) {
             return;
         }
-        size_t new_size = buf_size_;
-        while (pos_ + length > new_size) {
-            new_size *= 2;
-        }
-        if (new_size > buf_size_) {
-            if (new_size >= kMallocWarnThreshold) {
-                LOG(WARNING) << "Large allocation in AppendableBuffer: size=" << new_size;
-            }
-            if (buf_ != inline_buf_) {
-                buf_ = reinterpret_cast<char*>(DCHECK_NOTNULL(
-                    realloc(buf_, new_size)));
-            } else {
-                char* new_buf = reinterpret_cast<char*>(DCHECK_NOTNULL(
-                    malloc(new_size)));
-                memcpy(new_buf, buf_, pos_);
-                buf_ = new_buf;
-            }
-            buf_size_ = new_size;            
-        }
+        ExpandBuffer(pos_ + length);
+        DCHECK_LE(pos_ + length, buf_size_);
         memcpy(buf_ + pos_, data, length);
         pos_ += length;
     }
 
     void AppendData(std::span<const char> data) {
         AppendData(data.data(), data.size());
+    }
+
+    void AppendEmptyData(size_t length) {
+        if (length == 0) {
+            return;
+        }
+        ExpandBuffer(pos_ + length);
+        DCHECK_LE(pos_ + length, buf_size_);
+        pos_ += length;
     }
 
     void Reset() { pos_ = 0; }
@@ -123,6 +115,28 @@ private:
     size_t pos_;
     char* buf_;
     char inline_buf_[kInlineBufferSize];
+
+    void ExpandBuffer(size_t min_size) {
+        size_t new_size = buf_size_;
+        while (min_size > new_size) {
+            new_size *= 2;
+        }
+        if (new_size > buf_size_) {
+            if (new_size >= kMallocWarnThreshold) {
+                LOG(WARNING) << "Large allocation in AppendableBuffer: size=" << new_size;
+            }
+            if (buf_ != inline_buf_) {
+                buf_ = reinterpret_cast<char*>(DCHECK_NOTNULL(
+                    realloc(buf_, new_size)));
+            } else {
+                char* new_buf = reinterpret_cast<char*>(DCHECK_NOTNULL(
+                    malloc(new_size)));
+                memcpy(new_buf, buf_, pos_);
+                buf_ = new_buf;
+            }
+            buf_size_ = new_size;            
+        }
+    }
 
     DISALLOW_COPY_AND_ASSIGN(AppendableBuffer);
 };

@@ -63,21 +63,17 @@ private:
     std::vector<Block> blocks_;
     size_t total_capacity_;
 
-    inline T* ObjectPtr(const Block& block, size_t idx) {
+    inline static T* ObjectPtr(const Block& block, size_t idx) {
         DCHECK_LT(idx, block.capacity);
         T* obj = reinterpret_cast<T*>(block.base + sizeof(T) * idx);
         return obj;
     }
 
-    inline T* NextObject(Block& block) {
+    inline static T* NextObject(Block& block) {
         DCHECK_LT(block.used, block.capacity);
         T* obj = ObjectPtr(block, block.used++);
         new(obj) T();
         return obj;
-    }
-
-    bool TryGrowBlock(Block& block) {
-        return false;
     }
 
     T* GetNewBlockPath() {
@@ -88,10 +84,11 @@ private:
 
     T* GetSlowPath() {
         Block& block = blocks_.back();
-        if (block.used == block.capacity && !TryGrowBlock(block)) {
+        if (block.used < block.capacity) {
+            return NextObject(block);
+        } else {
             return GetNewBlockPath();
         }
-        return NextObject(block);
     }
 
     void AllocBlock(size_t min_capacity) {

@@ -14,7 +14,6 @@ __BEGIN_THIRD_PARTY_HEADERS
 __END_THIRD_PARTY_HEADERS
 
 ABSL_FLAG(int, rocksdb_max_background_jobs, 2, "");
-ABSL_FLAG(size_t, rocksdb_block_cache_size_mb, 1024, "");
 ABSL_FLAG(bool, rocksdb_enable_compression, false, "");
 
 #define ROCKSDB_CHECK_OK(STATUS_VAR, OP_NAME)               \
@@ -59,8 +58,8 @@ void RocksDBBackend::InstallLogSpace(uint32_t logspace_id) {
     } else {
         options.compression = rocksdb::kNoCompression;
     }
-    options.OptimizeForPointLookup(
-        absl::GetFlag(FLAGS_rocksdb_block_cache_size_mb));
+    // Essentially disable block cache with 32MB in size
+    options.OptimizeForPointLookup(/* block_cache_size_mb= */ 32);
     rocksdb::ColumnFamilyHandle* cf_handle = nullptr;
     auto status = db_->CreateColumnFamily(
         options, bits::HexStr(logspace_id), &cf_handle);

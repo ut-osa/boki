@@ -63,17 +63,16 @@ static inline void DecodeLogEntry(std::string encoded, LogEntry* log_entry) {
 }
 }  // namespace
 
-void LRUCache::Put(const LogMetaData& log_metadata, std::span<const uint64_t> user_tags,
+void LRUCache::Put(const LogMetaData& log_metadata,
+                   std::span<const uint64_t> user_tags,
                    std::span<const char> log_data) {
-    std::string key_str = fmt::format("0_{:016x}", log_metadata.seqnum);
     std::string data = EncodeLogEntry(log_metadata, user_tags, log_data);
-    dbm_->Set(key_str, data, /* overwrite= */ false);
+    dbm_->Set(seqnum_key(log_metadata.seqnum), data, /* overwrite= */ false);
 }
 
 std::optional<LogEntry> LRUCache::Get(uint64_t seqnum) {
-    std::string key_str = fmt::format("0_{:016x}", seqnum);
     std::string data;
-    auto status = dbm_->Get(key_str, &data);
+    auto status = dbm_->Get(seqnum_key(seqnum), &data);
     if (status.IsOK()) {
         LogEntry log_entry;
         DecodeLogEntry(std::move(data), &log_entry);
@@ -84,16 +83,36 @@ std::optional<LogEntry> LRUCache::Get(uint64_t seqnum) {
     }
 }
 
+void LRUCache::PutByLocalId(const LogMetaData& log_metadata,
+                            std::span<const uint64_t> user_tags,
+                            std::span<const char> log_data) {
+    uint32_t logspace_id = bits::HighHalf64(log_metadata.seqnum);
+    std::string data = EncodeLogEntry(log_metadata, user_tags, log_data);
+    dbm_->Set(localid_key(logspace_id, log_metadata.localid), data,
+              /* overwrite= */ false);
+}
+
+std::optional<LogEntry> LRUCache::GetByLocalId(uint32_t logspace_id, uint64_t localid) {
+    std::string data;
+    auto status = dbm_->Get(localid_key(logspace_id, localid), &data);
+    if (status.IsOK()) {
+        LogEntry log_entry;
+        DecodeLogEntry(std::move(data), &log_entry);
+        DCHECK_EQ(localid, log_entry.metadata.localid);
+        return log_entry;
+    } else {
+        return std::nullopt;
+    }
+}
+
 void LRUCache::PutAuxData(uint64_t seqnum, std::span<const char> data) {
-    std::string key_str = fmt::format("1_{:016x}", seqnum);
-    dbm_->Set(key_str, std::string_view(data.data(), data.size()),
+    dbm_->Set(aux_data_key(seqnum), std::string_view(data.data(), data.size()),
               /* overwrite= */ true);
 }
 
 std::optional<std::string> LRUCache::GetAuxData(uint64_t seqnum) {
-    std::string key_str = fmt::format("1_{:016x}", seqnum);
     std::string data;
-    auto status = dbm_->Get(key_str, &data);
+    auto status = dbm_->Get(aux_data_key(seqnum), &data);
     if (status.IsOK()) {
         return data;
     } else {

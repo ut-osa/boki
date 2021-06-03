@@ -37,6 +37,10 @@ protected:
     virtual void BackgroundThreadMain(int eventfd) = 0;
     virtual void SendShardProgressIfNeeded() = 0;
 
+    void LogCachePut(const LogMetaData& log_metadata,
+                     std::span<const uint64_t> user_tags,
+                     std::span<const char> log_data);
+    std::optional<LogEntry> LogCacheGet(uint32_t logspace_id, uint64_t localid);
     void LogCachePutAuxData(uint64_t seqnum, std::span<const char> data);
     std::optional<std::string> LogCacheGetAuxData(uint64_t seqnum);
 

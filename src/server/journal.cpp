@@ -17,6 +17,7 @@ JournalFile::JournalFile(IOWorker* owner, int file_id)
     : state_(kEmpty),
       owner_(owner),
       fd_(-1),
+      ref_count_(1),
       appended_bytes_(0),
       flushed_bytes_(0),
       flush_fn_scheduled_(false) {
@@ -24,13 +25,13 @@ JournalFile::JournalFile(IOWorker* owner, int file_id)
 }
 
 JournalFile::~JournalFile() {
-    DCHECK(state_ == kClosed || state_ == kRemoved);
+    DCHECK(current_state() == kClosed || current_state() == kRemoved);
 }
 
 void JournalFile::AppendRecord(uint16_t type, std::span<const char> payload,
                                AppendCallback cb) {
     DCHECK(owner_->WithinMyEventLoopThread());
-    DCHECK(state_ == kCreated);
+    DCHECK(current_state() == kActive);
     protocol::JournalRecordHeader hdr = {
         .type         = type,
         .payload_size = gsl::narrow_cast<uint16_t>(payload.size()),
@@ -48,34 +49,64 @@ void JournalFile::AppendRecord(uint16_t type, std::span<const char> payload,
     ScheduleFlush();
 }
 
-void JournalFile::Close(std::function<void()> cb) {
+namespace {
+void ReadBytes(int fd, size_t offset, size_t size, char* buffer) {
+    size_t pos = 0;
+    while (pos < size) {
+        ssize_t nread = pread(fd, buffer + pos, size - pos,
+                              static_cast<off_t>(offset + pos));
+        if (nread == 0) {
+            LOG(FATAL) << "Reach the end of file!";
+        }
+        if (nread < 0) {
+            if (errno == EAGAIN || errno == EINTR) {
+                continue;
+            }
+            PLOG(FATAL) << "pread failed";
+        }
+        pos += static_cast<size_t>(nread);
+    }
+}
+}  // namespace
+
+size_t JournalFile::ReadRecord(size_t offset, uint16_t* type,
+                               utils::AppendableBuffer* buffer) {
+    State state = current_state();
+    if (state == kClosing || state == kClosed || state == kRemoved) {
+        LOG_F(FATAL, "Journal file {} has closed, cannot read from it", file_path_);
+    }
+    protocol::JournalRecordHeader hdr;
+    ReadBytes(fd_, offset, sizeof(hdr), reinterpret_cast<char*>(&hdr));
+    buffer->AppendEmptyData(hdr.payload_size);
+    char* buf_ptr = buffer->data() + (buffer->length() - hdr.payload_size);
+    ReadBytes(fd_, offset + sizeof(hdr), hdr.payload_size, buf_ptr);
+    *type = hdr.type;
+    return hdr.payload_size;
+}
+
+void JournalFile::Finalize() {
     DCHECK(owner_->WithinMyEventLoopThread());
-    if (state_ == kClosing) {
-        LOG_F(WARNING, "Journal file {} is closing", file_path_);
-        return;
-    }
-    if (state_ == kClosed) {
-        LOG_F(WARNING, "Journal file {} already closed", file_path_);
-        return;
-    }
-    close_cb_ = std::move(cb);
-    state_ = kClosing;
+    DCHECK(current_state() == kActive);
     if (flushed_bytes_ == appended_bytes_) {
-        CloseFd();
+        Unref();
+        transit_state(kFinalized);
+    } else {
+        transit_state(kFinalizing);
     }
 }
 
 void JournalFile::Remove() {
-    if (state_ == kRemoved) {
-        LOG_F(WARNING, "Journal file {} already removed", file_path_);
-        return;
-    }
-    DCHECK(state_ == kClosed);
+    DCHECK(current_state() == kClosed);
     if (!fs_utils::Remove(file_path_)) {
         LOG(FATAL) << "Failed to remove file " << file_path_;
     }
     LOG_F(INFO, "Journal file {} removed", file_path_);
-    state_ = kRemoved;
+    transit_state(kRemoved);
+}
+
+void JournalFile::RefBecomesZero() {
+    owner_->ScheduleFunction(
+        nullptr, absl::bind_front(&JournalFile::CloseFd, this));
 }
 
 void JournalFile::Create(int file_id) {
@@ -87,7 +118,7 @@ void JournalFile::Create(int file_id) {
     } else {
         LOG(FATAL) << "Failed to create file " << file_path;
     }
-    int flags = O_WRONLY | O_APPEND | O_NONBLOCK;
+    int flags = O_RDWR | O_APPEND | O_NONBLOCK;
     if (absl::GetFlag(FLAGS_journal_file_openflag_dsync)) {
         flags |= O_DSYNC;
     }
@@ -99,23 +130,22 @@ void JournalFile::Create(int file_id) {
     file_path_ = std::move(file_path);
     fd_ = fd.value();
     URING_DCHECK_OK(owner_->io_uring()->RegisterFd(fd_));
-    state_ = kCreated;
+    transit_state(kActive);
 }
 
 void JournalFile::CloseFd() {
+    DCHECK(owner_->WithinMyEventLoopThread());
+    DCHECK(current_state() == kFinalized);
     DCHECK_EQ(appended_bytes_, flushed_bytes_);
-    DCHECK(state_ == kClosing);
     URING_DCHECK_OK(owner_->io_uring()->Close(fd_, [this] () {
         LOG_F(INFO, "Journal file {} closed", file_path_);
         fd_ = -1;
-        state_ = kClosed;
-        close_cb_();
+        transit_state(kClosed);
     }));
 }
 
 void JournalFile::ScheduleFlush() {
     DCHECK(owner_->WithinMyEventLoopThread());
-    DCHECK(state_ == kCreated || state_ == kClosing);
     DCHECK(!write_buffer_.empty());
     if (!flush_fn_scheduled_) {
         owner_->ScheduleIdleFunction(
@@ -145,8 +175,9 @@ void JournalFile::FlushRecords() {
             flush_buffer_.Reset();
             if (!write_buffer_.empty()) {
                 ScheduleFlush();
-            } else if (state_ == kClosing && flushed_bytes_ == appended_bytes_) {
-                CloseFd();
+            } else if (flushed_bytes_ == appended_bytes_ && current_state() == kFinalizing) {
+                Unref();
+                transit_state(kFinalized);
             }
         }
     ));
