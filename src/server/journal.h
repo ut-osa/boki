@@ -23,7 +23,9 @@ public:
     size_t flushed_bytes() const { return flushed_bytes_; }
 
     using AppendCallback = std::function<void(JournalFile* /* file */, size_t /* offset */)>;
-    void AppendRecord(uint16_t type, std::span<const char> payload, AppendCallback cb);
+    void AppendRecord(uint16_t type,
+                      std::initializer_list<std::span<const char>> payload_vec,
+                      AppendCallback cb);
 
     size_t ReadRecord(size_t offset, uint16_t* type, utils::AppendableBuffer* buffer);
 
@@ -39,6 +41,11 @@ public:
         if (__FAAS_PREDICT_FALSE(value == 1)) {
             RefBecomesZero();
         }
+#if DCHECK_IS_ON()
+        if (__FAAS_PREDICT_FALSE(value <= 0)) {
+            LOG(FATAL) << "The reference counter is less than zero!";
+        }
+#endif
     }
 
 private:

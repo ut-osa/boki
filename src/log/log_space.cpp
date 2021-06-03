@@ -233,10 +233,8 @@ LogStorage::LogStorage(uint16_t storage_id, const View* view, uint16_t sequencer
 
 LogStorage::~LogStorage() {}
 
-bool LogStorage::Store(const LogMetaData& log_metadata, std::span<const uint64_t> user_tags,
-                       std::span<const char> log_data) {
-    uint64_t localid = log_metadata.localid;
-    DCHECK_EQ(size_t{log_metadata.data_size}, log_data.size());
+bool LogStorage::Store(Entry new_entry) {
+    uint64_t localid = new_entry.metadata.localid;
     uint16_t engine_id = gsl::narrow_cast<uint16_t>(bits::HighHalf64(localid));
     HVLOG_F(1, "Store log from engine {} with localid {}",
             engine_id, bits::HexStr0x(localid));
@@ -245,11 +243,10 @@ bool LogStorage::Store(const LogMetaData& log_metadata, std::span<const uint64_t
                storage_node_->node_id(), engine_id);
         return false;
     }
-    pending_log_entries_[localid].reset(new LogEntry {
-        .metadata = log_metadata,
-        .user_tags = UserTagVec(user_tags.begin(), user_tags.end()),
-        .data = std::string(log_data.data(), log_data.size()),
-    });
+    Entry* entry = entry_pool_.Get();
+    *entry = std::move(new_entry);
+    entry->journal_file->Ref();
+    pending_log_entries_[localid] = entry;
     AdvanceShardProgress(engine_id);
     return true;
 }
@@ -263,12 +260,15 @@ void LogStorage::ReadAt(const protocol::SharedLogMessage& request) {
     }
     ReadResult result = {
         .status = ReadResult::kFailed,
-        .log_entry = nullptr,
         .original_request = request
     };
     if (live_log_entries_.contains(seqnum)) {
-        result.status = ReadResult::kOK;
-        result.log_entry = live_log_entries_[seqnum];
+        const Entry* entry = live_log_entries_.at(seqnum);
+        entry->journal_file->Ref();
+        result.status = ReadResult::kLookupJournal;
+        result.localid = entry->metadata.localid;
+        result.journal_file = entry->journal_file;
+        result.journal_offset = entry->journal_offset;
     } else if (seqnum < persisted_seqnum_position_) {
         result.status = ReadResult::kLookupDB;
     } else {
@@ -327,7 +327,6 @@ void LogStorage::OnNewLogs(uint32_t metalog_seqnum,
         HLOG_F(WARNING, "Read request for seqnum {} has past", bits::HexStr0x(iter->first));
         pending_read_results_.push_back(ReadResult {
             .status = ReadResult::kFailed,
-            .log_entry = nullptr,
             .original_request = iter->second
         });
         iter = pending_read_requests_.erase(iter);
@@ -340,12 +339,11 @@ void LogStorage::OnNewLogs(uint32_t metalog_seqnum,
                    bits::HexStr0x(localid));
         }
         // Build the log entry for live_log_entries_
-        LogEntry* log_entry = pending_log_entries_[localid].release();
+        Entry* log_entry = pending_log_entries_[localid];
         pending_log_entries_.erase(localid);
         HVLOG_F(1, "Finalize the log entry (seqnum={}, localid={})",
                 bits::HexStr0x(seqnum), bits::HexStr0x(localid));
         log_entry->metadata.seqnum = seqnum;
-        std::shared_ptr<const LogEntry> log_entry_ptr(log_entry);
         // Add the new entry to index data
         index_data_.add_seqnum_halves(bits::LowHalf64(seqnum));
         index_data_.add_engine_ids(bits::HighHalf64(localid));
@@ -357,18 +355,21 @@ void LogStorage::OnNewLogs(uint32_t metalog_seqnum,
         // Update live_seqnums_ and live_log_entries_
         DCHECK(live_seqnums_.empty() || seqnum > live_seqnums_.back());
         live_seqnums_.push_back(seqnum);
-        live_log_entries_[seqnum] = log_entry_ptr;
+        live_log_entries_[seqnum] = log_entry;
         DCHECK_EQ(live_seqnums_.size(), live_log_entries_.size());
         ShrinkLiveEntriesIfNeeded();
         // Will persist the new entry to DB
         DCHECK(entries_for_persistence_.empty()
                  || seqnum > entries_for_persistence_.back()->metadata.seqnum);
-        entries_for_persistence_.push_back(log_entry_ptr.get());
+        entries_for_persistence_.push_back(log_entry);
         // Check if we have read request on it
         while (iter != pending_read_requests_.end() && iter->first == seqnum) {
+            log_entry->journal_file->Ref();
             pending_read_results_.push_back(ReadResult {
-                .status = ReadResult::kOK,
-                .log_entry = log_entry_ptr,
+                .status = ReadResult::kLookupJournal,
+                .localid = localid,
+                .journal_file = log_entry->journal_file,
+                .journal_offset = log_entry->journal_offset,
                 .original_request = iter->second
             });
             iter = pending_read_requests_.erase(iter);

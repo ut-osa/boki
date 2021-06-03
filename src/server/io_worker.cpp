@@ -287,13 +287,24 @@ void IOWorker::CloseWorkerFds() {
     }));
 }
 
-void IOWorker::JournalAppend(uint16_t type, std::span<const char> payload,
+void IOWorker::JournalAppend(uint16_t type,
+                             std::span<const char> payload,
                              JournalAppendCallback cb) {
     DCHECK(WithinMyEventLoopThread());
     if (current_journal_file_ == nullptr) {
         HLOG(FATAL) << "Journal not enabled!";
     }
-    current_journal_file_->AppendRecord(type, payload, std::move(cb));
+    current_journal_file_->AppendRecord(type, {payload}, std::move(cb));
+}
+
+void IOWorker::JournalAppend(uint16_t type,
+                             std::span<const char> payload1, std::span<const char> payload2,
+                             JournalAppendCallback cb) {
+    DCHECK(WithinMyEventLoopThread());
+    if (current_journal_file_ == nullptr) {
+        HLOG(FATAL) << "Journal not enabled!";
+    }
+    current_journal_file_->AppendRecord(type, {payload1, payload2}, std::move(cb));
 }
 
 void IOWorker::JournalMonitorCallback() {

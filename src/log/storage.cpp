@@ -5,6 +5,7 @@
 #include "utils/bits.h"
 #include "utils/io.h"
 #include "utils/timerfd.h"
+#include "server/constants.h"
 
 namespace faas {
 namespace log {
@@ -155,26 +156,49 @@ void Storage::HandleReadAtRequest(const SharedLogMessage& request) {
 void Storage::HandleReplicateRequest(const SharedLogMessage& message,
                                      std::span<const char> payload) {
     DCHECK(SharedLogMessageHelper::GetOpType(message) == SharedLogOpType::REPLICATE);
+    const View* view = nullptr;
+    {
+        absl::ReaderMutexLock view_lk(&view_mu_);
+        ONHOLD_IF_FROM_FUTURE_VIEW(message, payload);
+        IGNORE_IF_FROM_PAST_VIEW(message);
+        view = current_view_;
+    }
+
     LogMetaData metadata = log_utils::GetMetaDataFromMessage(message);
     std::span<const uint64_t> user_tags;
     std::span<const char> log_data;
     log_utils::SplitPayloadForMessage(message, payload, &user_tags, &log_data,
                                       /* aux_data= */ nullptr);
     LogCachePut(metadata, user_tags, log_data);
-    
-    {
+
+    UserTagVec tag_vec(user_tags.begin(), user_tags.end());
+    auto callback = [this, view, metadata, tag_vec] (server::JournalFile* journal_file,
+                                                     size_t offset) {
         absl::ReaderMutexLock view_lk(&view_mu_);
-        ONHOLD_IF_FROM_FUTURE_VIEW(message, payload);
-        IGNORE_IF_FROM_PAST_VIEW(message);
-        auto storage_ptr = storage_collection_.GetLogSpaceChecked(message.logspace_id);
+        if (current_view_ != view) {
+            return;
+        }
+        uint32_t logspace_id = bits::HighHalf64(metadata.seqnum);
+        auto storage_ptr = storage_collection_.GetLogSpaceChecked(logspace_id);
         {
             auto locked_storage = storage_ptr.Lock();
             RETURN_IF_LOGSPACE_FINALIZED(locked_storage);
-            if (!locked_storage->Store(metadata, user_tags, log_data)) {
+            bool success = locked_storage->Store(LogStorage::Entry {
+                .metadata       = metadata,
+                .user_tags      = std::move(tag_vec),
+                .journal_file   = journal_file,
+                .journal_offset = offset
+            });
+            if (!success) {
                 HLOG(ERROR) << "Failed to store log entry";
             }
         }
-    }
+    };
+
+    std::span<const char> msg_data(reinterpret_cast<const char*>(&message),
+                                   sizeof(SharedLogMessage));
+    CurrentIOWorkerChecked()->JournalAppend(
+        kLogEntryJournalRecordType, msg_data, payload, callback);
 }
 
 void Storage::OnRecvNewMetaLogs(const SharedLogMessage& message,
@@ -238,7 +262,8 @@ void Storage::ProcessReadResults(const LogStorage::ReadResultVec& results) {
         const SharedLogMessage& request = result.original_request;
         SharedLogMessage response;
         switch (result.status) {
-        case LogStorage::ReadResult::kOK:
+        case LogStorage::ReadResult::kLookupJournal:
+/*
             response = SharedLogMessageHelper::NewReadOkResponse();
             log_utils::PopulateMetaDataToMessage(result.log_entry->metadata, &response);
             DCHECK_EQ(response.logspace_id, request.logspace_id);
@@ -247,6 +272,8 @@ void Storage::ProcessReadResults(const LogStorage::ReadResultVec& results) {
             SendEngineLogResult(request, &response,
                                 VECTOR_AS_CHAR_SPAN(result.log_entry->user_tags),
                                 STRING_AS_SPAN(result.log_entry->data));
+*/
+            NOT_IMPLEMENTED();
             break;
         case LogStorage::ReadResult::kLookupDB:
             ProcessReadFromDB(request);
@@ -361,7 +388,7 @@ void Storage::SendShardProgressIfNeeded() {
 }
 
 void Storage::FlushLogEntries() {
-    absl::InlinedVector<const LogEntry*, 32> log_entires;
+    absl::InlinedVector<const LogStorage::Entry*, 32> log_entires;
     {
         absl::MutexLock lk(&flush_thread_mu_);
         log_entires = std::move(log_entires_for_flush_);
@@ -374,7 +401,8 @@ void Storage::FlushLogEntries() {
     absl::flat_hash_map<uint32_t, uint64_t> new_positions;
     HVLOG_F(1, "Will flush {} log entries", log_entires.size());
     for (const auto& log_entry : log_entires) {
-        PutLogEntryToDB(*log_entry);
+        NOT_IMPLEMENTED();
+        /* PutLogEntryToDB(*log_entry); */ 
         uint64_t seqnum = log_entry->metadata.seqnum;
         uint32_t logspace_id = bits::HighHalf64(seqnum);
         if (new_positions.contains(logspace_id)) {

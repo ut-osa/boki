@@ -2,6 +2,7 @@
 
 #include "log/log_space_base.h"
 #include "common/stat.h"
+#include "server/journal.h"
 
 namespace faas {
 namespace log {
@@ -87,18 +88,25 @@ public:
     LogStorage(uint16_t storage_id, const View* view, uint16_t sequencer_id);
     ~LogStorage();
 
-    bool Store(const LogMetaData& log_metadata, std::span<const uint64_t> user_tags,
-               std::span<const char> log_data);
+    struct Entry {
+        LogMetaData          metadata;
+        UserTagVec           user_tags;
+        server::JournalFile* journal_file;
+        size_t               journal_offset;
+    };
+    bool Store(Entry new_entry);
     void ReadAt(const protocol::SharedLogMessage& request);
 
-    using LogEntryVec = absl::InlinedVector<const LogEntry*, 4>;
+    using LogEntryVec = absl::InlinedVector<const Entry*, 4>;
     void GrabLogEntriesForPersistence(LogEntryVec* log_entires);
     void LogEntriesPersisted(uint64_t new_position);
 
     struct ReadResult {
-        enum Status { kOK, kLookupDB, kFailed };
-        Status status;
-        std::shared_ptr<const LogEntry> log_entry;
+        enum Status { kLookupJournal, kLookupDB, kFailed };
+        Status                     status;
+        uint64_t                   localid{0};
+        server::JournalFile*       journal_file{nullptr};
+        size_t                     journal_offset{0};
         protocol::SharedLogMessage original_request;
     };
     using ReadResultVec = absl::InlinedVector<ReadResult, 4>;
@@ -114,16 +122,14 @@ private:
     absl::flat_hash_map</* engine_id */ uint16_t,
                         /* localid */ uint32_t> shard_progrsses_;
 
+    utils::SimpleObjectPool<Entry> entry_pool_;
+
     uint64_t persisted_seqnum_position_;
     std::deque<uint64_t> live_seqnums_;
-    absl::flat_hash_map</* seqnum */ uint64_t,
-                        std::shared_ptr<const LogEntry>>
-        live_log_entries_;
+    absl::flat_hash_map</* seqnum */ uint64_t, const Entry*> live_log_entries_;
     LogEntryVec entries_for_persistence_;
 
-    absl::flat_hash_map</* localid */ uint64_t,
-                        std::unique_ptr<LogEntry>>
-        pending_log_entries_;
+    absl::flat_hash_map</* localid */ uint64_t, Entry*> pending_log_entries_;
 
     std::multimap</* seqnum */ uint64_t,
                   protocol::SharedLogMessage> pending_read_requests_;

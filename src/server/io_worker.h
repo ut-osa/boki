@@ -92,7 +92,11 @@ public:
     void ScheduleIdleFunction(ConnectionBase* owner, std::function<void()> fn);
 
     using JournalAppendCallback = JournalFile::AppendCallback;
-    void JournalAppend(uint16_t type, std::span<const char> payload,
+    void JournalAppend(uint16_t type,
+                       std::span<const char> payload,
+                       JournalAppendCallback cb);
+    void JournalAppend(uint16_t type,
+                       std::span<const char> payload1, std::span<const char> payload2,
                        JournalAppendCallback cb);
     void JournalMonitorCallback();
 

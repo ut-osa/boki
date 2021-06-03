@@ -28,23 +28,30 @@ JournalFile::~JournalFile() {
     DCHECK(current_state() == kClosed || current_state() == kRemoved);
 }
 
-void JournalFile::AppendRecord(uint16_t type, std::span<const char> payload,
+void JournalFile::AppendRecord(uint16_t type,
+                               std::initializer_list<std::span<const char>> payload_vec,
                                AppendCallback cb) {
     DCHECK(owner_->WithinMyEventLoopThread());
     DCHECK(current_state() == kActive);
+    size_t payload_size = 0;
+    for (const auto& payload : payload_vec) {
+        payload_size += payload.size();
+    }
     protocol::JournalRecordHeader hdr = {
         .type         = type,
-        .payload_size = gsl::narrow_cast<uint16_t>(payload.size()),
+        .payload_size = gsl::narrow_cast<uint32_t>(payload_size),
         .timestamp    = GetRealtimeNanoTimestamp(),
     };
-    size_t record_size = sizeof(hdr) + payload.size();
+    size_t record_size = sizeof(hdr) + payload_size;
     OngoingAppend* append_op = append_op_pool_.Get();
     append_op->offset = appended_bytes_;
     append_op->record_size = record_size;
     append_op->cb = std::move(cb);
     ongoing_appends_[append_op->offset] = append_op;
     write_buffer_.AppendData(reinterpret_cast<const char*>(&hdr), sizeof(hdr));
-    write_buffer_.AppendData(payload);
+    for (const auto& payload : payload_vec) {
+        write_buffer_.AppendData(payload);
+    }
     appended_bytes_ += record_size;
     ScheduleFlush();
 }

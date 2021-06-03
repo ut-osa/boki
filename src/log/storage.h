@@ -25,7 +25,7 @@ private:
     log_utils::FutureRequests future_requests_;
 
     absl::Mutex flush_thread_mu_;
-    absl::InlinedVector<const LogEntry*, 32>
+    absl::InlinedVector<const LogStorage::Entry*, 32>
         log_entires_for_flush_     ABSL_GUARDED_BY(flush_thread_mu_);
     stat::StatisticsCollector<int>
         log_entires_flush_stat_    ABSL_GUARDED_BY(flush_thread_mu_);
