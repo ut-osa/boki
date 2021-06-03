@@ -88,8 +88,8 @@ void JournalFile::Finalize() {
     DCHECK(owner_->WithinMyEventLoopThread());
     DCHECK(current_state() == kActive);
     if (flushed_bytes_ == appended_bytes_) {
-        Unref();
         transit_state(kFinalized);
+        Unref();
     } else {
         transit_state(kFinalizing);
     }
@@ -137,6 +137,7 @@ void JournalFile::CloseFd() {
     DCHECK(owner_->WithinMyEventLoopThread());
     DCHECK(current_state() == kFinalized);
     DCHECK_EQ(appended_bytes_, flushed_bytes_);
+    transit_state(kClosing);
     URING_DCHECK_OK(owner_->io_uring()->Close(fd_, [this] () {
         LOG_F(INFO, "Journal file {} closed", file_path_);
         fd_ = -1;
@@ -176,8 +177,8 @@ void JournalFile::FlushRecords() {
             if (!write_buffer_.empty()) {
                 ScheduleFlush();
             } else if (flushed_bytes_ == appended_bytes_ && current_state() == kFinalizing) {
-                Unref();
                 transit_state(kFinalized);
+                Unref();
             }
         }
     ));

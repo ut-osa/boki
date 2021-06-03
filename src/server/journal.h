@@ -66,8 +66,6 @@ private:
     utils::AppendableBuffer flush_buffer_;
     bool flush_fn_scheduled_;
 
-    std::function<void()> close_cb_;
-
     void Create(int file_id);
     void CloseFd();
     void ScheduleFlush();
