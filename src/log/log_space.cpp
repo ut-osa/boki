@@ -310,6 +310,10 @@ std::optional<std::vector<uint32_t>> LogStorage::GrabShardProgressForSending() {
     if (!shard_progrss_dirty_) {
         return std::nullopt;
     }
+    size_t max_size = absl::GetFlag(FLAGS_slog_storage_max_live_entries);
+    if (live_seqnums_.size() > max_size * 2) {
+        return std::nullopt;
+    }
     std::vector<uint32_t> progress;
     progress.reserve(storage_node_->GetSourceEngineNodes().size());
     for (uint16_t engine_id : storage_node_->GetSourceEngineNodes()) {
