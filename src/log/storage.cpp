@@ -409,6 +409,8 @@ void Storage::FlushLogEntries(std::span<const LogStorage::Entry*> entries) {
 }
 
 void Storage::CommitLogEntries(std::span<const LogStorage::Entry*> entries) {
+    HVLOG_F(1, "Will commit the persistence of {} entries", entries.size());
+
     absl::flat_hash_map<uint32_t, uint64_t> new_positions;
     for (const LogStorage::Entry* entry : entries) {
         uint64_t seqnum = entry->metadata.seqnum;

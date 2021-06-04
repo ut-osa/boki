@@ -87,11 +87,12 @@ protected:
         std::deque<std::pair</* seqnum */ uint64_t,
                              const LogStorage::Entry*>>
             queue_ ABSL_GUARDED_BY(mu_);
+        uint64_t next_seqnum_ ABSL_GUARDED_BY(mu_);
 
-        uint64_t next_seqnum_        ABSL_GUARDED_BY(mu_);
-        uint64_t commited_seqnum_    ABSL_GUARDED_BY(mu_);
+        absl::Mutex commit_mu_;
+        uint64_t commited_seqnum_    ABSL_GUARDED_BY(commit_mu_);
         std::map</* seqnum */ uint64_t, const LogStorage::Entry*>
-            flushed_entries_         ABSL_GUARDED_BY(mu_);
+            flushed_entries_         ABSL_GUARDED_BY(commit_mu_);
 
         stat::StatisticsCollector<int> queue_length_stat_ ABSL_GUARDED_BY(mu_);
 

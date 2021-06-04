@@ -334,47 +334,52 @@ void StorageBase::DBFlusher::JoinAllThreads() {
 void StorageBase::DBFlusher::WorkerThreadMain(int thread_index) {
     std::vector<const LogStorage::Entry*> entries;
     entries.reserve(kBatchSize);
-    while (true) {
+    while (!should_stop()) {
         mu_.Lock();
         while (queue_.empty()) {
             idle_workers_++;
+            VLOG(1) << "Nothing to flush, will sleep to wait";
             cv_.Wait(&mu_);
             if (should_stop()) {
                 mu_.Unlock();
                 return;
             }
             idle_workers_--;
+            DCHECK_GE(idle_workers_, 0);
         }
         uint64_t start_seqnum = queue_.front().first;
         uint64_t end_seqnum = start_seqnum;
         entries.clear();
         while (entries.size() < kBatchSize && !queue_.empty()) {
-            start_seqnum = queue_.front().first + 1;
+            end_seqnum = queue_.front().first + 1;
             entries.push_back(queue_.front().second);
             queue_.pop_front();
         }
         mu_.Unlock();
+
         DCHECK_LT(start_seqnum, end_seqnum);
         DCHECK_EQ(static_cast<size_t>(end_seqnum - start_seqnum), entries.size());
         DCHECK_LE(entries.size(), kBatchSize);
         storage_->FlushLogEntries(
             std::span<const LogStorage::Entry*>(entries.data(), entries.size()));
-        mu_.Lock();
-        for (size_t i = 0; i < entries.size(); i++) {
-            uint64_t seqnum = start_seqnum + static_cast<uint64_t>(i);
-            flushed_entries_[seqnum] = entries[i];
+        {
+            absl::MutexLock lk(&commit_mu_);
+            for (size_t i = 0; i < entries.size(); i++) {
+                uint64_t seqnum = start_seqnum + static_cast<uint64_t>(i);
+                flushed_entries_[seqnum] = entries[i];
+            }
+            entries.clear();
+            auto iter = flushed_entries_.begin();
+            while (iter->first == commited_seqnum_) {
+                entries.push_back(iter->second);
+                iter = flushed_entries_.erase(iter);
+                commited_seqnum_++;
+            }
+            storage_->CommitLogEntries(
+                std::span<const LogStorage::Entry*>(entries.data(), entries.size()));
         }
-        entries.clear();
-        auto iter = flushed_entries_.begin();
-        while (iter->first == commited_seqnum_) {
-            entries.push_back(iter->second);
-            iter = flushed_entries_.erase(iter);
-            commited_seqnum_++;
-        }
-        storage_->CommitLogEntries(
-            std::span<const LogStorage::Entry*>(entries.data(), entries.size()));
-        mu_.Unlock();
     }
+    mu_.AssertNotHeld();
 }
 
 }  // namespace log
