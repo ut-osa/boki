@@ -18,7 +18,6 @@ namespace utils {
 
 #ifdef __FAAS_USE_JEMALLOC
 
-static constexpr size_t kAllocatedThresholdForReport   = 1024;          // 1KB
 static constexpr size_t kAllocatedThresholdForProfDump = size_t{4}<<30; // 4GB
 
 namespace {
@@ -78,8 +77,8 @@ void PrintMallocStat() {
     size_t old_allocated = prev_allocated.load(std::memory_order_relaxed);
     size_t delta = gsl::narrow_cast<size_t>(std::abs(
         gsl::narrow_cast<int64_t>(old_allocated) - gsl::narrow_cast<int64_t>(allocated)));
-    if (delta < kAllocatedThresholdForReport) {
-        // The difference is too tiny, will not print stats
+    if (delta < old_allocated / 20) {
+        // The difference is belove 5%, will not print stats
         return;
     }
     prev_allocated.store(allocated);
