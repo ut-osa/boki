@@ -17,11 +17,12 @@ do
   shift
 done
 
-COMPILE_FLAGS="-fPIE -fdata-sections -ffunction-sections -march=haswell"
+COMPILE_FLAGS="-fPIE -march=haswell"
 if [ ${ENABLE_DEBUG} == "yes" ]; then
   COMPILE_FLAGS="${COMPILE_FLAGS} -DDEBUG -g -Og"
 else
   COMPILE_FLAGS="${COMPILE_FLAGS} -DNDEBUG -O3"
+  COMPILE_FLAGS="${COMPILE_FLAGS} -fdata-sections -ffunction-sections"  # used for -Wl,--gc-sections
 fi
 
 export CFLAGS="${CFLAGS} ${COMPILE_FLAGS}"

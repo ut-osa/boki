@@ -7,10 +7,10 @@ SRC_EXT = cpp
 SRC_PATH = ./src
 # General compiler flags
 COMPILE_FLAGS = -std=c++17 -march=haswell -D__FAAS_SRC \
-	-Wall -Wextra -Werror -Wno-unused-parameter \
-	-fPIE -fdata-sections -ffunction-sections
+	-fPIE -Wall -Wextra -Werror -Wno-unused-parameter \
 # Additional release-specific flags
-RCOMPILE_FLAGS = -DNDEBUG -O3
+RCOMPILE_FLAGS = -DNDEBUG -O3 \
+	-fdata-sections -ffunction-sections  # used for -Wl,--gc-sections
 # Additional debug-specific flags
 DCOMPILE_FLAGS = -DDEBUG -g -Og
 # Add additional include paths
@@ -29,10 +29,9 @@ LINK_FLAGS = -Ldeps/out/lib \
 	-luring -lprotobuf-lite -lrocksdb -ltkrzw -lzookeeper_st \
 	-Wl,--start-group $(ABSL_LIBRARIES) -Wl,--end-group \
 	-lzstd -ljemalloc \
-	-Wl,-Bdynamic -lpthread -ldl \
-	-Wl,--gc-sections
+	-Wl,-Bdynamic -lpthread -ldl
 # Additional release-specific linker settings
-RLINK_FLAGS =
+RLINK_FLAGS = -Wl,--gc-sections
 # Additional debug-specific linker settings
 DLINK_FLAGS =
 #### END PROJECT SETTINGS ####
