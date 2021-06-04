@@ -90,12 +90,14 @@ cd $BASE_DIR/deps/nghttp2 && rm -rf build && mkdir -p build && cd build && \
   rm -rf $BASE_DIR/deps/nghttp2/build
 
 # Build zookeeper-client-c
+CFLAGS_BAK=${CFLAGS}
+export CFLAGS="${CFLAGS} -Wno-unused-but-set-variable"   # Fix gcc compilation
 cd $BASE_DIR/deps/zookeeper-client-c && autoreconf -if && \
-  CFLAGS="${CFLAGS} -Wno-unused-but-set-variable" \  # Fix gcc compilation
   ./configure --prefix=${DEPS_INSTALL_PATH} --disable-shared \
               --enable-debug=${ENABLE_DEBUG} \
               --without-syncapi --without-cppunit --without-openssl && \
   make -j$(nproc) install && make clean
+export CFLAGS=${CFLAGS_BAK}
 
 # Build tkrzw
 cd $BASE_DIR/deps/tkrzw && \
