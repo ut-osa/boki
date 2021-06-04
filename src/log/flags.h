@@ -21,5 +21,4 @@ ABSL_DECLARE_FLAG(bool, slog_engine_propagate_auxdata);
 ABSL_DECLARE_FLAG(int, slog_storage_cache_cap_mb);
 ABSL_DECLARE_FLAG(std::string, slog_storage_backend);
 ABSL_DECLARE_FLAG(size_t, slog_storage_flusher_threads);
-ABSL_DECLARE_FLAG(int, slog_storage_bgthread_interval_ms);
 ABSL_DECLARE_FLAG(size_t, slog_storage_max_live_entries);

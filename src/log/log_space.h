@@ -89,6 +89,7 @@ public:
     ~LogStorage();
 
     struct Entry {
+        int64_t              recv_timestamp;
         LogMetaData          metadata;
         UserTagVec           user_tags;
         server::JournalFile* journal_file;
@@ -137,6 +138,7 @@ private:
 
     IndexDataProto index_data_;
 
+    stat::StatisticsCollector<int> journal_delay_stat_;
     stat::StatisticsCollector<int> live_entries_stat_;
 
     void OnNewLogs(uint32_t metalog_seqnum,

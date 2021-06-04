@@ -169,25 +169,27 @@ void Storage::HandleReplicateRequest(const SharedLogMessage& message,
                                       /* aux_data= */ nullptr);
     log_cache()->PutByLocalId(metadata, user_tags, log_data);
 
-    UserTagVec tag_vec(user_tags.begin(), user_tags.end());
-    auto callback = [this, view, metadata, tag_vec] (server::JournalFile* journal_file,
-                                                     size_t offset) {
+    LogStorage::Entry entry {
+        .recv_timestamp = GetMonotonicMicroTimestamp(),
+        .metadata       = std::move(metadata),
+        .user_tags      = UserTagVec(user_tags.begin(), user_tags.end()),
+        .journal_file   = nullptr,
+        .journal_offset = 0
+    };
+    auto callback = [this, view, entry] (server::JournalFile* file, size_t offset) {
         absl::ReaderMutexLock view_lk(&view_mu_);
         if (current_view_ != view) {
             return;
         }
-        uint32_t logspace_id = bits::HighHalf64(metadata.seqnum);
+        uint32_t logspace_id = bits::HighHalf64(entry.metadata.seqnum);
         auto storage_ptr = storage_collection_.GetLogSpaceChecked(logspace_id);
         {
             auto locked_storage = storage_ptr.Lock();
             RETURN_IF_LOGSPACE_FINALIZED(locked_storage);
-            bool success = locked_storage->Store(LogStorage::Entry {
-                .metadata       = metadata,
-                .user_tags      = std::move(tag_vec),
-                .journal_file   = journal_file,
-                .journal_offset = offset
-            });
-            if (!success) {
+            LogStorage::Entry new_entry = std::move(entry);
+            new_entry.journal_file = file;
+            new_entry.journal_offset = offset;
+            if (!locked_storage->Store(std::move(new_entry))) {
                 HLOG(ERROR) << "Failed to store log entry";
             }
         }
