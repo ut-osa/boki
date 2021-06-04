@@ -17,7 +17,7 @@ do
   shift
 done
 
-COMPILE_FLAGS="-fdata-sections -ffunction-sections -march=haswell"
+COMPILE_FLAGS="-fPIE -fdata-sections -ffunction-sections -march=haswell"
 if [ ${ENABLE_DEBUG} == "yes" ]; then
   COMPILE_FLAGS="${COMPILE_FLAGS} -DDEBUG -g -Og"
 else
