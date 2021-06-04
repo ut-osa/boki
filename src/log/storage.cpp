@@ -409,82 +409,95 @@ void Storage::SendShardProgressIfNeeded() {
 }
 
 void Storage::FlushLogEntries() {
-    absl::InlinedVector<const LogStorage::Entry*, 32> entries;
-    {
-        absl::MutexLock lk(&flush_mu_);
-        entries = std::move(log_entires_for_flush_);
-        log_entires_for_flush_.clear();
-    }
-    if (entries.empty()) {
-        return;
-    }
+    static constexpr size_t kBatchSize = 128;
 
-    HVLOG_F(1, "There are {} log entries to flush", entries.size());
-    HVLOG(1) << "First grab their data from either cache or journal";
+    std::vector<const LogStorage::Entry*> entries;
+    std::vector<LogEntry> log_entries;
+    entries.reserve(kBatchSize);
+    log_entries.reserve(kBatchSize);
 
-    absl::InlinedVector<LogEntry, 32> log_entries;
-    for (const LogStorage::Entry* entry : entries) {
-        uint32_t logspace_id = bits::HighHalf64(entry->metadata.seqnum);
-        uint64_t localid = entry->metadata.localid;
-        if (auto tmp = log_cache()->GetByLocalId(logspace_id, localid); tmp.has_value()) {
-            LogEntry log_entry = std::move(tmp.value());
-            log_entry.metadata.seqnum = entry->metadata.seqnum;
-            log_entries.push_back(std::move(log_entry));
-            flush_thread_entry_src_stat_.Tick(0);
-        } else {
-            HVLOG_F(1, "Failed to find log entry (seqnum {}, localid {}) from cache, "
-                       "read from journal instead",
-                    bits::HexStr0x(entry->metadata.seqnum), bits::HexStr0x(localid));
-            LogEntry log_entry = ReadLogEntryFromJournal(
-                entry->metadata.seqnum, entry->journal_file, entry->journal_offset);
-            DCHECK_EQ(log_entry.metadata.localid, localid);
-            log_entries.push_back(std::move(log_entry));
-            flush_thread_entry_src_stat_.Tick(1);
+    bool final_batch = false;
+    do {
+        {
+            absl::MutexLock lk(&flush_mu_);
+            while (entries.size() < kBatchSize && !log_entires_for_flush_.empty()) {
+                entries.push_back(log_entires_for_flush_.front());
+                log_entires_for_flush_.pop_front();
+            }
+            if (log_entires_for_flush_.empty()) {
+                final_batch = true;
+            }
         }
-    }
 
-    HVLOG(1) << "Then write log data to DB";
-    absl::flat_hash_map<uint32_t, uint64_t> new_positions;
-    for (const LogEntry& log_entry : log_entries) {
-        PutLogEntryToDB(log_entry);
-        uint64_t seqnum = log_entry.metadata.seqnum;
-        uint32_t logspace_id = bits::HighHalf64(seqnum);
-        if (new_positions.contains(logspace_id)) {
-            DCHECK_GE(seqnum, new_positions.at(logspace_id));
+        HVLOG_F(1, "There are {} log entries to flush", entries.size());
+        HVLOG(1) << "First grab their data from either cache or journal";
+
+        for (const LogStorage::Entry* entry : entries) {
+            uint32_t logspace_id = bits::HighHalf64(entry->metadata.seqnum);
+            uint64_t localid = entry->metadata.localid;
+            if (auto tmp = log_cache()->GetByLocalId(logspace_id, localid); tmp.has_value()) {
+                LogEntry log_entry = std::move(tmp.value());
+                log_entry.metadata.seqnum = entry->metadata.seqnum;
+                log_entries.push_back(std::move(log_entry));
+                flush_thread_entry_src_stat_.Tick(0);
+            } else {
+                HVLOG_F(1, "Failed to find log entry (seqnum {}, localid {}) from cache, "
+                        "read from journal instead",
+                        bits::HexStr0x(entry->metadata.seqnum), bits::HexStr0x(localid));
+                LogEntry log_entry = ReadLogEntryFromJournal(
+                    entry->metadata.seqnum, entry->journal_file, entry->journal_offset);
+                DCHECK_EQ(log_entry.metadata.localid, localid);
+                log_entries.push_back(std::move(log_entry));
+                flush_thread_entry_src_stat_.Tick(1);
+            }
         }
-        new_positions[logspace_id] = seqnum + 1;
-    }
 
-    std::vector<uint32_t> finalized_logspaces;
-    {
-        absl::ReaderMutexLock view_lk(&view_mu_);
-        for (const auto& [logspace_id, new_position] : new_positions) {
-            auto storage_ptr = storage_collection_.GetLogSpaceChecked(logspace_id);
-            {
-                auto locked_storage = storage_ptr.Lock();
-                locked_storage->LogEntriesPersisted(new_position);
-                if (locked_storage->finalized()
-                        && new_position >= locked_storage->seqnum_position()) {
-                    finalized_logspaces.push_back(locked_storage->identifier());
+        HVLOG(1) << "Then write log data to DB";
+        absl::flat_hash_map<uint32_t, uint64_t> new_positions;
+        for (const LogEntry& log_entry : log_entries) {
+            PutLogEntryToDB(log_entry);
+            uint64_t seqnum = log_entry.metadata.seqnum;
+            uint32_t logspace_id = bits::HighHalf64(seqnum);
+            if (new_positions.contains(logspace_id)) {
+                DCHECK_GE(seqnum, new_positions.at(logspace_id));
+            }
+            new_positions[logspace_id] = seqnum + 1;
+        }
+
+        std::vector<uint32_t> finalized_logspaces;
+        {
+            absl::ReaderMutexLock view_lk(&view_mu_);
+            for (const auto& [logspace_id, new_position] : new_positions) {
+                auto storage_ptr = storage_collection_.GetLogSpaceChecked(logspace_id);
+                {
+                    auto locked_storage = storage_ptr.Lock();
+                    locked_storage->LogEntriesPersisted(new_position);
+                    if (locked_storage->finalized()
+                            && new_position >= locked_storage->seqnum_position()) {
+                        finalized_logspaces.push_back(locked_storage->identifier());
+                    }
                 }
             }
         }
-    }
-    if (!finalized_logspaces.empty()) {
-        absl::MutexLock view_lk(&view_mu_);
-        for (uint32_t logspace_id : finalized_logspaces) {
-            if (storage_collection_.FinalizeLogSpace(logspace_id)) {
-                HLOG_F(INFO, "Finalize storage log space {}", bits::HexStr0x(logspace_id));
-            } else {
-                HLOG_F(ERROR, "Storage log space {} not active, cannot finalize",
-                       bits::HexStr0x(logspace_id));
+        if (!finalized_logspaces.empty()) {
+            absl::MutexLock view_lk(&view_mu_);
+            for (uint32_t logspace_id : finalized_logspaces) {
+                if (storage_collection_.FinalizeLogSpace(logspace_id)) {
+                    HLOG_F(INFO, "Finalize storage log space {}", bits::HexStr0x(logspace_id));
+                } else {
+                    HLOG_F(ERROR, "Storage log space {} not active, cannot finalize",
+                        bits::HexStr0x(logspace_id));
+                }
             }
         }
-    }
 
-    for (const LogEntry& log_entry : log_entries) {
-        log_cache()->PutBySeqnum(log_entry);
-    }
+        for (const LogEntry& log_entry : log_entries) {
+            log_cache()->PutBySeqnum(log_entry);
+        }
+
+        entries.clear();
+        log_entries.clear();
+    } while (!final_batch);
 }
 
 LogEntry Storage::ReadLogEntryFromJournal(uint64_t seqnum,
