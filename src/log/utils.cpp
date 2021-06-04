@@ -1,6 +1,7 @@
 #include "log/utils.h"
 
 #include "utils/bits.h"
+#include "server/constants.h"
 
 namespace faas {
 namespace log_utils {
@@ -139,13 +140,30 @@ void PopulateMetaDataToMessage(const LogMetaData& metadata, SharedLogMessage* me
     message->localid = metadata.localid;
 }
 
-// void PopulateMetaDataToMessage(const LogEntryProto& log_entry, SharedLogMessage* message) {
-//     message->logspace_id = bits::HighHalf64(log_entry.seqnum());
-//     message->user_logspace = log_entry.user_logspace();
-//     message->seqnum_lowhalf = bits::LowHalf64(log_entry.seqnum());
-//     message->num_tags = gsl::narrow_cast<uint16_t>(log_entry.user_tags_size());
-//     message->localid = log_entry.localid();
-// }
+log::LogEntry ReadLogEntryFromJournal(uint64_t seqnum,
+                                      server::JournalFile* file, size_t offset) {
+    static thread_local utils::AppendableBuffer read_buffer;
+    uint16_t record_type;
+    read_buffer.Reset();
+    size_t nread = file->ReadRecord(offset,  &record_type, &read_buffer);
+    DCHECK_EQ(record_type, kLogEntryJournalRecordType);
+    const char* buf_ptr = read_buffer.data();
+    auto message = reinterpret_cast<const SharedLogMessage*>(buf_ptr);
+    std::span<const char> payload(buf_ptr + sizeof(SharedLogMessage),
+                                  nread - sizeof(SharedLogMessage));
+    LogMetaData metadata = log_utils::GetMetaDataFromMessage(*message);
+    DCHECK_EQ(bits::HighHalf64(seqnum), bits::HighHalf64(metadata.seqnum));
+    metadata.seqnum = seqnum;
+    std::span<const uint64_t> user_tags;
+    std::span<const char> log_data;
+    log_utils::SplitPayloadForMessage(*message, payload, &user_tags, &log_data,
+                                      /* aux_data= */ nullptr);
+    return log::LogEntry {
+        .metadata = metadata,
+        .user_tags = log::UserTagVec(user_tags.begin(), user_tags.end()),
+        .data = std::string(log_data.data(), log_data.size()),
+    };
+}
 
 }  // namespace log_utils
 }  // namespace faas

@@ -24,25 +24,21 @@ using server::NodeWatcher;
 StorageBase::StorageBase(uint16_t node_id)
     : ServerBase(fmt::format("storage_{}", node_id), /* enable_journal= */ true),
       node_id_(node_id),
-      db_(nullptr),
-      background_thread_("BG", [this] { this->BackgroundThreadMain(bg_thread_eventfd_); }),
-      bg_thread_eventfd_(eventfd(0, EFD_CLOEXEC)) {}
+      db_(nullptr) {}
 
-StorageBase::~StorageBase() {
-    PCHECK(close(bg_thread_eventfd_) == 0) << "Failed to close eventfd";
-}
+StorageBase::~StorageBase() {}
 
 void StorageBase::StartInternal() {
     SetupDB();
     SetupZKWatchers();
     SetupTimers();
     log_cache_.emplace(absl::GetFlag(FLAGS_slog_storage_cache_cap_mb));
-    background_thread_.Start();
+    db_flusher_.emplace(this, absl::GetFlag(FLAGS_slog_storage_flusher_threads));
 }
 
 void StorageBase::StopInternal() {
-    NotifyBackgroundThread();
-    background_thread_.Join();
+    db_flusher()->SignalAllThreads();
+    db_flusher()->JoinAllThreads();
 }
 
 void StorageBase::SetupDB() {
@@ -86,11 +82,6 @@ void StorageBase::SetupTimers() {
         absl::Microseconds(absl::GetFlag(FLAGS_slog_local_cut_interval_us)),
         [this] () { this->SendShardProgressIfNeeded(); }
     );
-}
-
-void StorageBase::NotifyBackgroundThread() {
-    DCHECK(bg_thread_eventfd_ >= 0);
-    PCHECK(eventfd_write(bg_thread_eventfd_, 1) == 0) << "eventfd_write failed";
 }
 
 void StorageBase::MessageHandler(const SharedLogMessage& message,
@@ -298,6 +289,92 @@ EgressHub* StorageBase::CreateEgressHub(protocol::ConnType conn_type,
         egress_hubs_[egress_hub->id()] = std::move(egress_hub);
     }
     return hub;
+}
+
+StorageBase::DBFlusher::DBFlusher(StorageBase* storage, size_t num_worker_threads)
+    : storage_(storage),
+      worker_threads_(num_worker_threads),
+      idle_workers_(0),
+      next_seqnum_(0),
+      commited_seqnum_(0),
+      queue_length_stat_(stat::StatisticsCollector<int>::StandardReportCallback(
+          "flush_queue_length")) {
+    for (size_t i = 0; i < num_worker_threads; i++) {
+        worker_threads_[i].emplace(
+            fmt::format("BG/{}", i),
+            absl::bind_front(&StorageBase::DBFlusher::WorkerThreadMain, this, i));
+        worker_threads_[i]->Start();
+    }
+}
+
+StorageBase::DBFlusher::~DBFlusher() {}
+
+void StorageBase::DBFlusher::PushLogEntriesForFlush(std::span<const LogStorage::Entry*> entries) {
+    DCHECK(!entries.empty());
+    absl::MutexLock lk(&mu_);
+    for (const LogStorage::Entry* entry : entries) {
+        queue_.push_back(std::make_pair(next_seqnum_++, entry));
+    }
+    queue_length_stat_.AddSample(gsl::narrow_cast<int>(queue_.size()));
+    if (idle_workers_ > 0) {
+        cv_.Signal();
+    }
+}
+
+void StorageBase::DBFlusher::SignalAllThreads() {
+    cv_.SignalAll();
+}
+
+void StorageBase::DBFlusher::JoinAllThreads() {
+    for (size_t i = 0; i < worker_threads_.size(); i++) {
+        worker_threads_[i]->Join();
+    }
+}
+
+void StorageBase::DBFlusher::WorkerThreadMain(int thread_index) {
+    std::vector<const LogStorage::Entry*> entries;
+    entries.reserve(kBatchSize);
+    while (true) {
+        mu_.Lock();
+        while (queue_.empty()) {
+            idle_workers_++;
+            cv_.Wait(&mu_);
+            if (should_stop()) {
+                mu_.Unlock();
+                return;
+            }
+            idle_workers_--;
+        }
+        uint64_t start_seqnum = queue_.front().first;
+        uint64_t end_seqnum = start_seqnum;
+        entries.clear();
+        while (entries.size() < kBatchSize && !queue_.empty()) {
+            start_seqnum = queue_.front().first + 1;
+            entries.push_back(queue_.front().second);
+            queue_.pop_front();
+        }
+        mu_.Unlock();
+        DCHECK_LT(start_seqnum, end_seqnum);
+        DCHECK_EQ(static_cast<size_t>(end_seqnum - start_seqnum), entries.size());
+        DCHECK_LE(entries.size(), kBatchSize);
+        storage_->FlushLogEntries(
+            std::span<const LogStorage::Entry*>(entries.data(), entries.size()));
+        mu_.Lock();
+        for (size_t i = 0; i < entries.size(); i++) {
+            uint64_t seqnum = start_seqnum + static_cast<uint64_t>(i);
+            flushed_entries_[seqnum] = entries[i];
+        }
+        entries.clear();
+        auto iter = flushed_entries_.begin();
+        while (iter->first == commited_seqnum_) {
+            entries.push_back(iter->second);
+            iter = flushed_entries_.erase(iter);
+            commited_seqnum_++;
+        }
+        storage_->CommitLogEntries(
+            std::span<const LogStorage::Entry*>(entries.data(), entries.size()));
+        mu_.Unlock();
+    }
 }
 
 }  // namespace log

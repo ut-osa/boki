@@ -18,11 +18,7 @@ Storage::Storage(uint16_t node_id)
     : StorageBase(node_id),
       log_header_(fmt::format("Storage[{}-N]: ", node_id)),
       current_view_(nullptr),
-      view_finalized_(false),
-      log_entires_flush_stat_(stat::StatisticsCollector<int>::StandardReportCallback(
-          "log_entries_for_flush")),
-      flush_thread_entry_src_stat_(stat::CategoryCounter::StandardReportCallback(
-          "flush_thread_entry_src")) {}
+      view_finalized_(false) {}
 
 Storage::~Storage() {}
 
@@ -211,7 +207,6 @@ void Storage::OnRecvNewMetaLogs(const SharedLogMessage& message,
     const View* view = nullptr;
     LogStorage::ReadResultVec results;
     std::optional<IndexDataProto> index_data;
-    bool need_notify_bg_thread = false;
     {
         absl::ReaderMutexLock view_lk(&view_mu_);
         ONHOLD_IF_FROM_FUTURE_VIEW(message, payload);
@@ -229,22 +224,15 @@ void Storage::OnRecvNewMetaLogs(const SharedLogMessage& message,
             LogStorage::LogEntryVec new_log_entires;
             locked_storage->GrabLogEntriesForPersistence(&new_log_entires);
             if (!new_log_entires.empty()) {
-                absl::MutexLock lk(&flush_mu_);
-                need_notify_bg_thread = log_entires_for_flush_.empty();
-                log_entires_for_flush_.insert(
-                    log_entires_for_flush_.end(),
-                    new_log_entires.begin(), new_log_entires.end());
-                log_entires_flush_stat_.AddSample(
-                    gsl::narrow_cast<int>(log_entires_for_flush_.size()));
+                db_flusher()->PushLogEntriesForFlush(
+                    std::span<const LogStorage::Entry*>(new_log_entires.data(),
+                                                        new_log_entires.size()));
             }
         }
     }
     ProcessReadResults(results);
     if (index_data.has_value()) {
         SendIndexData(DCHECK_NOTNULL(view), *index_data);
-    }
-    if (need_notify_bg_thread) {
-        NotifyBackgroundThread();
     }
 }
 
@@ -262,15 +250,20 @@ void Storage::OnRecvLogAuxData(const protocol::SharedLogMessage& message,
 void Storage::ProcessReadResults(const LogStorage::ReadResultVec& results) {
     LogEntry log_entry;
     for (const LogStorage::ReadResult& result : results) {
+        auto unref_journal_cleanup = gsl::finally([&result] () {
+            if (result.status == LogStorage::ReadResult::kLookupJournal) {
+                DCHECK_NOTNULL(result.journal_file)->Unref();
+            }
+        });
         const SharedLogMessage& request = result.original_request;
         SharedLogMessage response;
         uint64_t seqnum = bits::JoinTwo32(request.logspace_id, request.seqnum_lowhalf);
-        if (result.status == LogStorage::ReadResult::kFailed) {
-            auto log_entry = log_cache()->GetBySeqnum(seqnum);
-            if (log_entry.has_value()) {
+        if (result.status != LogStorage::ReadResult::kFailed) {
+            if (auto tmp = log_cache()->GetBySeqnum(seqnum); tmp.has_value()) {
+                log_entry = std::move(tmp.value());
                 response = SharedLogMessageHelper::NewReadOkResponse();
                 response.user_metalog_progress = request.user_metalog_progress;
-                SendEngineLogResult(request, &response, *log_entry);
+                SendEngineLogResult(request, &response, log_entry);
                 continue;
             }
         }
@@ -281,8 +274,8 @@ void Storage::ProcessReadResults(const LogStorage::ReadResultVec& results) {
                 log_entry = std::move(tmp.value());
                 log_entry.metadata.seqnum = seqnum;
             } else {
-                log_entry = ReadLogEntryFromJournal(seqnum, result.journal_file,
-                                                    result.journal_offset);
+                log_entry = log_utils::ReadLogEntryFromJournal(
+                    seqnum, DCHECK_NOTNULL(result.journal_file), result.journal_offset);
             }
             response = SharedLogMessageHelper::NewReadOkResponse();
             response.user_metalog_progress = request.user_metalog_progress;
@@ -364,21 +357,6 @@ void Storage::SendEngineLogResult(const protocol::SharedLogMessage& request,
                         STRING_AS_SPAN(log_entry.data));
 }
 
-void Storage::BackgroundThreadMain(int eventfd) {
-    bool running = true;
-    while (running) {
-        uint64_t exp;
-        ssize_t nread = read(eventfd, &exp, sizeof(uint64_t));
-        if (nread < 0) {
-            PLOG(FATAL) << "Failed to read on eventfd";
-        }
-        CHECK_EQ(gsl::narrow_cast<size_t>(nread), sizeof(uint64_t));
-        FlushLogEntries();
-        // TODO: cleanup outdated LogSpace
-        running = state_.load(std::memory_order_acquire) != kStopping;
-    }
-}
-
 void Storage::SendShardProgressIfNeeded() {
     std::vector<std::pair<uint32_t, std::vector<uint32_t>>> progress_to_send;
     {
@@ -408,121 +386,65 @@ void Storage::SendShardProgressIfNeeded() {
     }
 }
 
-void Storage::FlushLogEntries() {
-    static constexpr size_t kBatchSize = 128;
-
-    std::vector<const LogStorage::Entry*> entries;
-    std::vector<LogEntry> log_entries;
-    entries.reserve(kBatchSize);
-    log_entries.reserve(kBatchSize);
-
-    bool final_batch = false;
-    do {
-        {
-            absl::MutexLock lk(&flush_mu_);
-            while (entries.size() < kBatchSize && !log_entires_for_flush_.empty()) {
-                entries.push_back(log_entires_for_flush_.front());
-                log_entires_for_flush_.pop_front();
-            }
-            if (log_entires_for_flush_.empty()) {
-                final_batch = true;
-            }
+void Storage::FlushLogEntries(std::span<const LogStorage::Entry*> entries) {
+    HVLOG_F(1, "Going to flush {} entries to DB", entries.size());
+    for (const LogStorage::Entry* entry : entries) {
+        LogEntry log_entry;
+        uint32_t logspace_id = bits::HighHalf64(entry->metadata.seqnum);
+        uint64_t localid = entry->metadata.localid;
+        if (auto tmp = log_cache()->GetByLocalId(logspace_id, localid); tmp.has_value()) {
+            log_entry = std::move(tmp.value());
+            log_entry.metadata.seqnum = entry->metadata.seqnum;
+        } else {
+            HVLOG_F(1, "Failed to find log entry (seqnum {}, localid {}) from cache, "
+                    "read from journal instead",
+                    bits::HexStr0x(entry->metadata.seqnum), bits::HexStr0x(localid));
+            log_entry = log_utils::ReadLogEntryFromJournal(
+                entry->metadata.seqnum, entry->journal_file, entry->journal_offset);
+            DCHECK_EQ(log_entry.metadata.localid, localid);
         }
-
-        HVLOG_F(1, "There are {} log entries to flush", entries.size());
-        HVLOG(1) << "First grab their data from either cache or journal";
-
-        for (const LogStorage::Entry* entry : entries) {
-            uint32_t logspace_id = bits::HighHalf64(entry->metadata.seqnum);
-            uint64_t localid = entry->metadata.localid;
-            if (auto tmp = log_cache()->GetByLocalId(logspace_id, localid); tmp.has_value()) {
-                LogEntry log_entry = std::move(tmp.value());
-                log_entry.metadata.seqnum = entry->metadata.seqnum;
-                log_entries.push_back(std::move(log_entry));
-                flush_thread_entry_src_stat_.Tick(0);
-            } else {
-                HVLOG_F(1, "Failed to find log entry (seqnum {}, localid {}) from cache, "
-                        "read from journal instead",
-                        bits::HexStr0x(entry->metadata.seqnum), bits::HexStr0x(localid));
-                LogEntry log_entry = ReadLogEntryFromJournal(
-                    entry->metadata.seqnum, entry->journal_file, entry->journal_offset);
-                DCHECK_EQ(log_entry.metadata.localid, localid);
-                log_entries.push_back(std::move(log_entry));
-                flush_thread_entry_src_stat_.Tick(1);
-            }
-        }
-
-        HVLOG(1) << "Then write log data to DB";
-        absl::flat_hash_map<uint32_t, uint64_t> new_positions;
-        for (const LogEntry& log_entry : log_entries) {
-            PutLogEntryToDB(log_entry);
-            uint64_t seqnum = log_entry.metadata.seqnum;
-            uint32_t logspace_id = bits::HighHalf64(seqnum);
-            if (new_positions.contains(logspace_id)) {
-                DCHECK_GE(seqnum, new_positions.at(logspace_id));
-            }
-            new_positions[logspace_id] = seqnum + 1;
-        }
-
-        std::vector<uint32_t> finalized_logspaces;
-        {
-            absl::ReaderMutexLock view_lk(&view_mu_);
-            for (const auto& [logspace_id, new_position] : new_positions) {
-                auto storage_ptr = storage_collection_.GetLogSpaceChecked(logspace_id);
-                {
-                    auto locked_storage = storage_ptr.Lock();
-                    locked_storage->LogEntriesPersisted(new_position);
-                    if (locked_storage->finalized()
-                            && new_position >= locked_storage->seqnum_position()) {
-                        finalized_logspaces.push_back(locked_storage->identifier());
-                    }
-                }
-            }
-        }
-        if (!finalized_logspaces.empty()) {
-            absl::MutexLock view_lk(&view_mu_);
-            for (uint32_t logspace_id : finalized_logspaces) {
-                if (storage_collection_.FinalizeLogSpace(logspace_id)) {
-                    HLOG_F(INFO, "Finalize storage log space {}", bits::HexStr0x(logspace_id));
-                } else {
-                    HLOG_F(ERROR, "Storage log space {} not active, cannot finalize",
-                        bits::HexStr0x(logspace_id));
-                }
-            }
-        }
-
-        for (const LogEntry& log_entry : log_entries) {
-            log_cache()->PutBySeqnum(log_entry);
-        }
-
-        entries.clear();
-        log_entries.clear();
-    } while (!final_batch);
+        PutLogEntryToDB(log_entry);
+        log_cache()->PutBySeqnum(log_entry);
+    }
 }
 
-LogEntry Storage::ReadLogEntryFromJournal(uint64_t seqnum,
-                                          server::JournalFile* file, size_t offset) {
-    static thread_local utils::AppendableBuffer read_buffer;
-    uint16_t record_type;
-    read_buffer.Reset();
-    size_t nread = file->ReadRecord(offset,  &record_type, &read_buffer);
-    DCHECK_EQ(record_type, kLogEntryJournalRecordType);
-    const char* buf_ptr = read_buffer.data();
-    auto message = reinterpret_cast<const SharedLogMessage*>(buf_ptr);
-    std::span<const char> payload(buf_ptr + sizeof(SharedLogMessage),
-                                  nread - sizeof(SharedLogMessage));
-    LogMetaData metadata = log_utils::GetMetaDataFromMessage(*message);
-    DCHECK_EQ(bits::HighHalf64(seqnum), bits::HighHalf64(metadata.seqnum));
-    metadata.seqnum = seqnum;
-    std::span<const uint64_t> user_tags;
-    std::span<const char> log_data;
-    log_utils::SplitPayloadForMessage(*message, payload, &user_tags, &log_data,
-                                        /* aux_data= */ nullptr);
-    return LogEntry {
-        .metadata = metadata,
-        .user_tags = UserTagVec(user_tags.begin(), user_tags.end()),
-        .data = std::string(log_data.data(), log_data.size()),
-    };
+void Storage::CommitLogEntries(std::span<const LogStorage::Entry*> entries) {
+    absl::flat_hash_map<uint32_t, uint64_t> new_positions;
+    for (const LogStorage::Entry* entry : entries) {
+        uint64_t seqnum = entry->metadata.seqnum;
+        uint32_t logspace_id = bits::HighHalf64(seqnum);
+        if (new_positions.contains(logspace_id)) {
+            DCHECK_GE(seqnum, new_positions.at(logspace_id));
+        }
+        new_positions[logspace_id] = seqnum + 1;
+    }
+
+    std::vector<uint32_t> finalized_logspaces;
+    {
+        absl::ReaderMutexLock view_lk(&view_mu_);
+        for (const auto& [logspace_id, new_position] : new_positions) {
+            auto storage_ptr = storage_collection_.GetLogSpaceChecked(logspace_id);
+            {
+                auto locked_storage = storage_ptr.Lock();
+                locked_storage->LogEntriesPersisted(new_position);
+                if (locked_storage->finalized()
+                        && new_position >= locked_storage->seqnum_position()) {
+                    finalized_logspaces.push_back(locked_storage->identifier());
+                }
+            }
+        }
+    }
+    if (!finalized_logspaces.empty()) {
+        absl::MutexLock view_lk(&view_mu_);
+        for (uint32_t logspace_id : finalized_logspaces) {
+            if (storage_collection_.FinalizeLogSpace(logspace_id)) {
+                HLOG_F(INFO, "Finalize storage log space {}", bits::HexStr0x(logspace_id));
+            } else {
+                HLOG_F(ERROR, "Storage log space {} not active, cannot finalize",
+                    bits::HexStr0x(logspace_id));
+            }
+        }
+    }
 }
 
 }  // namespace log

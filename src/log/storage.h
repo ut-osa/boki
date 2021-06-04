@@ -3,7 +3,6 @@
 #include "log/storage_base.h"
 #include "log/log_space.h"
 #include "log/utils.h"
-#include "common/stat.h"
 
 namespace faas {
 namespace log {
@@ -23,14 +22,6 @@ private:
         storage_collection_        ABSL_GUARDED_BY(view_mu_);
 
     log_utils::FutureRequests future_requests_;
-
-    absl::Mutex flush_mu_;
-    std::deque<const LogStorage::Entry*>
-        log_entires_for_flush_     ABSL_GUARDED_BY(flush_mu_);
-    stat::StatisticsCollector<int>
-        log_entires_flush_stat_    ABSL_GUARDED_BY(flush_mu_);
-
-    stat::CategoryCounter flush_thread_entry_src_stat_;
 
     void OnViewCreated(const View* view) override;
     void OnViewFinalized(const FinalizedView* finalized_view) override;
@@ -55,12 +46,9 @@ private:
                              protocol::SharedLogMessage* response,
                              const LogEntry& log_entry);
 
-    void BackgroundThreadMain(int eventfd) override;
     void SendShardProgressIfNeeded() override;
-    void FlushLogEntries();
-
-    LogEntry ReadLogEntryFromJournal(uint64_t seqnum,
-                                     server::JournalFile* file, size_t offset);
+    void FlushLogEntries(std::span<const LogStorage::Entry*> entries) override;
+    void CommitLogEntries(std::span<const LogStorage::Entry*> entries) override;
 
     DISALLOW_COPY_AND_ASSIGN(Storage);
 };

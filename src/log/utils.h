@@ -4,6 +4,7 @@
 #include "log/view.h"
 #include "log/view_watcher.h"
 #include "utils/lockable_ptr.h"
+#include "server/journal.h"
 
 namespace faas {
 namespace log_utils {
@@ -70,8 +71,10 @@ void SplitLogEntryProto(const log::LogEntryProto& log_entry_proto,
 
 void PopulateMetaDataToMessage(const log::LogMetaData& metadata,
                                protocol::SharedLogMessage* message);
-// void PopulateMetaDataToMessage(const log::LogEntryProto& log_entry,
-//                                protocol::SharedLogMessage* message);
+
+
+log::LogEntry ReadLogEntryFromJournal(uint64_t seqnum,
+                                      server::JournalFile* file, size_t offset);
 
 // Start implementation of ThreadedMap
 
