@@ -90,6 +90,7 @@ cd $BASE_DIR/deps/nghttp2 && rm -rf build && mkdir -p build && cd build && \
 
 # Build zookeeper-client-c
 cd $BASE_DIR/deps/zookeeper-client-c && autoreconf -if && \
+  CFLAGS="${CFLAGS} -Wno-unused-but-set-variable" \  # Fix gcc compilation
   ./configure --prefix=${DEPS_INSTALL_PATH} --disable-shared \
               --enable-debug=${ENABLE_DEBUG} \
               --without-syncapi --without-cppunit --without-openssl && \

@@ -8,7 +8,7 @@ SRC_PATH = ./src
 # General compiler flags
 COMPILE_FLAGS = -std=c++17 -march=haswell -D__FAAS_SRC \
 	-Wall -Wextra -Werror -Wno-unused-parameter \
-	-fdata-sections -ffunction-sections
+	-fPIE -fdata-sections -ffunction-sections
 # Additional release-specific flags
 RCOMPILE_FLAGS = -DNDEBUG -O3
 # Additional debug-specific flags
