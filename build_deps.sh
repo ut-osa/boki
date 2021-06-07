@@ -6,6 +6,14 @@ CMAKE_BUILD_TYPE="Release"
 ENABLE_DEBUG="no"
 DEPS_INSTALL_PATH=$BASE_DIR/deps/out
 
+USE_GCC=true
+if [[ ! -z "${CC}" ]]; then
+  $CC --version | grep -q "gcc"
+  if [[ $? == 1 ]]; then
+    USE_GCC=false
+  fi
+fi
+
 while [ ! $# -eq 0 ]
 do
   case "$1" in
@@ -17,7 +25,7 @@ do
   shift
 done
 
-COMPILE_FLAGS="-fPIE -march=haswell"
+COMPILE_FLAGS="-fPIE -march=haswell -D_GNU_SOURCE"
 if [ ${ENABLE_DEBUG} == "yes" ]; then
   COMPILE_FLAGS="${COMPILE_FLAGS} -DDEBUG -g -Og"
 else
@@ -91,7 +99,9 @@ cd $BASE_DIR/deps/nghttp2 && rm -rf build && mkdir -p build && cd build && \
 
 # Build zookeeper-client-c
 CFLAGS_BAK=${CFLAGS}
-export CFLAGS="${CFLAGS} -Wno-unused-but-set-variable"   # Fix gcc compilation
+if [[ ${USE_GCC} == true ]]; then
+  export CFLAGS="${CFLAGS} -Wno-unused-but-set-variable"  # Fix gcc compilation
+fi
 cd $BASE_DIR/deps/zookeeper-client-c && autoreconf -if && \
   ./configure --prefix=${DEPS_INSTALL_PATH} --disable-shared \
               --enable-debug=${ENABLE_DEBUG} \
