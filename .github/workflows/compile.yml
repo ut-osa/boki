@@ -1,0 +1,41 @@
+name: Compilation CI
+on:
+  push:
+    branches: [ sharedlog ]
+
+jobs:
+  build-gcc:
+    name: Compile with gcc 9 (Ubuntu 20.04)
+    runs-on: ubuntu-20.04
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        submodules: recursive
+    - name: apt update
+      run: sudo apt -y update
+    - name: Install build toolchains
+      run: sudo apt -y install g++ make cmake autoconf automake libtool curl unzip
+    - name: Build dependencies
+      run: ./build_deps.sh
+    - name: make
+      run: make
+  build-clang:
+    name: Compile with clang 10 (Ubuntu 20.04)
+    runs-on: ubuntu-20.04
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        submodules: recursive
+    - name: apt update
+      run: sudo apt -y update
+    - name: Install build toolchains
+      run: sudo apt -y install clang make cmake autoconf automake libtool curl unzip
+    - name: Build dependencies
+      env:
+        CC: clang
+        CXX: clang++
+      run: ./build_deps.sh
+    - name: make
+      env:
+        CXX: clang++
+      run: make
