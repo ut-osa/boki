@@ -1,36 +1,45 @@
 #!/bin/bash
+set -e
 
 SCRIPT_PATH=$(readlink -f $0)
 BASE_DIR=$(dirname $SCRIPT_PATH)
-CMAKE_BUILD_TYPE="Release"
-ENABLE_DEBUG="no"
-DEPS_INSTALL_PATH=$BASE_DIR/deps/out
+DEPS_INSTALL_PATH=${BASE_DIR}/deps/out
 
-USE_GCC=true
-if [[ ! -z "${CC}" ]]; then
-  $CC --version | grep -q "gcc"
-  if [[ $? == 1 ]]; then
-    USE_GCC=false
-  fi
-fi
+USE_GCC=1
+USE_CLANG=0
+DEBUG_BUILD="no"
 
 while [ ! $# -eq 0 ]
 do
   case "$1" in
     --debug)
-      CMAKE_BUILD_TYPE="Debug"
-      ENABLE_DEBUG="yes"
+      DEBUG_BUILD="yes"
       ;;
+    --use-clang)
+      USE_GCC=0
+      USE_CLANG=1
   esac
   shift
 done
 
+if [[ ${USE_GCC} == 1 ]]; then
+  export CC=gcc
+  export CXX=g++
+fi
+
+if [[ ${USE_CLANG} == 1 ]]; then
+  export CC=clang
+  export CXX=clang++
+fi
+
 COMPILE_FLAGS="-fPIE -march=haswell -D_GNU_SOURCE"
-if [ ${ENABLE_DEBUG} == "yes" ]; then
+if [ ${DEBUG_BUILD} == "yes" ]; then
   COMPILE_FLAGS="${COMPILE_FLAGS} -DDEBUG -g -Og"
+  CMAKE_BUILD_TYPE="Debug"
 else
   COMPILE_FLAGS="${COMPILE_FLAGS} -DNDEBUG -O3"
   COMPILE_FLAGS="${COMPILE_FLAGS} -fdata-sections -ffunction-sections"  # used for -Wl,--gc-sections
+  CMAKE_BUILD_TYPE="Release"
 fi
 
 export CFLAGS="${CFLAGS} ${COMPILE_FLAGS}"
@@ -99,12 +108,12 @@ cd $BASE_DIR/deps/nghttp2 && rm -rf build && mkdir -p build && cd build && \
 
 # Build zookeeper-client-c
 CFLAGS_BAK=${CFLAGS}
-if [[ ${USE_GCC} == true ]]; then
+if [[ ${USE_GCC} == 1 ]]; then
   export CFLAGS="${CFLAGS} -Wno-unused-but-set-variable"  # Fix gcc compilation
 fi
 cd $BASE_DIR/deps/zookeeper-client-c && autoreconf -if && \
   ./configure --prefix=${DEPS_INSTALL_PATH} --disable-shared \
-              --enable-debug=${ENABLE_DEBUG} \
+              --enable-debug=${DEBUG_BUILD} \
               --without-syncapi --without-cppunit --without-openssl && \
   make -j$(nproc) install && make clean
 export CFLAGS=${CFLAGS_BAK}
@@ -112,7 +121,7 @@ export CFLAGS=${CFLAGS_BAK}
 # Build tkrzw
 cd $BASE_DIR/deps/tkrzw && \
   ./configure --prefix=${DEPS_INSTALL_PATH} --disable-shared \
-              --enable-debug=${ENABLE_DEBUG} && \
+              --enable-debug=${DEBUG_BUILD} && \
   make -j$(nproc) && make install && make clean
 
 # Build rocksdb

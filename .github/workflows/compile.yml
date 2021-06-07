@@ -18,7 +18,7 @@ jobs:
     - name: Build dependencies
       run: ./build_deps.sh
     - name: make
-      run: make
+      run: make DISABLE_STAT=0 FORCE_DCHECK=1
   build-clang:
     name: Compile with clang 10 (Ubuntu 20.04)
     runs-on: ubuntu-20.04
@@ -31,11 +31,8 @@ jobs:
     - name: Install build toolchains
       run: sudo apt -y install clang make cmake autoconf automake libtool curl unzip
     - name: Build dependencies
-      env:
-        CC: clang
-        CXX: clang++
-      run: ./build_deps.sh
+      run: ./build_deps.sh --use-clang
     - name: make
       env:
         CXX: clang++
-      run: make
+      run: make DISABLE_STAT=0 FORCE_DCHECK=1
