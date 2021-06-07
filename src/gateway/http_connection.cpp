@@ -106,8 +106,6 @@ void HttpConnection::HttpParserOnMessageBegin() {
     header_field_value_flag_ = -1;
     header_field_buffer_.Reset();
     header_value_buffer_.Reset();
-    header_field_buffer_pos_ = 0;
-    header_value_buffer_pos_ = 0;
     url_buffer_.Reset();
     headers_.clear();
 }
@@ -250,15 +248,13 @@ void HttpConnection::HttpParserOnMessageComplete() {
 }
 
 void HttpConnection::HttpParserOnNewHeader() {
-    std::string_view field(header_field_buffer_.data() + header_field_buffer_pos_,
-                           header_field_buffer_.length() - header_field_buffer_pos_);
-    header_field_buffer_pos_ = header_field_buffer_.length();
-    std::string_view value(header_value_buffer_.data() + header_value_buffer_pos_,
-                           header_value_buffer_.length() - header_value_buffer_pos_);
-    header_value_buffer_pos_ = header_value_buffer_.length();
+    std::string_view field(header_field_buffer_.data(), header_field_buffer_.length());
+    std::string_view value(header_value_buffer_.data(), header_value_buffer_.length());
     HVLOG(1) << "Parse new HTTP header: " << field << " = " << value;
     std::string field_str = absl::AsciiStrToLower(field);
-    headers_[field_str] = value;
+    headers_[field_str] = std::string(value);
+    header_field_buffer_.Reset();
+    header_value_buffer_.Reset();
 }
 
 void HttpConnection::ResetHttpParser() {
