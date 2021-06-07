@@ -390,23 +390,35 @@ void Storage::SendShardProgressIfNeeded() {
 
 void Storage::FlushLogEntries(std::span<const LogStorage::Entry*> entries) {
     HVLOG_F(1, "Going to flush {} entries to DB", entries.size());
+    absl::flat_hash_set<uint32_t> logspace_ids;
     for (const LogStorage::Entry* entry : entries) {
-        LogEntry log_entry;
-        uint32_t logspace_id = bits::HighHalf64(entry->metadata.seqnum);
-        uint64_t localid = entry->metadata.localid;
-        if (auto tmp = log_cache()->GetByLocalId(logspace_id, localid); tmp.has_value()) {
-            log_entry = std::move(tmp.value());
-            log_entry.metadata.seqnum = entry->metadata.seqnum;
-        } else {
-            HVLOG_F(1, "Failed to find log entry (seqnum {}, localid {}) from cache, "
-                    "read from journal instead",
-                    bits::HexStr0x(entry->metadata.seqnum), bits::HexStr0x(localid));
-            log_entry = log_utils::ReadLogEntryFromJournal(
-                entry->metadata.seqnum, entry->journal_file, entry->journal_offset);
-            DCHECK_EQ(log_entry.metadata.localid, localid);
+        logspace_ids.insert(bits::HighHalf64(entry->metadata.seqnum));
+    }
+    for (uint32_t logspace_id : logspace_ids) {
+        DBInterface::Batch batch;
+        batch.logspace_id = logspace_id;
+        for (const LogStorage::Entry* entry : entries) {
+            if (logspace_id != bits::HighHalf64(entry->metadata.seqnum)) {
+                continue;
+            }
+            LogEntry log_entry;
+            uint64_t localid = entry->metadata.localid;
+            if (auto tmp = log_cache()->GetByLocalId(logspace_id, localid); tmp.has_value()) {
+                log_entry = std::move(tmp.value());
+                log_entry.metadata.seqnum = entry->metadata.seqnum;
+            } else {
+                HVLOG_F(1, "Failed to find log entry (seqnum {}, localid {}) from cache, "
+                        "read from journal instead",
+                        bits::HexStr0x(entry->metadata.seqnum), bits::HexStr0x(localid));
+                log_entry = log_utils::ReadLogEntryFromJournal(
+                    entry->metadata.seqnum, entry->journal_file, entry->journal_offset);
+                DCHECK_EQ(log_entry.metadata.localid, localid);
+            }
+            batch.keys.push_back(bits::LowHalf64(log_entry.metadata.seqnum));
+            batch.data.push_back(log_utils::SerializedLogEntryToProto(log_entry));
+            log_cache()->PutBySeqnum(log_entry);
         }
-        PutLogEntryToDB(log_entry);
-        log_cache()->PutBySeqnum(log_entry);
+        log_db()->PutBatch(batch);
     }
 }
 

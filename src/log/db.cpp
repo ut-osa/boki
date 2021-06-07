@@ -1,6 +1,7 @@
 #include "log/db.h"
 
 #include "utils/bits.h"
+#include "utils/appendable_buffer.h"
 
 __BEGIN_THIRD_PARTY_HEADERS
 
@@ -87,17 +88,20 @@ std::optional<std::string> RocksDBBackend::Get(uint32_t logspace_id, uint32_t ke
     return data;
 }
 
-void RocksDBBackend::Put(uint32_t logspace_id, uint32_t key, std::span<const char> data) {
-    rocksdb::ColumnFamilyHandle* cf_handle = GetCFHandle(logspace_id);
+void RocksDBBackend::PutBatch(const Batch& batch) {
+    DCHECK_EQ(batch.keys.size(), batch.data.size());
+    rocksdb::ColumnFamilyHandle* cf_handle = GetCFHandle(batch.logspace_id);
     if (cf_handle == nullptr) {
-        HLOG_F(ERROR, "Log space {} not created", bits::HexStr0x(logspace_id));
+        HLOG_F(ERROR, "Log space {} not created", bits::HexStr0x(batch.logspace_id));
         return;
     }
-    std::string key_str = bits::HexStr(key);
-    auto status = db_->Put(
-        rocksdb::WriteOptions(), cf_handle,
-        key_str, rocksdb::Slice(data.data(), data.size()));
-    ROCKSDB_CHECK_OK(status, Put);
+    rocksdb::WriteBatch write_batch;
+    for (size_t i = 0; i < batch.keys.size(); i++) {
+        std::string key_str = bits::HexStr(batch.keys[i]);
+        write_batch.Put(cf_handle, key_str, batch.data[i]);
+    }
+    auto status = db_->Write(rocksdb::WriteOptions(), &write_batch);
+    ROCKSDB_CHECK_OK(status, Write);
 }
 
 rocksdb::ColumnFamilyHandle* RocksDBBackend::GetCFHandle(uint32_t logspace_id) {
@@ -179,14 +183,22 @@ std::optional<std::string> TkrzwDBMBackend::Get(uint32_t logspace_id, uint32_t k
     }
 }
 
-void TkrzwDBMBackend::Put(uint32_t logspace_id, uint32_t key, std::span<const char> data) {
-    tkrzw::DBM* dbm = GetDBM(logspace_id);
+void TkrzwDBMBackend::PutBatch(const Batch& batch) {
+    DCHECK_EQ(batch.keys.size(), batch.data.size());
+    tkrzw::DBM* dbm = GetDBM(batch.logspace_id);
     if (dbm == nullptr) {
-        HLOG_F(FATAL, "Log space {} not created", bits::HexStr0x(logspace_id));
+        HLOG_F(ERROR, "Log space {} not created", bits::HexStr0x(batch.logspace_id));
+        return;
     }
-    std::string key_str = bits::HexStr(key);
-    auto status = dbm->Set(key_str, std::string_view(data.data(), data.size()));
-    TKRZW_CHECK_OK(status, Set);
+    std::map</* key */ std::string_view, /* value */ std::string_view> records;
+    std::vector<std::string> key_strs;
+    key_strs.reserve(batch.keys.size());
+    for (size_t i = 0; i < batch.keys.size(); i++) {
+        key_strs.push_back(bits::HexStr(batch.keys[i]));
+        records[std::string_view(key_strs.back())] = std::string_view(batch.data[i]);
+    }
+    auto status = dbm->SetMulti(records);
+    TKRZW_CHECK_OK(status, SetMulti);
 }
 
 tkrzw::DBM* TkrzwDBMBackend::GetDBM(uint32_t logspace_id) {

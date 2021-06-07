@@ -72,9 +72,10 @@ void SplitLogEntryProto(const log::LogEntryProto& log_entry_proto,
 void PopulateMetaDataToMessage(const log::LogMetaData& metadata,
                                protocol::SharedLogMessage* message);
 
-
 log::LogEntry ReadLogEntryFromJournal(uint64_t seqnum,
                                       server::JournalFile* file, size_t offset);
+
+std::string SerializedLogEntryToProto(const log::LogEntry& log_entry);
 
 // Start implementation of ThreadedMap
 

@@ -15,7 +15,13 @@ public:
 
     virtual void InstallLogSpace(uint32_t logspace_id) = 0;
     virtual std::optional<std::string> Get(uint32_t logspace_id, uint32_t key) = 0;
-    virtual void Put(uint32_t logspace_id, uint32_t key, std::span<const char> data) = 0;
+
+    struct Batch {
+        uint32_t logspace_id;
+        std::vector<uint32_t>    keys;
+        std::vector<std::string> data;
+    };
+    virtual void PutBatch(const Batch& batch) = 0;
 };
 
 class RocksDBBackend final : public DBInterface {
@@ -25,7 +31,7 @@ public:
 
     void InstallLogSpace(uint32_t logspace_id) override;
     std::optional<std::string> Get(uint32_t logspace_id, uint32_t key) override;
-    void Put(uint32_t logspace_id, uint32_t key, std::span<const char> data) override;
+    void PutBatch(const Batch& batch) override;
 
 private:
     std::unique_ptr<rocksdb::DB> db_;
@@ -47,7 +53,7 @@ public:
 
     void InstallLogSpace(uint32_t logspace_id) override;
     std::optional<std::string> Get(uint32_t logspace_id, uint32_t key) override;
-    void Put(uint32_t logspace_id, uint32_t key, std::span<const char> data) override;
+    void PutBatch(const Batch& batch) override;
 
 private:
     Type type_;

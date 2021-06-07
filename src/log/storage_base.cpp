@@ -104,21 +104,6 @@ void StorageBase::MessageHandler(const SharedLogMessage& message,
     }
 }
 
-namespace {
-static inline std::string SerializedLogEntry(const LogEntry& log_entry) {
-    LogEntryProto log_entry_proto;
-    log_entry_proto.set_user_logspace(log_entry.metadata.user_logspace);
-    log_entry_proto.set_seqnum(log_entry.metadata.seqnum);
-    log_entry_proto.set_localid(log_entry.metadata.localid);
-    log_entry_proto.mutable_user_tags()->Add(
-        log_entry.user_tags.begin(), log_entry.user_tags.end());
-    log_entry_proto.set_data(log_entry.data);
-    std::string data;
-    CHECK(log_entry_proto.SerializeToString(&data));
-    return data;
-}
-}  // namespace
-
 std::optional<LogEntryProto> StorageBase::GetLogEntryFromDB(uint64_t seqnum) {
     auto data = db_->Get(bits::HighHalf64(seqnum), bits::LowHalf64(seqnum));
     if (!data.has_value()) {
@@ -129,12 +114,6 @@ std::optional<LogEntryProto> StorageBase::GetLogEntryFromDB(uint64_t seqnum) {
         HLOG(FATAL) << "Failed to parse LogEntryProto";
     }
     return log_entry_proto;
-}
-
-void StorageBase::PutLogEntryToDB(const LogEntry& log_entry) {
-    uint64_t seqnum = log_entry.metadata.seqnum;
-    std::string data = SerializedLogEntry(log_entry);
-    db_->Put(bits::HighHalf64(seqnum), bits::LowHalf64(seqnum), STRING_AS_SPAN(data));
 }
 
 void StorageBase::SendIndexData(const View* view,

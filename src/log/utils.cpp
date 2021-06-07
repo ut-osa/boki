@@ -165,5 +165,18 @@ log::LogEntry ReadLogEntryFromJournal(uint64_t seqnum,
     };
 }
 
+std::string SerializedLogEntryToProto(const log::LogEntry& log_entry) {
+    LogEntryProto log_entry_proto;
+    log_entry_proto.set_user_logspace(log_entry.metadata.user_logspace);
+    log_entry_proto.set_seqnum(log_entry.metadata.seqnum);
+    log_entry_proto.set_localid(log_entry.metadata.localid);
+    log_entry_proto.mutable_user_tags()->Add(
+        log_entry.user_tags.begin(), log_entry.user_tags.end());
+    log_entry_proto.set_data(log_entry.data);
+    std::string data;
+    CHECK(log_entry_proto.SerializeToString(&data));
+    return data;
+}
+
 }  // namespace log_utils
 }  // namespace faas

@@ -44,6 +44,8 @@ protected:
     virtual void CommitLogEntries(std::span<const LogStorage::Entry*> entries) = 0;
     virtual void SendShardProgressIfNeeded() = 0;
 
+    inline DBInterface* log_db() { return DCHECK_NOTNULL(db_.get()); }
+
     inline LRUCache* log_cache() {
         DCHECK(log_cache_.has_value());
         return &log_cache_.value();
@@ -52,7 +54,6 @@ protected:
     void MessageHandler(const protocol::SharedLogMessage& message,
                         std::span<const char> payload);
     std::optional<LogEntryProto> GetLogEntryFromDB(uint64_t seqnum);
-    void PutLogEntryToDB(const LogEntry& log_entry);
 
     void SendIndexData(const View* view, const IndexDataProto& index_data_proto);
     bool SendSequencerMessage(uint16_t sequencer_id,
