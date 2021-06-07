@@ -46,3 +46,6 @@
 [submodule "deps/lmdb"]
 	path = deps/lmdb
 	url = https://github.com/LMDB/lmdb.git
+[submodule "deps/zookeeper-client-c"]
+	path = deps/zookeeper-client-c
+	url = https://github.com/zhipeng-jia/zookeeper-client-c.git
