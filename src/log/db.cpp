@@ -12,7 +12,7 @@ __END_THIRD_PARTY_HEADERS
 ABSL_FLAG(int, rocksdb_max_background_jobs, 2, "");
 ABSL_FLAG(bool, rocksdb_enable_compression, false, "");
 ABSL_FLAG(int, lmdb_maxdbs, 16, "");
-ABSL_FLAG(size_t, lmdb_mapsize, size_t{16} << 30, "");
+ABSL_FLAG(size_t, lmdb_mapsize_mb, 1024, "");
 
 #define ROCKSDB_CHECK_OK(STATUS_VAR, OP_NAME)               \
     do {                                                    \
@@ -121,9 +121,11 @@ LMDBBackend::LMDBBackend(std::string_view db_path) {
     int ret = 0;
     ret = mdb_env_create(&env_);
     LMDB_CHECK_OK(ret, EnvCreate);
-    ret = mdb_env_set_mapsize(env_, absl::GetFlag(FLAGS_lmdb_mapsize));
+    size_t mapsize = absl::GetFlag(FLAGS_lmdb_mapsize_mb) << 20;
+    ret = mdb_env_set_mapsize(env_, mapsize);
     LMDB_CHECK_OK(ret, EnvSetMapSize);
-    ret = mdb_env_set_maxdbs(env_, static_cast<MDB_dbi>(absl::GetFlag(FLAGS_lmdb_maxdbs)));
+    MDB_dbi maxdbs = static_cast<MDB_dbi>(absl::GetFlag(FLAGS_lmdb_maxdbs));
+    ret = mdb_env_set_maxdbs(env_, maxdbs);
     LMDB_CHECK_OK(ret, EnvSetMaxDbs);
     ret = mdb_env_open(
         /* env= */ env_,
