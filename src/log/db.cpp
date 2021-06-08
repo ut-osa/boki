@@ -4,13 +4,23 @@
 #include "utils/appendable_buffer.h"
 
 __BEGIN_THIRD_PARTY_HEADERS
+#include <rocksdb/rate_limiter.h>
 #include <tkrzw_dbm_hash.h>
 #include <tkrzw_dbm_tree.h>
 #include <tkrzw_dbm_skip.h>
 __END_THIRD_PARTY_HEADERS
 
+// RocksDB tunables
 ABSL_FLAG(int, rocksdb_max_background_jobs, 2, "");
 ABSL_FLAG(bool, rocksdb_enable_compression, false, "");
+ABSL_FLAG(size_t, rocksdb_write_buffer_size_mb, 64, "");
+ABSL_FLAG(size_t, rocksdb_max_mbytes_for_level_base, 256, "");
+ABSL_FLAG(size_t, rocksdb_mbytes_per_sync, 1, "");
+ABSL_FLAG(size_t, rocksdb_max_total_wal_size_mb, 16, "");
+ABSL_FLAG(size_t, rocksdb_rate_mbytes_per_sec, 128, "");
+ABSL_FLAG(bool, rocksdb_use_direct_io, false, "");
+
+// LMDB tunables
 ABSL_FLAG(int, lmdb_maxdbs, 16, "");
 ABSL_FLAG(size_t, lmdb_mapsize_mb, 1024, "");
 
@@ -40,13 +50,26 @@ ABSL_FLAG(size_t, lmdb_mapsize_mb, 1024, "");
 
 #define log_header_ "LogDB: "
 
+static constexpr size_t kMBytesMultiplier = size_t{1}<<20;
+
 namespace faas {
 namespace log {
 
 RocksDBBackend::RocksDBBackend(std::string_view db_path) {
     rocksdb::Options options;
     options.create_if_missing = true;
-    options.max_background_jobs = absl::GetFlag(FLAGS_rocksdb_max_background_jobs);
+    options.max_background_jobs = absl::GetFlag(
+        FLAGS_rocksdb_max_background_jobs);
+    options.bytes_per_sync = kMBytesMultiplier * absl::GetFlag(
+        FLAGS_rocksdb_mbytes_per_sync);
+    options.wal_bytes_per_sync = kMBytesMultiplier * absl::GetFlag(
+        FLAGS_rocksdb_mbytes_per_sync);
+    options.max_total_wal_size = kMBytesMultiplier* absl::GetFlag(
+        FLAGS_rocksdb_max_total_wal_size_mb);
+    options.use_direct_io_for_flush_and_compaction = absl::GetFlag(
+        FLAGS_rocksdb_use_direct_io);
+    options.rate_limiter.reset(rocksdb::NewGenericRateLimiter(static_cast<int64_t>(
+        kMBytesMultiplier * absl::GetFlag(FLAGS_rocksdb_rate_mbytes_per_sec))));
     rocksdb::DB* db;
     HLOG_F(INFO, "Open RocksDB at path {}", db_path);
     auto status = rocksdb::DB::Open(options, std::string(db_path), &db);
@@ -59,6 +82,10 @@ RocksDBBackend::~RocksDBBackend() {}
 void RocksDBBackend::InstallLogSpace(uint32_t logspace_id) {
     HLOG_F(INFO, "Install log space {}", bits::HexStr0x(logspace_id));
     rocksdb::ColumnFamilyOptions options;
+    options.write_buffer_size = kMBytesMultiplier * absl::GetFlag(
+        FLAGS_rocksdb_write_buffer_size_mb);
+    options.max_bytes_for_level_base = kMBytesMultiplier * absl::GetFlag(
+        FLAGS_rocksdb_max_mbytes_for_level_base);
     if (absl::GetFlag(FLAGS_rocksdb_enable_compression)) {
         options.compression = rocksdb::kZSTD;
     } else {
@@ -121,7 +148,7 @@ LMDBBackend::LMDBBackend(std::string_view db_path) {
     int ret = 0;
     ret = mdb_env_create(&env_);
     LMDB_CHECK_OK(ret, EnvCreate);
-    size_t mapsize = absl::GetFlag(FLAGS_lmdb_mapsize_mb) << 20;
+    size_t mapsize = kMBytesMultiplier * absl::GetFlag(FLAGS_lmdb_mapsize_mb);
     ret = mdb_env_set_mapsize(env_, mapsize);
     LMDB_CHECK_OK(ret, EnvSetMapSize);
     MDB_dbi maxdbs = static_cast<MDB_dbi>(absl::GetFlag(FLAGS_lmdb_maxdbs));
