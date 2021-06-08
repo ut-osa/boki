@@ -2,9 +2,11 @@
 
 #include "log/common.h"
 
-// Forward declarations
-namespace rocksdb { class DB; class ColumnFamilyHandle; }
-namespace tkrzw { class DBM; }
+__BEGIN_THIRD_PARTY_HEADERS
+#include <rocksdb/db.h>
+#include <tkrzw_dbm.h>
+#include <lmdb.h>
+__END_THIRD_PARTY_HEADERS
 
 namespace faas {
 namespace log {
@@ -43,6 +45,29 @@ private:
     rocksdb::ColumnFamilyHandle* GetCFHandle(uint32_t logspace_id);
 
     DISALLOW_COPY_AND_ASSIGN(RocksDBBackend);
+};
+
+class LMDBBackend final : public DBInterface {
+public:
+    explicit LMDBBackend(std::string_view db_path);
+    ~LMDBBackend();
+
+    void InstallLogSpace(uint32_t logspace_id) override;
+    std::optional<std::string> Get(uint32_t logspace_id, uint32_t key) override;
+    void PutBatch(const Batch& batch) override;
+
+private:
+    std::string db_path_;
+
+    MDB_env* env_;
+
+    absl::Mutex mu_;
+    absl::flat_hash_map</* logspace_id */ uint32_t, MDB_dbi>
+        dbs_ ABSL_GUARDED_BY(mu_);
+
+    std::optional<MDB_dbi> GetDB(uint32_t logspace_id);
+
+    DISALLOW_COPY_AND_ASSIGN(LMDBBackend);
 };
 
 class TkrzwDBMBackend final : public DBInterface {
