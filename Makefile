@@ -1,10 +1,22 @@
 #### PROJECT SETTINGS ####
+
+# Import config.mk to override options
+ifneq ("$(wildcard config.mk)","")
+include config.mk
+endif
+
 # Compiler used
 CXX ?= g++
 # Extension of source files used in the project
 SRC_EXT = cpp
 # Path to the source directory, relative to the makefile
 SRC_PATH = ./src
+# Path to where dependencies are installed
+DEPS_INSTALL_PATH ?= ./deps/out
+# Path to output .o files
+BUILD_BASE_PATH ?= ./build
+# Path to output binary executables
+BIN_BASE_PATH ?= ./bin
 # General compiler flags
 COMPILE_FLAGS = -std=c++17 -march=haswell -D__FAAS_SRC \
 	-fPIE -Wall -Wextra -Werror -Wno-unused-parameter \
@@ -14,17 +26,17 @@ RCOMPILE_FLAGS = -DNDEBUG -O3 \
 # Additional debug-specific flags
 DCOMPILE_FLAGS = -DDEBUG -g -Og
 # Add additional include paths
-INCLUDES = -I$(SRC_PATH) -I./include -I./deps/out/include \
+INCLUDES = -I$(SRC_PATH) -I./include -I$(DEPS_INSTALL_PATH)/include \
 	-I./deps/fmt/include \
 	-I./deps/GSL/include \
 	-I./deps/json/single_include \
 	-I./deps/xxHash
 # Protobuf compiler
-PROTOC = ./deps/out/bin/protoc
+PROTOC = $(DEPS_INSTALL_PATH)/bin/protoc
 # General linker settings
-ABSL_LIBRARIES = $(shell find deps/out/lib/libabsl_*.a -printf '%f\n' \
+ABSL_LIBRARIES = $(shell find $(DEPS_INSTALL_PATH)/lib/libabsl_*.a -printf '%f\n' \
 		| sed -e 's/libabsl_\([a-z0-9_]\+\)\.a/-labsl_\1/g')
-LINK_FLAGS = -Ldeps/out/lib \
+LINK_FLAGS = -L$(DEPS_INSTALL_PATH)/lib \
 	-Wl,-Bstatic -luv_a -lhttp_parser -lnghttp2 \
 	-luring -lprotobuf-lite -lrocksdb -ltkrzw -llmdb -lzookeeper_st \
 	-Wl,--start-group $(ABSL_LIBRARIES) -Wl,--end-group \
@@ -41,10 +53,6 @@ DISABLE_STAT = 1
 DEBUG_BUILD = 0
 BUILD_BENCH = 0
 FORCE_DCHECK = 0
-
-ifneq ("$(wildcard config.mk)","")
-include config.mk
-endif
 
 ifneq (,$(findstring clang,$(CXX)))
 COMPILE_FLAGS += -Wthread-safety \
@@ -90,8 +98,8 @@ COMPILE_FLAGS += $(RCOMPILE_FLAGS)
 LINK_FLAGS    += $(RLINK_FLAGS)
 endif
 
-BUILD_PATH := build/$(BUILD_NAME)
-BIN_PATH := bin/$(BUILD_NAME)
+BUILD_PATH := $(BUILD_BASE_PATH)/$(BUILD_NAME)
+BIN_PATH := $(BIN_BASE_PATH)/$(BUILD_NAME)
 
 # Find all source files in the source directory, sorted by most
 # recently modified
@@ -148,9 +156,9 @@ dirs:
 .PHONY: clean
 clean:
 	@echo "Deleting directories"
-	@$(RM) -r build bin
+	@$(RM) -r $(BUILD_BASE_PATH) $(BIN_BASE_PATH)
 	@echo "Deleting protobuf generated code"
-	@$(RM) -f src/proto/*.pb.h src/proto/*.pb.cc src/proto/*.pb.cpp
+	@$(RM) -f $(SRC_PATH)/proto/*.pb.h $(SRC_PATH)/proto/*.pb.cc $(SRC_PATH)/proto/*.pb.cpp
 
 binary: $(TARGET_BINS)
 

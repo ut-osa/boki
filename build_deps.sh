@@ -3,7 +3,10 @@ set -e
 
 SCRIPT_PATH=$(readlink -f $0)
 BASE_DIR=$(dirname ${SCRIPT_PATH})
-DEPS_INSTALL_PATH="${BASE_DIR}/deps/out"
+
+if [[ -z "${DEPS_INSTALL_PATH}" ]]; then
+  DEPS_INSTALL_PATH="${BASE_DIR}/deps/out"
+fi
 
 USE_GCC=1
 USE_CLANG=0
