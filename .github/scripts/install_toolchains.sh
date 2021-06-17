@@ -1,6 +1,6 @@
 #!/bin/sh
 
-PKGS="g++ clang make cmake autoconf automake libtool curl unzip"
+PKGS="g++ clang make cmake pkg-config autoconf automake libtool curl unzip"
 
 apt -y update && \
   apt -y install $PKGS && \
