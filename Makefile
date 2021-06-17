@@ -49,10 +49,10 @@ DLINK_FLAGS =
 #### END PROJECT SETTINGS ####
 
 # These options can be overridden in config.mk
-DISABLE_STAT = 1
-DEBUG_BUILD = 0
-BUILD_BENCH = 0
-FORCE_DCHECK = 0
+DISABLE_STAT ?= 1
+DEBUG_BUILD ?= 0
+BUILD_BENCH ?= 0
+FORCE_DCHECK ?= 0
 
 ifneq (,$(findstring clang,$(CXX)))
 COMPILE_FLAGS += -Wthread-safety \
