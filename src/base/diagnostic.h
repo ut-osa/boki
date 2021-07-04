@@ -16,12 +16,13 @@
 #pragma clang diagnostic ignored "-Wsign-conversion"
 #endif  // __FAAS_NOWARN_SIGN_CONVERSION
 
-#define __BEGIN_THIRD_PARTY_HEADERS                                 \
-    _Pragma("clang diagnostic push")                                \
-    _Pragma("clang diagnostic ignored \"-Wimplicit-fallthrough\"")  \
+#define __BEGIN_THIRD_PARTY_HEADERS                                          \
+    _Pragma("clang diagnostic push")                                         \
+    _Pragma("clang diagnostic ignored \"-Winconsistent-missing-override\"")  \
+    _Pragma("clang diagnostic ignored \"-Wimplicit-fallthrough\"")           \
     _Pragma("clang diagnostic ignored \"-Wconversion\"")
 
-#define __END_THIRD_PARTY_HEADERS                                   \
+#define __END_THIRD_PARTY_HEADERS                                            \
     _Pragma("clang diagnostic pop")
 
 #endif  // __clang__

@@ -140,6 +140,7 @@ export CFLAGS=${CFLAGS_BAK}
 # Build tkrzw
 cd "${BASE_DIR}/deps/tkrzw" && \
   ./configure --prefix="${DEPS_INSTALL_PATH}" --disable-shared \
+              --disable-zlib --enable-zstd --disable-lz4 --disable-lzma \
               --enable-debug=${DEBUG_BUILD} && \
   make -j$(nproc) && make install && make clean
 
