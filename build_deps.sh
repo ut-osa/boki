@@ -138,11 +138,14 @@ cd "${BASE_DIR}/deps/zookeeper-client-c" && \
 export CFLAGS=${CFLAGS_BAK}
 
 # Build tkrzw
+CXXFLAGS_BAK=${CXXFLAGS}
+export CXXFLAGS="${CXXFLAGS} -I${DEPS_INSTALL_PATH}/include -L${DEPS_INSTALL_PATH}/lib"
 cd "${BASE_DIR}/deps/tkrzw" && \
   ./configure --prefix="${DEPS_INSTALL_PATH}" --disable-shared \
               --disable-zlib --enable-zstd --disable-lz4 --disable-lzma \
               --enable-debug=${DEBUG_BUILD} && \
   make -j$(nproc) && make install && make clean
+export CXXFLAGS=${CXXFLAGS_BAK}
 
 # Build rocksdb
 cd "${BASE_DIR}/deps/rocksdb" && \
