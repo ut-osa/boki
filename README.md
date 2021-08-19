@@ -3,6 +3,7 @@ Boki
 
 Boki is a research FaaS runtime for stateful serverless computing with shared logs.
 Boki exports the shared log API to serverless functions, allowing them to manage states with strong consistency, durability, and fault tolerance.
+Boki uses [Nightcore](https://github.com/ut-osa/nightcore) as the runtime for serverless functions.
 
 Boki is the pronunciation of "簿記", meaning bookkeeping in Japanese.
 
