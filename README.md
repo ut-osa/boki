@@ -1,24 +1,44 @@
-Nightcore
+Boki
 ==================================
 
-Nightcore is a research function-as-a-service (FaaS) runtime with μs-scale latency and high throughput.
-Nightcore targets stateless microservices that requires low latency.
-The current prototype supports functions written in C/C++, Go, Node.js, and Python.
+Boki is a research FaaS runtime, which realizes stateful serverless computing with shared logs.
+Boki exports the shared log API to serverless functions, allowing them to manage state with strong consistency, durability, and fault tolerance.
 
-### Building Nightcore ###
+### Building Boki ###
 
-```
+Under Ubuntu 20.04, building Boki needs following dependencies installed:
+~~~
+sudo apt install g++ make cmake pkg-config autoconf automake libtool curl unzip
+~~~
+
+Once installed, build Boki with:
+
+~~~
 ./build_deps.sh
 make -j $(nproc)
-```
+~~~
 
-### Running "Hello world" examples ###
+### Kernel requirements ###
 
-Inside [examples](https://github.com/ut-osa/nightcore/tree/asplos-release/examples) folder,
-we provide "Hello world" example functions implemented in all supported programming languages.
-These functions demonstrate the basic usage of Nightcore's API for internal function calls.
+Boki uses Linux kernel's io_uring for asynchronous I/Os.
+io_uring is a very new feature in the Linux kernel (introduced in 5.1),
+and evolves rapidly with newer Linux kernel version.
 
-### Running microservice workloads ###
+Boki require Linux kernel 5.10 or later to run.
 
-A separate repository [ut-osa/nightcore-benchmarks](https://github.com/ut-osa/nightcore-benchmarks)
-includes scripts and detailed instructions on running microservice workloads presented in our ASPLOS paper.
+### Boki support libraries ###
+
+As presented in our SOSP paper, we build BokiFlow, BokiStore and BokiQueue for serverless use cases of
+transactional workflows, durable object storage, and message queues.
+
+`slib` directory in this repository contains implementations of BokiStore and BokiQueue.
+For BokiFlow, check out `workloads/workflow` directory in [ut-osa/boki-benchmarks](https://github.com/ut-osa/boki-benchmarks) repository.
+
+### Running Boki's evaluation workloads ###
+
+A separate repository [ut-osa/boki-benchmarks](https://github.com/ut-osa/boki-benchmarks)
+includes scripts and detailed instructions on running evaluation workloads presented in our SOSP paper.
+
+### Limitations of the current prototype ###
+
+The shared log API is only exported to functions written in Go.
