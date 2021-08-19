@@ -1,8 +1,8 @@
 Boki
 ==================================
 
-Boki is a research FaaS runtime, which realizes stateful serverless computing with shared logs.
-Boki exports the shared log API to serverless functions, allowing them to manage state with strong consistency, durability, and fault tolerance.
+Boki is a research FaaS runtime for stateful serverless computing with shared logs.
+Boki exports the shared log API to serverless functions, allowing them to manage states with strong consistency, durability, and fault tolerance.
 
 ### Building Boki ###
 
@@ -20,7 +20,7 @@ make -j $(nproc)
 
 ### Kernel requirements ###
 
-Boki uses Linux kernel's io_uring for asynchronous I/Os.
+Boki uses [io_uring](https://en.wikipedia.org/wiki/Io_uring) for asynchronous I/Os.
 io_uring is a very new feature in the Linux kernel (introduced in 5.1),
 and evolves rapidly with newer Linux kernel version.
 
