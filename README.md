@@ -4,6 +4,8 @@ Boki
 Boki is a research FaaS runtime for stateful serverless computing with shared logs.
 Boki exports the shared log API to serverless functions, allowing them to manage states with strong consistency, durability, and fault tolerance.
 
+Boki is the pronunciation of "簿記", meaning bookkeeping in Japanese.
+
 ### Building Boki ###
 
 Under Ubuntu 20.04, building Boki needs following dependencies installed:
