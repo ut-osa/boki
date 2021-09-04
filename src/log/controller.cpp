@@ -380,10 +380,17 @@ void Controller::ReconfigCommandHandler(std::string inputs) {
 
     std::vector<std::string_view> parts = absl::StrSplit(inputs, ' ');
     if (parts[0] == "seq") {
+        size_t origin_count = configuration.sequencer_nodes.size();
         configuration.sequencer_nodes.clear();
         for (size_t i = 1; i < parts.size(); i++) {
-            configuration.sequencer_nodes.push_back(
-                gsl::narrow_cast<uint16_t>(ParseIntChecked(parts[i])));
+            if (!parts[i].empty()) {
+                configuration.sequencer_nodes.push_back(
+                    gsl::narrow_cast<uint16_t>(ParseIntChecked(parts[i])));
+            }
+        }
+        if (configuration.sequencer_nodes.size() != origin_count) {
+            HLOG_F(FATAL, "The numbers of sequencers mismatch: given={}, expect={}",
+                   configuration.sequencer_nodes.size(), origin_count);
         }
     }
 
