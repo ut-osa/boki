@@ -70,7 +70,7 @@ cd "${BASE_DIR}/deps/jemalloc" && \
   ./autogen.sh && \
   ./configure --prefix="${DEPS_INSTALL_PATH}" --disable-shared \
               --enable-prof --enable-stats && \
-  make clean && make -j$(nproc) install && make clean
+  make clean && make -j$(nproc) dist && make install && make clean
 
 # Build zstd
 cd "${BASE_DIR}/deps/zstd" && \
