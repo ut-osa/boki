@@ -1,3 +1,3 @@
 module cs.utexas.edu/zjia/faas
 
-go 1.14
+go 1.16
