@@ -5,6 +5,7 @@
 #include "server/io_worker.h"
 #include "server/io_uring.h"
 #include "utils/fs.h"
+#include "utils/hash.h"
 
 #include <fcntl.h>
 
@@ -41,6 +42,7 @@ void JournalFile::AppendRecord(uint16_t type,
         .type         = type,
         .payload_size = gsl::narrow_cast<uint32_t>(payload_size),
         .timestamp    = GetRealtimeNanoTimestamp(),
+        .checksum     = hash::xxHash64(payload_vec),
     };
     size_t record_size = sizeof(hdr) + payload_size;
     OngoingAppend* append_op = append_op_pool_.Get();
@@ -87,6 +89,10 @@ size_t JournalFile::ReadRecord(size_t offset, uint16_t* type,
     buffer->AppendUninitializedData(hdr.payload_size);
     char* buf_ptr = buffer->data() + (buffer->length() - hdr.payload_size);
     ReadBytes(fd_, offset + sizeof(hdr), hdr.payload_size, buf_ptr);
+    std::span<const char> record_data(buf_ptr, hdr.payload_size);
+    if (hdr.checksum != hash::xxHash64(record_data)) {
+        LOG(FATAL) << "Checksum check failed for journal record";
+    }
     *type = hdr.type;
     return hdr.payload_size;
 }
