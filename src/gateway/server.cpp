@@ -239,9 +239,7 @@ bool Server::SendMessageToEngine(uint16_t node_id, const GatewayMessage& message
     if (hub == nullptr) {
         return false;
     }
-    std::span<const char> data(reinterpret_cast<const char*>(&message),
-                               sizeof(GatewayMessage));
-    hub->SendMessage(data, payload);
+    hub->SendMessage(VAR_AS_CHAR_SPAN(message, GatewayMessage), payload);
     return true;
 }
 

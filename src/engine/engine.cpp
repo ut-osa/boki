@@ -534,9 +534,7 @@ void Engine::SendGatewayMessage(const GatewayMessage& message, std::span<const c
         HLOG(ERROR) << "There is not GatewayEgressHub associated with current IOWorker";
         return;
     }
-    std::span<const char> data(reinterpret_cast<const char*>(&message),
-                               sizeof(GatewayMessage));
-    hub->SendMessage(data, payload);
+    hub->SendMessage(VAR_AS_CHAR_SPAN(message, GatewayMessage), payload);
 }
 
 bool Engine::SendFuncWorkerMessage(uint16_t client_id, Message* message) {
@@ -699,9 +697,7 @@ bool Engine::SendSharedLogMessage(protocol::ConnType conn_type, uint16_t dst_nod
     if (hub == nullptr) {
         return false;
     }
-    std::span<const char> data(reinterpret_cast<const char*>(&message),
-                               sizeof(SharedLogMessage));
-    hub->SendMessage(data, payload1, payload2, payload3);
+    hub->SendMessage(VAR_AS_CHAR_SPAN(message, SharedLogMessage), payload1, payload2, payload3);
     return true;
 }
 

@@ -203,9 +203,7 @@ bool SequencerBase::SendSharedLogMessage(protocol::ConnType conn_type, uint16_t 
     if (hub == nullptr) {
         return false;
     }
-    std::span<const char> data(reinterpret_cast<const char*>(&message),
-                               sizeof(SharedLogMessage));
-    hub->SendMessage(data, payload);
+    hub->SendMessage(VAR_AS_CHAR_SPAN(message, SharedLogMessage), payload);
     return true;
 }
 

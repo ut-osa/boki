@@ -213,10 +213,10 @@ void Storage::HandleReplicateRequest(const SharedLogMessage& message,
         }
     };
 
-    std::span<const char> msg_data(reinterpret_cast<const char*>(&message),
-                                   sizeof(SharedLogMessage));
     CurrentIOWorkerChecked()->JournalAppend(
-        kLogEntryJournalRecordType, msg_data, payload, callback);
+        kLogEntryJournalRecordType,
+        VAR_AS_CHAR_SPAN(message, SharedLogMessage), payload,
+        callback);
 }
 
 void Storage::OnRecvNewMetaLogs(const SharedLogMessage& message,

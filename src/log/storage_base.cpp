@@ -186,9 +186,7 @@ bool StorageBase::SendSharedLogMessage(protocol::ConnType conn_type, uint16_t ds
     if (hub == nullptr) {
         return false;
     }
-    std::span<const char> data(reinterpret_cast<const char*>(&message),
-                               sizeof(SharedLogMessage));
-    hub->SendMessage(data, payload1, payload2, payload3);
+    hub->SendMessage(VAR_AS_CHAR_SPAN(message, SharedLogMessage), payload1, payload2, payload3);
     return true;
 }
 
