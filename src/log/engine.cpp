@@ -182,7 +182,10 @@ void Engine::HandleLocalAppend(LocalOp* op) {
             locked_producer->LocalAppend(op, &log_metadata.localid);
         }
     }
-    ReplicateLogEntry(view, log_metadata, VECTOR_AS_SPAN(op->user_tags), op->data.to_span());
+    std::span<const uint64_t> user_tags = VECTOR_AS_SPAN(op->user_tags);
+    std::span<const char> log_data =  op->data.to_span();
+    log_metadata.checksum = log_utils::ComputeLogChecksum(log_metadata, user_tags, log_data);
+    ReplicateLogEntry(view, log_metadata, user_tags, log_data);
 }
 
 void Engine::HandleLocalTrim(LocalOp* op) {
@@ -377,6 +380,23 @@ void Engine::OnRecvNewIndexData(const SharedLogMessage& message,
 #undef ONHOLD_IF_FROM_FUTURE_VIEW
 #undef IGNORE_IF_FROM_PAST_VIEW
 
+#define VALIDATE_LOG_PARTS(METADATA_VAR, USER_TAGS_VAR, DATA_VAR)     \
+    do {                                                              \
+        auto checksum = log_utils::ComputeLogChecksum(                \
+            (METADATA_VAR), (USER_TAGS_VAR), (DATA_VAR));             \
+        if ((METADATA_VAR).checksum != checksum) {                    \
+            LOG(FATAL) << "Mismatched checksum for log entry data!";  \
+        }                                                             \
+    } while (0)
+
+#define VALIDATE_LOG_ENTRY(LOG_ENTRY_VAR)                             \
+    do {                                                              \
+        auto checksum = log_utils::ComputeLogChecksum(LOG_ENTRY_VAR); \
+        if ((LOG_ENTRY_VAR).metadata.checksum != checksum) {          \
+            LOG(FATAL) << "Mismatched checksum for log entry data!";  \
+        }                                                             \
+    } while (0)
+
 void Engine::OnRecvResponse(const SharedLogMessage& message,
                             std::span<const char> payload) {
     DCHECK(SharedLogMessageHelper::GetOpType(message) == SharedLogOpType::RESPONSE);
@@ -391,12 +411,14 @@ void Engine::OnRecvResponse(const SharedLogMessage& message,
             return;
         }
         if (result == SharedLogResultType::READ_OK) {
-            uint64_t seqnum = bits::JoinTwo32(message.logspace_id, message.seqnum_lowhalf);
+            LogMetaData log_metadata = log_utils::GetMetaDataFromMessage(message);
+            uint64_t seqnum = log_metadata.seqnum;
             HVLOG_F(1, "Receive remote read response for log (seqnum {})", bits::HexStr0x(seqnum));
             std::span<const uint64_t> user_tags;
             std::span<const char> log_data;
             std::span<const char> aux_data;
             log_utils::SplitPayloadForMessage(message, payload, &user_tags, &log_data, &aux_data);
+            VALIDATE_LOG_PARTS(log_metadata, user_tags, log_data);
             Message response = BuildLocalReadOKResponse(seqnum, user_tags, log_data);
             if (aux_data.size() > 0) {
                 response.log_aux_data_size = gsl::narrow_cast<uint16_t>(aux_data.size());
@@ -404,7 +426,6 @@ void Engine::OnRecvResponse(const SharedLogMessage& message,
             }
             FinishLocalOpWithResponse(op, &response, message.user_metalog_progress);
             // Put the received log entry into log cache
-            LogMetaData log_metadata = log_utils::GetMetaDataFromMessage(message);
             LogCachePut(log_metadata, user_tags, log_data);
             if (aux_data.size() > 0) {
                 LogCachePutAuxData(seqnum, aux_data);
@@ -450,6 +471,7 @@ void Engine::ProcessIndexFoundResult(const IndexQueryResult& query_result) {
         // Cache hits
         HVLOG_F(1, "Cache hits for log entry (seqnum {})", bits::HexStr0x(seqnum));
         const LogEntry& log_entry = cached_log_entry.value();
+        VALIDATE_LOG_ENTRY(log_entry);
         std::optional<std::string> cached_aux_data = LogCacheGetAuxData(seqnum);
         std::span<const char> aux_data;
         if (cached_aux_data.has_value()) {
@@ -474,9 +496,9 @@ void Engine::ProcessIndexFoundResult(const IndexQueryResult& query_result) {
             FinishLocalOpWithResponse(op, &response, query_result.metalog_progress);
         } else {
             HVLOG_F(1, "Send read response for log (seqnum {})", bits::HexStr0x(seqnum));
-            SharedLogMessage response = SharedLogMessageHelper::NewReadOkResponse();
+            SharedLogMessage response = SharedLogMessageHelper::NewReadOkResponse(
+                query_result.metalog_progress);
             log_utils::PopulateMetaDataToMessage(log_entry.metadata, &response);
-            response.user_metalog_progress = query_result.metalog_progress;
             response.aux_data_size = gsl::narrow_cast<uint16_t>(aux_data.size());
             SendReadResponse(query, &response,
                              VECTOR_AS_CHAR_SPAN(log_entry.user_tags),
@@ -507,6 +529,9 @@ void Engine::ProcessIndexFoundResult(const IndexQueryResult& query_result) {
         }
     }
 }
+
+#undef VALIDATE_LOG_PARTS
+#undef VALIDATE_LOG_ENTRY
 
 void Engine::ProcessIndexContinueResult(const IndexQueryResult& query_result,
                                         Index::QueryResultVec* more_results) {

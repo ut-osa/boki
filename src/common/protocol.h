@@ -268,8 +268,7 @@ struct SharedLogMessage {
         struct {
             uint16_t num_tags;      // [24:26]
             uint16_t aux_data_size; // [26:28]
-
-            uint32_t _5_padding_5_;
+            uint32_t checksum;      // [28:32]
         } __attribute__ ((packed));
     };
 
@@ -634,8 +633,10 @@ public:
         return message;
     }
 
-    static SharedLogMessage NewReadOkResponse() {
-        return NewResponse(SharedLogResultType::READ_OK);
+    static SharedLogMessage NewReadOkResponse(uint64_t user_metalog_progress) {
+        SharedLogMessage message = NewResponse(SharedLogResultType::READ_OK);
+        message.user_metalog_progress = user_metalog_progress;
+        return message;
     }
 
     static SharedLogMessage NewDataLostResponse() {

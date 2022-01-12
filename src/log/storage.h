@@ -40,6 +40,7 @@ private:
 
     void SendEngineLogResult(const protocol::SharedLogMessage& request,
                              protocol::SharedLogMessage* response,
+                             const LogMetaData& metadata,
                              std::span<const char> tags_data,
                              std::span<const char> log_data);
     void SendEngineLogResult(const protocol::SharedLogMessage& request,

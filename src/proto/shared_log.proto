@@ -111,6 +111,7 @@ message LogEntryProto {
     uint64 localid            = 3;
     repeated uint64 user_tags = 4;
     bytes data                = 5;
+    uint32 checksum           = 6;
 }
 
 message IndexDataProto {

@@ -130,6 +130,23 @@ void Storage::OnViewFinalized(const FinalizedView* finalized_view) {
         }                                                           \
     } while (0)
 
+#define VALIDATE_LOG_PARTS(METADATA_VAR, USER_TAGS_VAR, DATA_VAR)     \
+    do {                                                              \
+        auto checksum = log_utils::ComputeLogChecksum(                \
+            (METADATA_VAR), (USER_TAGS_VAR), (DATA_VAR));             \
+        if ((METADATA_VAR).checksum != checksum) {                    \
+            LOG(FATAL) << "Mismatched checksum for log entry data!";  \
+        }                                                             \
+    } while (0)
+
+#define VALIDATE_LOG_ENTRY(LOG_ENTRY_VAR)                             \
+    do {                                                              \
+        auto checksum = log_utils::ComputeLogChecksum(LOG_ENTRY_VAR); \
+        if ((LOG_ENTRY_VAR).metadata.checksum != checksum) {          \
+            LOG(FATAL) << "Mismatched checksum for log entry data!";  \
+        }                                                             \
+    } while (0)
+
 void Storage::HandleReadAtRequest(const SharedLogMessage& request) {
     DCHECK(SharedLogMessageHelper::GetOpType(request) == SharedLogOpType::READ_AT);
     LockablePtr<LogStorage> storage_ptr;
@@ -167,6 +184,7 @@ void Storage::HandleReplicateRequest(const SharedLogMessage& message,
     std::span<const char> log_data;
     log_utils::SplitPayloadForMessage(message, payload, &user_tags, &log_data,
                                       /* aux_data= */ nullptr);
+    VALIDATE_LOG_PARTS(metadata, user_tags, log_data);
     log_cache()->PutByLocalId(metadata, user_tags, log_data);
 
     LogStorage::Entry entry {
@@ -263,8 +281,8 @@ void Storage::ProcessReadResults(const LogStorage::ReadResultVec& results) {
         if (result.status != LogStorage::ReadResult::kFailed) {
             if (auto tmp = log_cache()->GetBySeqnum(seqnum); tmp.has_value()) {
                 log_entry = std::move(tmp.value());
-                response = SharedLogMessageHelper::NewReadOkResponse();
-                response.user_metalog_progress = request.user_metalog_progress;
+                response = SharedLogMessageHelper::NewReadOkResponse(
+                    request.user_metalog_progress);
                 SendEngineLogResult(request, &response, log_entry);
                 continue;
             }
@@ -279,8 +297,8 @@ void Storage::ProcessReadResults(const LogStorage::ReadResultVec& results) {
                 log_entry = log_utils::ReadLogEntryFromJournal(
                     seqnum, DCHECK_NOTNULL(result.journal_file), result.journal_offset);
             }
-            response = SharedLogMessageHelper::NewReadOkResponse();
-            response.user_metalog_progress = request.user_metalog_progress;
+            VALIDATE_LOG_ENTRY(log_entry);
+            response = SharedLogMessageHelper::NewReadOkResponse(request.user_metalog_progress);
             SendEngineLogResult(request, &response, log_entry);
             log_cache()->PutBySeqnum(log_entry);
             break;
@@ -310,13 +328,15 @@ void Storage::ProcessReadFromDB(const SharedLogMessage& request) {
         SendEngineResponse(request, &response);
         return;
     }
-    SharedLogMessage response = SharedLogMessageHelper::NewReadOkResponse();
-    response.user_metalog_progress = request.user_metalog_progress;
+    SharedLogMessage response = SharedLogMessageHelper::NewReadOkResponse(
+        request.user_metalog_progress);
     LogMetaData metadata;
     std::span<const uint64_t> user_tags;
     std::span<const char> log_data;
     log_utils::SplitLogEntryProto(log_entry_proto, &metadata, &user_tags, &log_data);
-    SendEngineLogResult(request, &response, VECTOR_AS_CHAR_SPAN(user_tags), log_data);
+    VALIDATE_LOG_PARTS(metadata, user_tags, log_data);
+    SendEngineLogResult(request, &response,
+                        metadata, VECTOR_AS_CHAR_SPAN(user_tags), log_data);
     log_cache()->PutBySeqnum(metadata, user_tags, log_data);
 }
 
@@ -328,9 +348,11 @@ void Storage::ProcessRequests(const std::vector<SharedLogRequest>& requests) {
 
 void Storage::SendEngineLogResult(const protocol::SharedLogMessage& request,
                                   protocol::SharedLogMessage* response,
+                                  const LogMetaData& metadata,
                                   std::span<const char> tags_data,
                                   std::span<const char> log_data) {
-    uint64_t seqnum = bits::JoinTwo32(response->logspace_id, response->seqnum_lowhalf);
+    log_utils::PopulateMetaDataToMessage(metadata, response);
+    uint64_t seqnum = metadata.seqnum;
     std::optional<std::string> cached_aux_data = log_cache()->GetAuxData(seqnum);
     std::span<const char> aux_data;
     if (cached_aux_data.has_value()) {
@@ -353,8 +375,8 @@ void Storage::SendEngineLogResult(const protocol::SharedLogMessage& request,
 void Storage::SendEngineLogResult(const protocol::SharedLogMessage& request,
                                   protocol::SharedLogMessage* response,
                                   const LogEntry& log_entry) {
-    log_utils::PopulateMetaDataToMessage(log_entry.metadata, response);
     SendEngineLogResult(request, response,
+                        log_entry.metadata,
                         VECTOR_AS_CHAR_SPAN(log_entry.user_tags),
                         STRING_AS_SPAN(log_entry.data));
 }
@@ -414,6 +436,7 @@ void Storage::FlushLogEntries(std::span<const LogStorage::Entry*> entries) {
                     entry->metadata.seqnum, entry->journal_file, entry->journal_offset);
                 DCHECK_EQ(log_entry.metadata.localid, localid);
             }
+            VALIDATE_LOG_ENTRY(log_entry);
             batch.keys.push_back(bits::LowHalf64(log_entry.metadata.seqnum));
             batch.data.push_back(log_utils::SerializedLogEntryToProto(log_entry));
             log_cache()->PutBySeqnum(log_entry);
@@ -421,6 +444,9 @@ void Storage::FlushLogEntries(std::span<const LogStorage::Entry*> entries) {
         log_db()->PutBatch(batch);
     }
 }
+
+#undef VALIDATE_LOG_PARTS
+#undef VALIDATE_LOG_ENTRY
 
 void Storage::CommitLogEntries(std::span<const LogStorage::Entry*> entries) {
     HVLOG_F(1, "Will commit the persistence of {} entries", entries.size());

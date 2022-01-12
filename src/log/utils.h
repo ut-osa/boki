@@ -56,6 +56,16 @@ private:
     DISALLOW_COPY_AND_ASSIGN(ThreadedMap);
 };
 
+uint32_t ComputeLogChecksum(const log::LogMetaData& metadata,
+                            std::span<const uint64_t> user_tags,
+                            std::span<const char> log_data);
+
+inline uint32_t ComputeLogChecksum(const log::LogEntry& log_entry) {
+    return ComputeLogChecksum(log_entry.metadata,
+                              VECTOR_AS_SPAN(log_entry.user_tags),
+                              STRING_AS_SPAN(log_entry.data));
+}
+
 log::MetaLogsProto MetaLogsFromPayload(std::span<const char> payload);
 
 log::LogMetaData GetMetaDataFromMessage(const protocol::SharedLogMessage& message);

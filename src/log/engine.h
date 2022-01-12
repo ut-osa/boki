@@ -60,6 +60,7 @@ private:
     inline LogMetaData MetaDataFromAppendOp(LocalOp* op) {
         DCHECK(op->type == protocol::SharedLogOpType::APPEND);
         return LogMetaData {
+            .checksum = 0,
             .user_logspace = op->user_logspace,
             .seqnum = kInvalidLogSeqNum,
             .localid = 0,

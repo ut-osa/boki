@@ -1,6 +1,7 @@
 #include "log/utils.h"
 
 #include "utils/bits.h"
+#include "utils/hash.h"
 #include "server/constants.h"
 
 namespace faas {
@@ -50,6 +51,21 @@ void FutureRequests::OnHoldRequest(uint16_t view_id, SharedLogRequest request) {
     onhold_requests_[view_id].push_back(std::move(request));
 }
 
+uint32_t ComputeLogChecksum(const log::LogMetaData& metadata,
+                            std::span<const uint64_t> user_tags,
+                            std::span<const char> log_data) {
+    uint64_t h = hash::xxHash64({
+        VAR_AS_CHAR_SPAN(metadata.user_logspace, uint32_t),
+        VAR_AS_CHAR_SPAN(metadata.localid, uint64_t),
+        VAR_AS_CHAR_SPAN(metadata.num_tags, size_t),
+        VAR_AS_CHAR_SPAN(metadata.data_size, size_t),
+        std::span<const char>(reinterpret_cast<const char*>(user_tags.data()),
+                              user_tags.size() * sizeof(uint64_t)),
+        log_data,
+    });
+    return bits::LowHalf64(h) ^ bits::HighHalf64(h);
+}
+
 MetaLogsProto MetaLogsFromPayload(std::span<const char> payload) {
     MetaLogsProto metalogs_proto;
     if (!metalogs_proto.ParseFromArray(payload.data(),
@@ -75,6 +91,7 @@ LogMetaData GetMetaDataFromMessage(const SharedLogMessage& message) {
     DCHECK_LT(num_tags * sizeof(uint64_t) + aux_data_size, total_size);
     size_t log_data_size = total_size - num_tags * sizeof(uint64_t) - aux_data_size;
     return LogMetaData {
+        .checksum = message.checksum,
         .user_logspace = message.user_logspace,
         .seqnum = bits::JoinTwo32(message.logspace_id, message.seqnum_lowhalf),
         .localid = message.localid,
@@ -121,6 +138,7 @@ void SplitLogEntryProto(const log::LogEntryProto& log_entry_proto,
                         log::LogMetaData* metadata,
                         std::span<const uint64_t>* user_tags,
                         std::span<const char>* log_data) {
+    metadata->checksum = log_entry_proto.checksum();
     metadata->user_logspace = log_entry_proto.user_logspace();
     metadata->seqnum = log_entry_proto.seqnum();
     metadata->localid = log_entry_proto.localid();
@@ -137,6 +155,7 @@ void PopulateMetaDataToMessage(const LogMetaData& metadata, SharedLogMessage* me
     message->user_logspace = metadata.user_logspace;
     message->seqnum_lowhalf = bits::LowHalf64(metadata.seqnum);
     message->num_tags = gsl::narrow_cast<uint16_t>(metadata.num_tags);
+    message->checksum = metadata.checksum;
     message->localid = metadata.localid;
 }
 
@@ -173,6 +192,7 @@ std::string SerializedLogEntryToProto(const log::LogEntry& log_entry) {
     log_entry_proto.mutable_user_tags()->Add(
         log_entry.user_tags.begin(), log_entry.user_tags.end());
     log_entry_proto.set_data(log_entry.data);
+    log_entry_proto.set_checksum(log_entry.metadata.checksum);
     std::string data;
     CHECK(log_entry_proto.SerializeToString(&data));
     return data;

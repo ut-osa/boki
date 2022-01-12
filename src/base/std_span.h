@@ -20,3 +20,7 @@ using gsl::span;
     std::span<const char>(                                        \
         reinterpret_cast<const char*>((VEC_VAR).data()),          \
         sizeof(decltype(VEC_VAR)::value_type) * (VEC_VAR).size())
+
+#define VAR_AS_CHAR_SPAN(VAR, VAR_TYPE)                           \
+    std::span<const char>(                                        \
+        reinterpret_cast<const char*>(&(VAR)), sizeof(VAR_TYPE))  \
