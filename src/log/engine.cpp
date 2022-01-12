@@ -452,6 +452,8 @@ void Engine::ProcessAppendResults(const LogProducer::AppendResultVec& results) {
             LogMetaData log_metadata = MetaDataFromAppendOp(op);
             log_metadata.seqnum = result.seqnum;
             log_metadata.localid = result.localid;
+            log_metadata.checksum = log_utils::ComputeLogChecksum(
+                log_metadata, VECTOR_AS_SPAN(op->user_tags), op->data.to_span());
             LogCachePut(log_metadata, VECTOR_AS_SPAN(op->user_tags), op->data.to_span());
             Message response = MessageHelper::NewSharedLogOpSucceeded(
                 SharedLogResultType::APPEND_OK, result.seqnum);
