@@ -23,4 +23,4 @@ using gsl::span;
 
 #define VAR_AS_CHAR_SPAN(VAR, VAR_TYPE)                           \
     std::span<const char>(                                        \
-        reinterpret_cast<const char*>(&(VAR)), sizeof(VAR_TYPE))  \
+        reinterpret_cast<const char*>(&(VAR)), sizeof(VAR_TYPE))
