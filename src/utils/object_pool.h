@@ -34,13 +34,25 @@ public:
         }
     }
 
+    using ObjectInitFn = std::function<void(T* /* object */)>;
+
+    void SetObjectInitFn(ObjectInitFn init_fn) {
+        object_init_fn_ = init_fn;
+    }
+
     T* Get() {
+        T* obj = nullptr;
         if (!free_objs_.empty()) {
-            T* obj = free_objs_.back();
+            obj = free_objs_.back();
             free_objs_.pop_back();
-            return obj;
+        } else {
+            obj = GetSlowPath();
         }
-        return GetSlowPath();
+        DCHECK(obj != nullptr);
+        if (object_init_fn_) {
+            object_init_fn_(obj);
+        }
+        return obj;
     }
 
     void Return(T* obj) {
@@ -48,6 +60,8 @@ public:
     }
 
 private:
+    ObjectInitFn object_init_fn_;
+
 #ifdef __FAAS_HAVE_ABSL
     absl::InlinedVector<T*, 15> free_objs_;
 #else
@@ -128,6 +142,7 @@ public:
         }
         T* obj = free_objs_.back();
         free_objs_.pop_back();
+        obj->Clear();
         return obj; 
     }
 
@@ -148,13 +163,23 @@ public:
     ThreadSafeObjectPool() {}
     ~ThreadSafeObjectPool() {}
 
+    using ObjectInitFn = typename SimpleObjectPool<T>::ObjectInitFn;
+
+    void SetObjectInitFn(ObjectInitFn init_fn) {
+        object_init_fn_ = init_fn;
+    }
+
     T* Get() {
         T* obj = nullptr;
         {
             absl::MutexLock lk(&mu_);
             obj = inner_.Get();
         }
-        return DCHECK_NOTNULL(obj);
+        DCHECK(obj != nullptr);
+        if (object_init_fn_) {
+            object_init_fn_(obj);
+        }
+        return obj;
     }
 
     void Return(T* obj) {
@@ -163,6 +188,8 @@ public:
     }
 
 private:
+    ObjectInitFn object_init_fn_;
+
     absl::Mutex mu_;
     SimpleObjectPool<T> inner_ ABSL_GUARDED_BY(mu_);
 

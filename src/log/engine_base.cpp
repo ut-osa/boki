@@ -39,6 +39,21 @@ void EngineBase::Start() {
     if (absl::GetFlag(FLAGS_slog_engine_enable_cache)) {
         log_cache_.emplace(absl::GetFlag(FLAGS_slog_engine_cache_cap_mb));
     }
+    // Set init function for LocalOp
+    log_op_pool_.SetObjectInitFn([] (LocalOp* op) {
+        op->type = SharedLogOpType::INVALID;
+        op->client_id = 0;
+        op->user_logspace = 0;
+        op->id = 0;
+        op->client_data = 0;
+        op->metalog_progress = 0;
+        op->query_tag = kInvalidLogTag;
+        op->seqnum = kInvalidLogSeqNum;
+        op->func_call_id = protocol::kInvalidFuncCallId;
+        op->start_timestamp = -1;
+        op->user_tags.clear();
+        op->data.Reset();
+    });
 }
 
 void EngineBase::Stop() {}
@@ -180,10 +195,10 @@ void EngineBase::OnMessageFromFuncWorker(const Message& message) {
     op->user_logspace = ctx.user_logspace;
     op->metalog_progress = ctx.metalog_progress;
     op->type = MessageHelper::GetSharedLogOpType(message);
-    op->seqnum = kInvalidLogSeqNum;
-    op->query_tag = kInvalidLogTag;
-    op->user_tags.clear();
-    op->data.Reset();
+    DCHECK_EQ(op->seqnum, kInvalidLogSeqNum);
+    DCHECK_EQ(op->query_tag, kInvalidLogTag);
+    DCHECK(op->user_tags.empty());
+    DCHECK(op->data.empty());
 
     switch (op->type) {
     case SharedLogOpType::APPEND:
