@@ -35,6 +35,23 @@ IOUring::IOUring()
           fmt::format("io_uring[{}] ev_loop_time", uring_id_))),
       average_op_time_stat_(stat::StatisticsCollector<int>::VerboseLogReportCallback<2>(
           fmt::format("io_uring[{}] average_op_time", uring_id_))) {
+    op_pool_.SetObjectInitFn([] (Op* op) {
+        memset(op, 0, sizeof(Op));
+        op->fd = -1;
+        op->root_op = kInvalidOpId;
+        op->next_op = kInvalidOpId;
+    });
+    SetupUring();
+    SetupFdSlots();
+    base::ChainCleanupFn(absl::bind_front(&IOUring::CleanUpFn, this));
+}
+
+IOUring::~IOUring() {
+    CHECK(ops_.empty()) << "There are still inflight Ops";
+    io_uring_queue_exit(&ring_);
+}
+
+void IOUring::SetupUring() {
     struct io_uring_params params;
     memset(&params, 0, sizeof(params));
     if (absl::GetFlag(FLAGS_io_uring_sqpoll)) {
@@ -59,11 +76,15 @@ IOUring::IOUring()
         CHECK_EQ(absl::GetFlag(FLAGS_io_uring_cq_nr_wait), 1U)
             << "io_uring_cq_nr_wait should be set to 1 if timeout is 0";
     }
+}
+
+void IOUring::SetupFdSlots() {
     size_t n_fd_slots = absl::GetFlag(FLAGS_io_uring_fd_slots);
     CHECK_GT(n_fd_slots, 0U);
     std::vector<int> tmp;
     tmp.resize(n_fd_slots, -1);
-    ret = io_uring_register_files(&ring_, tmp.data(), gsl::narrow_cast<uint32_t>(n_fd_slots));
+    int ret = io_uring_register_files(
+        &ring_, tmp.data(), gsl::narrow_cast<uint32_t>(n_fd_slots));
     if (ret != 0) {
         LOG(FATAL) << "io_uring_register_files failed: " << ERRNO_LOGSTR(-ret);
     }
@@ -75,12 +96,6 @@ IOUring::IOUring()
         free_fd_slots_.push_back(i);
     }
     absl::c_reverse(free_fd_slots_);
-    base::ChainCleanupFn(absl::bind_front(&IOUring::CleanUpFn, this));
-}
-
-IOUring::~IOUring() {
-    CHECK(ops_.empty()) << "There are still inflight Ops";
-    io_uring_queue_exit(&ring_);
 }
 
 void IOUring::CleanUpFn() {
@@ -346,14 +361,6 @@ void IOUring::EventLoopRunOnce(size_t* inflight_ops) {
     Op* OP_VAR = op_pool_.Get();      \
     uint64_t id = next_op_id_++;      \
     OP_VAR->id = (id << 8) + TYPE;    \
-    OP_VAR->fd = -1;                  \
-    OP_VAR->desc = nullptr;           \
-    OP_VAR->buf_gid = 0;              \
-    OP_VAR->flags = 0;                \
-    OP_VAR->buf = nullptr;            \
-    OP_VAR->buf_len = 0;              \
-    OP_VAR->root_op = kInvalidOpId;   \
-    OP_VAR->next_op = kInvalidOpId;   \
     ops_[op->id] = op
 
 IOUring::Op* IOUring::AllocConnectOp(Descriptor* desc,

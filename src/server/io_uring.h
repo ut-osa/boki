@@ -161,6 +161,8 @@ private:
     void HandleSendallOpComplete(Op* op, int res, Op** next_op);
     void HandleCloseOpComplete(Op* op, int res);
 
+    void SetupUring();
+    void SetupFdSlots();
     void CleanUpFn();
 
     DISALLOW_COPY_AND_ASSIGN(IOUring);
