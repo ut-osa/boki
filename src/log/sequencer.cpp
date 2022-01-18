@@ -281,39 +281,48 @@ void Sequencer::MarkNextCutIfDoable() {
             } else {
                 return;
             }
-            if (!journal_enabled()) {
-                locked_logspace->UpdateReplicaProgress(
-                    locked_logspace->sequencer_id(),
-                    meta_log_proto.metalog_seqnum() + 1,
-                    /* newly_replicated_metalogs= */ nullptr);
-            }
         }
     }
-    ReplicateMetaLog(DCHECK_NOTNULL(view), meta_log_proto);
-    if (!journal_enabled()) {
-        return;
-    }
-    std::string serialized;
-    CHECK(meta_log_proto.SerializeToString(&serialized));
+    StoreMetaLogAsPrimary(DCHECK_NOTNULL(view), meta_log_proto);
+}
+
+void Sequencer::StoreMetaLogAsPrimary(const View* view, MetaLogProto meta_log_proto) {
+    DCHECK(view != nullptr);
     uint32_t metalog_seqnum = meta_log_proto.metalog_seqnum();
-    CurrentIOWorkerChecked()->JournalAppend(
-        kMetalogPrimaryJournalRecordType, STRING_AS_SPAN(serialized),
-        [this, view, metalog_seqnum] (server::JournalFile* journal_file, size_t offset) {
-            absl::ReaderMutexLock view_lk(&view_mu_);
-            if (current_view_ != view) {
-                return;
-            }
-            LogSpaceBase::MetaLogProtoVec replicated_metalogs;
-            {
-                auto locked_logspace = current_primary_.Lock();
-                RETURN_IF_LOGSPACE_INACTIVE(locked_logspace);
-                locked_logspace->UpdateReplicaProgress(
-                    locked_logspace->sequencer_id(), metalog_seqnum + 1,
-                    &replicated_metalogs);
-            }
-            PropagateMetaLogs(view, replicated_metalogs);
+    auto update_progress_fn = [this, view, metalog_seqnum] () {
+        absl::ReaderMutexLock view_lk(&view_mu_);
+        if (current_view_ == nullptr) {
+            HLOG(FATAL) << "Current view is empty";
         }
-    );
+        if (current_view_ != view) {
+            HLOG_F(WARNING, "Current view (id={}) is in the future, previous is {}",
+                   current_view_->id(), view->id());
+            return;
+        }
+        LogSpaceBase::MetaLogProtoVec replicated_metalogs;
+        {
+            auto locked_logspace = current_primary_.Lock();
+            RETURN_IF_LOGSPACE_INACTIVE(locked_logspace);
+            locked_logspace->UpdateReplicaProgress(
+                locked_logspace->sequencer_id(), metalog_seqnum + 1,
+                &replicated_metalogs);
+        }
+        PropagateMetaLogs(view, replicated_metalogs);
+    };
+    ReplicateMetaLog(view, meta_log_proto);
+    if (journal_enabled()) {
+        std::string serialized;
+        CHECK(meta_log_proto.SerializeToString(&serialized));
+        CurrentIOWorkerChecked()->JournalAppend(
+            kMetalogPrimaryJournalRecordType, STRING_AS_SPAN(serialized),
+            [update_progress_fn] (server::JournalFile* /* journal_file */,
+                                  size_t /* offset */) {
+                update_progress_fn();
+            }
+        );
+    } else {
+        update_progress_fn();
+    }
 }
 
 void Sequencer::StoreMetaLogAsBackup(MetaLogsProto metalogs_proto) {
