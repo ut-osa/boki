@@ -8,8 +8,6 @@ ABSL_FLAG(size_t, slog_num_tail_metalog_entries, 32, "");
 ABSL_FLAG(bool, slog_enable_statecheck, false, "");
 ABSL_FLAG(int, slog_statecheck_interval_sec, 10, "");
 
-ABSL_FLAG(bool, slog_sequencer_enable_journal, false, "");
-
 ABSL_FLAG(bool, slog_engine_force_remote_index, false, "");
 ABSL_FLAG(float, slog_engine_prob_remote_index, 0.0f, "");
 ABSL_FLAG(bool, slog_engine_enable_cache, false, "");

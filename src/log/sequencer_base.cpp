@@ -20,8 +20,7 @@ using server::EgressHub;
 using server::NodeWatcher;
 
 SequencerBase::SequencerBase(uint16_t node_id)
-    : ServerBase(fmt::format("sequencer_{}", node_id),
-                 absl::GetFlag(FLAGS_slog_sequencer_enable_journal)),
+    : ServerBase(fmt::format("sequencer_{}", node_id), /* enable_journal= */ true),
       node_id_(node_id) {}
 
 SequencerBase::~SequencerBase() {}

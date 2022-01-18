@@ -231,16 +231,13 @@ void Sequencer::OnRecvNewMetaLogs(const SharedLogMessage& message,
         ONHOLD_IF_FROM_FUTURE_VIEW(message, payload);
         IGNORE_IF_FROM_PAST_VIEW(message);
     }
-    if (journal_enabled()) {
-        CurrentIOWorkerChecked()->JournalAppend(
-            kMetalogBackupJournalRecordType, payload,
-            [this, metalogs_proto] (server::JournalFile* journal_file, size_t offset) {
-                StoreMetaLogAsBackup(metalogs_proto);
-            }
-        );
-    } else {
-        StoreMetaLogAsBackup(std::move(metalogs_proto));
-    }
+    CurrentIOWorkerChecked()->JournalAppend(
+        kMetalogBackupJournalRecordType, payload,
+        [this, metalogs_proto] (server::JournalFile* /* journal_file */,
+                                size_t /* offset */) {
+            StoreMetaLogAsBackup(metalogs_proto);
+        }
+    );
 }
 
 #undef ONHOLD_IF_FROM_FUTURE_VIEW
@@ -310,19 +307,15 @@ void Sequencer::StoreMetaLogAsPrimary(const View* view, MetaLogProto meta_log_pr
         PropagateMetaLogs(view, replicated_metalogs);
     };
     ReplicateMetaLog(view, meta_log_proto);
-    if (journal_enabled()) {
-        std::string serialized;
-        CHECK(meta_log_proto.SerializeToString(&serialized));
-        CurrentIOWorkerChecked()->JournalAppend(
-            kMetalogPrimaryJournalRecordType, STRING_AS_SPAN(serialized),
-            [update_progress_fn] (server::JournalFile* /* journal_file */,
-                                  size_t /* offset */) {
-                update_progress_fn();
-            }
-        );
-    } else {
-        update_progress_fn();
-    }
+    std::string serialized;
+    CHECK(meta_log_proto.SerializeToString(&serialized));
+    CurrentIOWorkerChecked()->JournalAppend(
+        kMetalogPrimaryJournalRecordType, STRING_AS_SPAN(serialized),
+        [update_progress_fn] (server::JournalFile* /* journal_file */,
+                                size_t /* offset */) {
+            update_progress_fn();
+        }
+    );
 }
 
 void Sequencer::StoreMetaLogAsBackup(MetaLogsProto metalogs_proto) {
