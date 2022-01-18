@@ -521,6 +521,25 @@ func (w *FuncWorker) GrpcCall(ctx context.Context, service string, method string
 	return w.newFuncCallCommon(funcCall, request, false /* async */)
 }
 
+func (w *FuncWorker) allocNextLogOp() (uint64 /* opId */, uint64 /* currentCallId */) {
+	opId := atomic.AddUint64(&w.nextLogOpId, 1)
+	currentCallId := atomic.LoadUint64(&w.currentCall)
+	return opId, currentCallId
+}
+
+func (w *FuncWorker) sendSharedLogMessage(opId uint64, message []byte) (chan []byte /* respChan */, error) {
+	respChan := make(chan []byte, 1)
+	w.mux.Lock()
+	w.outgoingLogOps[opId] = respChan
+	_, err := w.outputPipe.Write(message)
+	w.mux.Unlock()
+	if err != nil {
+		return nil, err
+	} else {
+		return respChan, nil
+	}
+}
+
 func checkAndDuplicateTags(tags []uint64) ([]uint64, error) {
 	if len(tags) == 0 {
 		return nil, nil
@@ -556,8 +575,7 @@ func (w *FuncWorker) SharedLogAppend(ctx context.Context, tags []uint64, data []
 	remainingRetries := 4
 
 	for {
-		id := atomic.AddUint64(&w.nextLogOpId, 1)
-		currentCallId := atomic.LoadUint64(&w.currentCall)
+		id, currentCallId := w.allocNextLogOp()
 		message := protocol.NewSharedLogAppendMessage(currentCallId, w.clientId, uint16(len(tags)), id)
 		if len(tags) == 0 {
 			protocol.FillInlineDataInMessage(message, data)
@@ -566,11 +584,7 @@ func (w *FuncWorker) SharedLogAppend(ctx context.Context, tags []uint64, data []
 			protocol.FillInlineDataInMessage(message, bytes.Join([][]byte{tagBuffer, data}, nil /* sep */))
 		}
 
-		w.mux.Lock()
-		outputChan := make(chan []byte, 1)
-		w.outgoingLogOps[id] = outputChan
-		_, err = w.outputPipe.Write(message)
-		w.mux.Unlock()
+		outputChan, err := w.sendSharedLogMessage(id, message)
 		if err != nil {
 			return 0, err
 		}
@@ -623,11 +637,7 @@ func (w *FuncWorker) sharedLogReadCommon(ctx context.Context, message []byte, op
 	// 	log.Printf("[WARN] Make %d-th shared log read request", count)
 	// }
 
-	w.mux.Lock()
-	outputChan := make(chan []byte, 1)
-	w.outgoingLogOps[opId] = outputChan
-	_, err := w.outputPipe.Write(message)
-	w.mux.Unlock()
+	outputChan, err := w.sendSharedLogMessage(opId, message)
 	if err != nil {
 		return nil, err
 	}
@@ -656,24 +666,21 @@ func (w *FuncWorker) GenerateUniqueID() uint64 {
 
 // Implement types.Environment
 func (w *FuncWorker) SharedLogReadNext(ctx context.Context, tag uint64, seqNum uint64) (*types.LogEntry, error) {
-	id := atomic.AddUint64(&w.nextLogOpId, 1)
-	currentCallId := atomic.LoadUint64(&w.currentCall)
+	id, currentCallId := w.allocNextLogOp()
 	message := protocol.NewSharedLogReadMessage(currentCallId, w.clientId, tag, seqNum, 1 /* direction */, false /* block */, id)
 	return w.sharedLogReadCommon(ctx, message, id)
 }
 
 // Implement types.Environment
 func (w *FuncWorker) SharedLogReadNextBlock(ctx context.Context, tag uint64, seqNum uint64) (*types.LogEntry, error) {
-	id := atomic.AddUint64(&w.nextLogOpId, 1)
-	currentCallId := atomic.LoadUint64(&w.currentCall)
+	id, currentCallId := w.allocNextLogOp()
 	message := protocol.NewSharedLogReadMessage(currentCallId, w.clientId, tag, seqNum, 1 /* direction */, true /* block */, id)
 	return w.sharedLogReadCommon(ctx, message, id)
 }
 
 // Implement types.Environment
 func (w *FuncWorker) SharedLogReadPrev(ctx context.Context, tag uint64, seqNum uint64) (*types.LogEntry, error) {
-	id := atomic.AddUint64(&w.nextLogOpId, 1)
-	currentCallId := atomic.LoadUint64(&w.currentCall)
+	id, currentCallId := w.allocNextLogOp()
 	message := protocol.NewSharedLogReadMessage(currentCallId, w.clientId, tag, seqNum, -1 /* direction */, false /* block */, id)
 	return w.sharedLogReadCommon(ctx, message, id)
 }
@@ -692,16 +699,11 @@ func (w *FuncWorker) SharedLogSetAuxData(ctx context.Context, seqNum uint64, aux
 		return fmt.Errorf("Auxiliary data too larger (size=%d), expect no more than %d bytes", len(auxData), protocol.MessageInlineDataSize)
 	}
 
-	id := atomic.AddUint64(&w.nextLogOpId, 1)
-	currentCallId := atomic.LoadUint64(&w.currentCall)
+	id, currentCallId := w.allocNextLogOp()
 	message := protocol.NewSharedLogSetAuxDataMessage(currentCallId, w.clientId, seqNum, id)
 	protocol.FillInlineDataInMessage(message, auxData)
 
-	w.mux.Lock()
-	outputChan := make(chan []byte, 1)
-	w.outgoingLogOps[id] = outputChan
-	_, err := w.outputPipe.Write(message)
-	w.mux.Unlock()
+	outputChan, err := w.sendSharedLogMessage(id, message)
 	if err != nil {
 		return err
 	}
