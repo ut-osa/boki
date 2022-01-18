@@ -54,8 +54,7 @@ protected:
                            uint64_t start_seqnum, uint64_t start_localid,
                            uint32_t delta) {}
     virtual void OnTrim(uint32_t metalog_seqnum,
-                        uint32_t user_logspace, uint64_t user_tag,
-                        uint64_t trim_seqnum) {}
+                        const MetaLogProto::TrimProto& trim_op) {}
     virtual void OnMetaLogApplied(const MetaLogProto& meta_log_proto) {}
     virtual void OnFinalized(uint32_t metalog_position) {} 
 

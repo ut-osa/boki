@@ -61,11 +61,12 @@ const (
 const (
 	SharedLogResultType_INVALID uint16 = 0x00
 	// Successful results
-	SharedLogResultType_APPEND_OK  uint16 = 0x20
-	SharedLogResultType_READ_OK    uint16 = 0x21
-	SharedLogResultType_TRIM_OK    uint16 = 0x22
-	SharedLogResultType_LOCALID    uint16 = 0x23
-	SharedLogResultType_AUXDATA_OK uint16 = 0x24
+	SharedLogResultType_APPEND_OK    uint16 = 0x20
+	SharedLogResultType_READ_OK      uint16 = 0x21
+	SharedLogResultType_TRIM_OK      uint16 = 0x22
+	SharedLogResultType_LOCALID      uint16 = 0x23
+	SharedLogResultType_AUXDATA_OK   uint16 = 0x24
+	SharedLogResultType_READ_TRIMMED uint16 = 0x25
 	// Error results
 	SharedLogResultType_BAD_ARGS    uint16 = 0x30
 	SharedLogResultType_DISCARDED   uint16 = 0x31
@@ -223,6 +224,18 @@ func NewSharedLogReadMessage(currentCallId uint64, myClientId uint16, tag uint64
 	} else {
 		binary.LittleEndian.PutUint16(buffer[32:34], SharedLogOpType_READ_PREV)
 	}
+	binary.LittleEndian.PutUint16(buffer[34:36], myClientId)
+	binary.LittleEndian.PutUint64(buffer[40:48], tag)
+	binary.LittleEndian.PutUint64(buffer[48:56], clientData)
+	binary.LittleEndian.PutUint64(buffer[8:16], seqNum)
+	return buffer
+}
+
+func NewSharedLogTrimMessage(currentCallId uint64, myClientId uint16, tag uint64, seqNum uint64, clientData uint64) []byte {
+	buffer := NewEmptyMessage()
+	tmp := (currentCallId << MessageTypeBits) + uint64(MessageType_SHARED_LOG_OP)
+	binary.LittleEndian.PutUint64(buffer[0:8], tmp)
+	binary.LittleEndian.PutUint16(buffer[32:34], SharedLogOpType_TRIM)
 	binary.LittleEndian.PutUint16(buffer[34:36], myClientId)
 	binary.LittleEndian.PutUint64(buffer[40:48], tag)
 	binary.LittleEndian.PutUint64(buffer[48:56], clientData)

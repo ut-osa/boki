@@ -113,19 +113,20 @@ enum class SharedLogOpType : uint16_t {
 };
 
 enum class SharedLogResultType : uint16_t {
-    INVALID     = 0x00,
+    INVALID      = 0x00,
     // Successful results
-    APPEND_OK   = 0x20,
-    READ_OK     = 0x21,
-    TRIM_OK     = 0x22,
-    LOCALID     = 0x23,
-    AUXDATA_OK  = 0x24,
+    APPEND_OK    = 0x20,
+    READ_OK      = 0x21,
+    TRIM_OK      = 0x22,
+    LOCALID      = 0x23,
+    AUXDATA_OK   = 0x24,
+    READ_TRIMMED = 0x25,
     // Error results
-    BAD_ARGS    = 0x30,
-    DISCARDED   = 0x31,  // Log to append is discarded
-    EMPTY       = 0x32,  // Cannot find log entries satisfying requirements
-    DATA_LOST   = 0x33,  // Failed to extract log data
-    TRIM_FAILED = 0x34
+    BAD_ARGS     = 0x30,
+    DISCARDED    = 0x31,  // Log to append is discarded
+    EMPTY        = 0x32,  // Cannot find log entries satisfying requirements
+    DATA_LOST    = 0x33,  // Failed to extract log data
+    TRIM_FAILED  = 0x34
 };
 
 constexpr uint64_t kInvalidLogTag     = std::numeric_limits<uint64_t>::max();
@@ -265,6 +266,7 @@ struct SharedLogMessage {
     };
     union {
         uint64_t query_tag;   // [24:32]
+        uint64_t trim_tag;    // [24:32]
         struct {
             uint16_t num_tags;      // [24:26]
             uint16_t aux_data_size; // [26:28]
@@ -279,7 +281,10 @@ struct SharedLogMessage {
         uint64_t query_seqnum;  // [40:48]
         uint64_t trim_seqnum;   // [40:48]
     };
-    uint64_t client_data;       // [48:56]
+    union {
+        uint64_t client_data;   // [48:56]
+        uint64_t trim_op_id;    // [48:56]
+    };
 
     uint64_t prev_found_seqnum; // [56:64]
 
@@ -626,6 +631,16 @@ public:
         return message;
     }
 
+    static SharedLogMessage NewTrimMessage(uint32_t logspace_id, uint32_t user_logspace,
+                                           uint64_t seqnum) {
+        NEW_EMPTY_SHAREDLOG_MESSAGE(message);
+        message.op_type = static_cast<uint16_t>(SharedLogOpType::TRIM);
+        message.user_logspace = user_logspace;
+        message.logspace_id = logspace_id;
+        message.trim_seqnum = seqnum;
+        return message;
+    }
+
     static SharedLogMessage NewResponse(SharedLogResultType result) {
         NEW_EMPTY_SHAREDLOG_MESSAGE(message);
         message.op_type = static_cast<uint16_t>(SharedLogOpType::RESPONSE);
@@ -641,6 +656,10 @@ public:
 
     static SharedLogMessage NewDataLostResponse() {
         return NewResponse(SharedLogResultType::DATA_LOST);
+    }
+
+    static SharedLogMessage NewTrimFailedResponse() {
+        return NewResponse(SharedLogResultType::TRIM_FAILED);
     }
 
 #undef NEW_EMPTY_SHAREDLOG_MESSAGE

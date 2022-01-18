@@ -74,6 +74,8 @@ message MetaLogProto {
     NewLogsProto new_logs_proto = 5;
 
     message TrimProto {
+        uint32 engine_id     = 4;
+        uint64 trim_op_id    = 5;
         uint32 user_logspace = 1;
         uint64 user_tag      = 2;
         uint64 trim_seqnum   = 3;

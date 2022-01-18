@@ -691,6 +691,29 @@ func (w *FuncWorker) SharedLogCheckTail(ctx context.Context, tag uint64) (*types
 }
 
 // Implement types.Environment
+func (w *FuncWorker) SharedLogTrim(ctx context.Context, tag uint64, seqNum uint64) error {
+	if tag != 0 {
+		return fmt.Errorf("LogTrim with non-default tag not yet implemented")
+	}
+
+	id, currentCallId := w.allocNextLogOp()
+	message := protocol.NewSharedLogTrimMessage(currentCallId, w.clientId, tag, seqNum, id)
+
+	outputChan, err := w.sendSharedLogMessage(id, message)
+	if err != nil {
+		return err
+	}
+
+	response := <-outputChan
+	result := protocol.GetSharedLogResultTypeFromMessage(response)
+	if result == protocol.SharedLogResultType_TRIM_OK {
+		return nil
+	} else {
+		return fmt.Errorf("Failed to trim the log until seqnum %#016x", seqNum)
+	}
+}
+
+// Implement types.Environment
 func (w *FuncWorker) SharedLogSetAuxData(ctx context.Context, seqNum uint64, auxData []byte) error {
 	if len(auxData) == 0 {
 		return fmt.Errorf("Auxiliary data cannot be empty")
