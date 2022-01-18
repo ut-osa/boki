@@ -68,7 +68,7 @@ void Storage::OnViewFinalized(const FinalizedView* finalized_view) {
             finalized_view->view(),
             [&, finalized_view] (uint32_t logspace_id,
                                  LockablePtr<LogStorage> storage_ptr) {
-                log_utils::FinalizedLogSpace<LogStorage>(storage_ptr, finalized_view);
+                log_utils::FinalizeLogSpace<LogStorage>(storage_ptr, finalized_view);
                 auto locked_storage = storage_ptr.Lock();
                 LogStorage::ReadResultVec tmp;
                 locked_storage->PollReadResults(&tmp);

@@ -88,7 +88,7 @@ void Engine::OnViewFinalized(const FinalizedView* finalized_view) {
             finalized_view->view(),
             [finalized_view, &append_results] (uint32_t logspace_id,
                                                LockablePtr<LogProducer> producer_ptr) {
-                log_utils::FinalizedLogSpace<LogProducer>(
+                log_utils::FinalizeLogSpace<LogProducer>(
                     producer_ptr, finalized_view);
                 auto locked_producer = producer_ptr.Lock();
                 LogProducer::AppendResultVec tmp;
@@ -100,7 +100,7 @@ void Engine::OnViewFinalized(const FinalizedView* finalized_view) {
             finalized_view->view(),
             [finalized_view, &query_results] (uint32_t logspace_id,
                                               LockablePtr<Index> index_ptr) {
-                log_utils::FinalizedLogSpace<Index>(
+                log_utils::FinalizeLogSpace<Index>(
                     index_ptr, finalized_view);
                 auto locked_index = index_ptr.Lock();
                 locked_index->PollQueryResults(&query_results);

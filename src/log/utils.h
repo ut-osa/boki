@@ -172,8 +172,8 @@ void ThreadedMap<T>::PollAllSorted(std::vector<std::pair<uint64_t, T*>>* values)
 }
 
 template<class T>
-void FinalizedLogSpace(LockablePtr<T> logspace_ptr,
-                       const log::FinalizedView* finalized_view) {
+void FinalizeLogSpace(LockablePtr<T> logspace_ptr,
+                      const log::FinalizedView* finalized_view) {
     auto locked_logspace = logspace_ptr.Lock();
     uint32_t logspace_id = locked_logspace->identifier();
     bool success = locked_logspace->Finalize(

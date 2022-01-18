@@ -120,12 +120,12 @@ void Sequencer::OnViewFinalized(const FinalizedView* finalized_view) {
     absl::MutexLock view_lk(&view_mu_);
     DCHECK_EQ(finalized_view->view()->id(), current_view_->id());
     if (current_primary_ != nullptr) {
-        log_utils::FinalizedLogSpace<MetaLogPrimary>(current_primary_, finalized_view);
+        log_utils::FinalizeLogSpace<MetaLogPrimary>(current_primary_, finalized_view);
     }
     backup_collection_.ForEachActiveLogSpace(
         finalized_view->view(),
         [finalized_view] (uint32_t, LockablePtr<MetaLogBackup> logspace_ptr) {
-            log_utils::FinalizedLogSpace<MetaLogBackup>(std::move(logspace_ptr), finalized_view);
+            log_utils::FinalizeLogSpace<MetaLogBackup>(std::move(logspace_ptr), finalized_view);
         }
     );
 }
