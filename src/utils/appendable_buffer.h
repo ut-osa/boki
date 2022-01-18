@@ -24,7 +24,7 @@ public:
 
     ~AppendableBuffer() {
         if (buf_ != inline_buf_) {
-            delete[] buf_;
+            free(buf_);
         }
     }
 
