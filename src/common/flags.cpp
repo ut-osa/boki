@@ -21,5 +21,3 @@ ABSL_FLAG(std::string, journal_save_path, "",
           "The directory for storing journal files");
 ABSL_FLAG(size_t, journal_file_max_size_mb, 256,
           "Maximum size (in MB) of individual journal file");
-ABSL_FLAG(size_t, journal_cap_per_worker, 4,
-          "Maximum number of journal files per IO worker");
