@@ -154,10 +154,30 @@ void EngineBase::MessageHandler(const SharedLogMessage& message,
         OnRecvNewMetaLogs(message, payload);
         break;
     case SharedLogOpType::RESPONSE:
-        OnRecvResponse(message, payload);
+        ResponseHandler(message, payload);
         break;
     default:
         UNREACHABLE();
+    }
+}
+
+void EngineBase::ResponseHandler(const SharedLogMessage& message,
+                                 std::span<const char> payload) {
+    SharedLogResultType result_type = SharedLogMessageHelper::GetResultType(message);
+    switch (result_type) {
+    case SharedLogResultType::READ_OK:
+    case SharedLogResultType::EMPTY:
+    case SharedLogResultType::READ_TRIMMED:
+    case SharedLogResultType::DATA_LOST:
+        OnRecvReadResponse(result_type, message, payload);
+        break;
+    case SharedLogResultType::TRIM_OK:
+    case SharedLogResultType::TRIM_FAILED:
+        DCHECK(payload.empty());
+        OnRecvTrimResponse(result_type, message);
+        break;
+    default:
+        HLOG(FATAL) << "Unknown result type: " << message.op_result;
     }
 }
 

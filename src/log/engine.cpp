@@ -397,52 +397,55 @@ void Engine::OnRecvNewIndexData(const SharedLogMessage& message,
         }                                                             \
     } while (0)
 
-void Engine::OnRecvResponse(const SharedLogMessage& message,
-                            std::span<const char> payload) {
-    DCHECK(SharedLogMessageHelper::GetOpType(message) == SharedLogOpType::RESPONSE);
-    SharedLogResultType result = SharedLogMessageHelper::GetResultType(message);
-    if (    result == SharedLogResultType::READ_OK
-         || result == SharedLogResultType::EMPTY
-         || result == SharedLogResultType::DATA_LOST) {
-        uint64_t op_id = message.client_data;
-        LocalOp* op;
-        if (!onging_reads_.Poll(op_id, &op)) {
-            HLOG_F(WARNING, "Cannot find read op with id {}", op_id);
-            return;
-        }
-        if (result == SharedLogResultType::READ_OK) {
-            LogMetaData log_metadata = log_utils::GetMetaDataFromMessage(message);
-            uint64_t seqnum = log_metadata.seqnum;
-            HVLOG_F(1, "Receive remote read response for log (seqnum {})", bits::HexStr0x(seqnum));
-            std::span<const uint64_t> user_tags;
-            std::span<const char> log_data;
-            std::span<const char> aux_data;
-            log_utils::SplitPayloadForMessage(message, payload, &user_tags, &log_data, &aux_data);
-            VALIDATE_LOG_PARTS(log_metadata, user_tags, log_data);
-            Message response = BuildLocalReadOKResponse(seqnum, user_tags, log_data);
-            if (aux_data.size() > 0) {
-                response.log_aux_data_size = gsl::narrow_cast<uint16_t>(aux_data.size());
-                MessageHelper::AppendInlineData(&response, aux_data);
-            }
-            FinishLocalOpWithResponse(op, &response, message.user_metalog_progress);
-            // Put the received log entry into log cache
-            LogCachePut(log_metadata, user_tags, log_data);
-            if (aux_data.size() > 0) {
-                LogCachePutAuxData(seqnum, aux_data);
-            }
-        } else if (result == SharedLogResultType::EMPTY) {
-            FinishLocalOpWithFailure(
-                op, SharedLogResultType::EMPTY, message.user_metalog_progress);
-        } else if (result == SharedLogResultType::DATA_LOST) {
-            HLOG_F(WARNING, "Receive DATA_LOST response for read request: seqnum={}, tag={}",
-                   bits::HexStr0x(op->seqnum), op->query_tag);
-            FinishLocalOpWithFailure(op, SharedLogResultType::DATA_LOST);
-        } else {
-            UNREACHABLE();
-        }
-    } else {
-        HLOG(FATAL) << "Unknown result type: " << message.op_result;
+void Engine::OnRecvReadResponse(SharedLogResultType result_type,
+                                const SharedLogMessage& message,
+                                std::span<const char> payload) {
+    uint64_t op_id = message.client_data;
+    LocalOp* op;
+    if (!onging_reads_.Poll(op_id, &op)) {
+        HLOG_F(WARNING, "Cannot find read op with id {}", op_id);
+        return;
     }
+    switch (result_type) {
+    case SharedLogResultType::READ_OK: {
+        LogMetaData log_metadata = log_utils::GetMetaDataFromMessage(message);
+        uint64_t seqnum = log_metadata.seqnum;
+        HVLOG_F(1, "Receive remote read response for log (seqnum {})", bits::HexStr0x(seqnum));
+        std::span<const uint64_t> user_tags;
+        std::span<const char> log_data;
+        std::span<const char> aux_data;
+        log_utils::SplitPayloadForMessage(message, payload, &user_tags, &log_data, &aux_data);
+        VALIDATE_LOG_PARTS(log_metadata, user_tags, log_data);
+        Message response = BuildLocalReadOKResponse(seqnum, user_tags, log_data);
+        if (aux_data.size() > 0) {
+            response.log_aux_data_size = gsl::narrow_cast<uint16_t>(aux_data.size());
+            MessageHelper::AppendInlineData(&response, aux_data);
+        }
+        FinishLocalOpWithResponse(op, &response, message.user_metalog_progress);
+        // Put the received log entry into log cache
+        LogCachePut(log_metadata, user_tags, log_data);
+        if (aux_data.size() > 0) {
+            LogCachePutAuxData(seqnum, aux_data);
+        }
+        break;
+    }
+    case SharedLogResultType::EMPTY:
+    case SharedLogResultType::READ_TRIMMED:
+        FinishLocalOpWithFailure(op, result_type, message.user_metalog_progress);
+        break;
+    case SharedLogResultType::DATA_LOST:
+        HLOG_F(WARNING, "Receive DATA_LOST response for read request: seqnum={}, tag={}",
+                bits::HexStr0x(op->seqnum), op->query_tag);
+        FinishLocalOpWithFailure(op, SharedLogResultType::DATA_LOST);
+        break;
+    default:
+        UNREACHABLE();
+    }
+}
+
+void Engine::OnRecvTrimResponse(SharedLogResultType result_type,
+                                const SharedLogMessage& message) {
+    NOT_IMPLEMENTED();
 }
 
 void Engine::ProcessAppendResults(const LogProducer::AppendResultVec& results) {

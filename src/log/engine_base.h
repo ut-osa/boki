@@ -48,11 +48,16 @@ protected:
                                    std::span<const char> payload) = 0;
     virtual void OnRecvNewIndexData(const protocol::SharedLogMessage& message,
                                     std::span<const char> payload) = 0;
-    virtual void OnRecvResponse(const protocol::SharedLogMessage& message,
-                                std::span<const char> payload) = 0;
+    virtual void OnRecvReadResponse(protocol::SharedLogResultType result_type,
+                                    const protocol::SharedLogMessage& message,
+                                    std::span<const char> payload) = 0;
+    virtual void OnRecvTrimResponse(protocol::SharedLogResultType result_type,
+                                    const protocol::SharedLogMessage& message) = 0;
 
     void MessageHandler(const protocol::SharedLogMessage& message,
                         std::span<const char> payload);
+    void ResponseHandler(const protocol::SharedLogMessage& message,
+                         std::span<const char> payload);
 
     struct LocalOp {
         protocol::SharedLogOpType type;

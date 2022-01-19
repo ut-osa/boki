@@ -46,8 +46,11 @@ private:
                            std::span<const char> payload) override;
     void OnRecvNewIndexData(const protocol::SharedLogMessage& message,
                             std::span<const char> payload) override;
-    void OnRecvResponse(const protocol::SharedLogMessage& message,
-                        std::span<const char> payload) override;
+    void OnRecvReadResponse(protocol::SharedLogResultType result_type,
+                            const protocol::SharedLogMessage& message,
+                            std::span<const char> payload) override;
+    void OnRecvTrimResponse(protocol::SharedLogResultType result_type,
+                            const protocol::SharedLogMessage& message) override;
 
     void ProcessAppendResults(const LogProducer::AppendResultVec& results);
     void ProcessIndexQueryResults(const Index::QueryResultVec& results);
