@@ -15,11 +15,10 @@ public:
 private:
     std::string log_header_;
 
-    absl::Mutex view_mu_;
-    const View* current_view_      ABSL_GUARDED_BY(view_mu_);
-    bool view_finalized_           ABSL_GUARDED_BY(view_mu_);
-    LogSpaceCollection<LogStorage>
-        storage_collection_        ABSL_GUARDED_BY(view_mu_);
+    absl::Mutex                    view_mu_;
+    const View*                    current_view_        ABSL_GUARDED_BY(view_mu_);
+    bool                           view_finalized_      ABSL_GUARDED_BY(view_mu_);
+    LogSpaceCollection<LogStorage> storage_collection_  ABSL_GUARDED_BY(view_mu_);
 
     log_utils::FutureRequests future_requests_;
 
