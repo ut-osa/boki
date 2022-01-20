@@ -42,6 +42,8 @@ private:
 
     void MarkNextCutIfDoable() override;
 
+    MetaLogProto::TrimProto TrimProtoFromMessage(const protocol::SharedLogMessage& message);
+
     DISALLOW_COPY_AND_ASSIGN(Sequencer);
 };
 

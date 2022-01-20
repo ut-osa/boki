@@ -255,16 +255,28 @@ void Index::PollQueryResults(QueryResultVec* results) {
     pending_query_results_.clear();
 }
 
-void Index::OnMetaLogApplied(const MetaLogProto& meta_log_proto) {
-    if (meta_log_proto.type() == MetaLogProto::NEW_LOGS) {
-        const auto& new_logs_proto = meta_log_proto.new_logs_proto();
-        uint32_t seqnum = new_logs_proto.start_seqnum();
-        for (uint32_t delta : new_logs_proto.shard_deltas()) {
-            seqnum += delta;
-        }
-        cuts_.push_back(std::make_pair(meta_log_proto.metalog_seqnum(), seqnum));
+void Index::AddNewCut(uint32_t metalog_seqnum,
+                      const MetaLogProto::NewLogsProto& new_logs_proto) {
+    uint32_t seqnum = new_logs_proto.start_seqnum();
+    for (uint32_t delta : new_logs_proto.shard_deltas()) {
+        seqnum += delta;
     }
+    cuts_.push_back(std::make_pair(metalog_seqnum, seqnum));
     AdvanceIndexProgress();
+}
+
+void Index::OnMetaLogApplied(const MetaLogProto& meta_log_proto) {
+    switch (meta_log_proto.type()) {
+    case MetaLogProto::NEW_LOGS:
+        AddNewCut(meta_log_proto.metalog_seqnum(), meta_log_proto.new_logs_proto());
+        break;
+    case MetaLogProto::TRIM:
+        HLOG_F(INFO, "Receive trim metalog entry: metalog_seqnum={}",
+               meta_log_proto.metalog_seqnum());
+        break;
+    default:
+        UNREACHABLE();
+    }
 }
 
 void Index::OnFinalized(uint32_t metalog_position) {

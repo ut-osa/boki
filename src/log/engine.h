@@ -29,6 +29,7 @@ private:
 
     log_utils::FutureRequests       future_requests_;
     log_utils::ThreadedMap<LocalOp> onging_reads_;
+    log_utils::ThreadedMap<LocalOp> onging_trims_;
 
     void OnViewCreated(const View* view) override;
     void OnViewFrozen(const View* view) override;

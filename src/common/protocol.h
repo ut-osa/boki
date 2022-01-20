@@ -631,12 +631,10 @@ public:
         return message;
     }
 
-    static SharedLogMessage NewTrimMessage(uint32_t logspace_id, uint32_t user_logspace,
-                                           uint64_t seqnum) {
+    static SharedLogMessage NewTrimMessage(uint32_t user_logspace, uint64_t seqnum) {
         NEW_EMPTY_SHAREDLOG_MESSAGE(message);
         message.op_type = static_cast<uint16_t>(SharedLogOpType::TRIM);
         message.user_logspace = user_logspace;
-        message.logspace_id = logspace_id;
         message.trim_seqnum = seqnum;
         return message;
     }
@@ -658,8 +656,10 @@ public:
         return NewResponse(SharedLogResultType::DATA_LOST);
     }
 
-    static SharedLogMessage NewTrimFailedResponse() {
-        return NewResponse(SharedLogResultType::TRIM_FAILED);
+    static SharedLogMessage NewTrimFailedResponse(uint64_t trim_op_id) {
+        SharedLogMessage message = NewResponse(SharedLogResultType::TRIM_FAILED);
+        message.trim_op_id = trim_op_id;
+        return message;
     }
 
 #undef NEW_EMPTY_SHAREDLOG_MESSAGE

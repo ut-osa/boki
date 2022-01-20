@@ -10,6 +10,7 @@ namespace log {
 using protocol::SharedLogMessage;
 using protocol::SharedLogMessageHelper;
 using protocol::SharedLogOpType;
+using protocol::SharedLogResultType;
 
 Sequencer::Sequencer(uint16_t node_id)
     : SequencerBase(node_id),
@@ -178,7 +179,29 @@ void Sequencer::OnViewFinalized(const FinalizedView* finalized_view) {
 
 void Sequencer::HandleTrimRequest(const SharedLogMessage& request) {
     DCHECK(SharedLogMessageHelper::GetOpType(request) == SharedLogOpType::TRIM);
-    NOT_IMPLEMENTED();
+    DCHECK_EQ(request.sequencer_id, my_node_id());
+    const View* view = nullptr;
+    std::optional<MetaLogProto> trim_meta_log;
+    {
+        absl::ReaderMutexLock view_lk(&view_mu_);
+        ONHOLD_IF_FROM_FUTURE_VIEW(request, EMPTY_CHAR_SPAN);
+        DCHECK(current_view_ != nullptr);
+        if (request.view_id == current_view_->id()) {
+            view = current_view_;
+            auto locked_logspace = current_primary_.Lock();
+            if (locked_logspace->active()) {
+                trim_meta_log = locked_logspace->AppendTrimOp(TrimProtoFromMessage(request));
+            }
+        } else {
+            DCHECK_LT(request.view_id, current_view_->id());
+        }
+    }
+    if (trim_meta_log.has_value()) {
+        StoreMetaLogAsPrimary(DCHECK_NOTNULL(view), std::move(trim_meta_log.value()));
+    } else {
+        SendTrimResponse(request.origin_node_id, request.trim_op_id,
+                         SharedLogResultType::TRIM_FAILED);
+    }
 }
 
 void Sequencer::OnRecvMetaLogProgress(const SharedLogMessage& message) {
@@ -195,8 +218,8 @@ void Sequencer::OnRecvMetaLogProgress(const SharedLogMessage& message) {
             auto locked_logspace = logspace_ptr.Lock();
             RETURN_IF_LOGSPACE_INACTIVE(locked_logspace);
             locked_logspace->UpdateReplicaProgress(
-                message.origin_node_id, message.metalog_position,
-                &replicated_metalogs);
+                message.origin_node_id, message.metalog_position);
+            locked_logspace->GrabNewlyReplicatedMetalogs(&replicated_metalogs);
         }
     }
     PropagateMetaLogs(DCHECK_NOTNULL(view), replicated_metalogs);
@@ -259,28 +282,20 @@ void Sequencer::PropagateMetaLogs(const View* view,
 
 void Sequencer::MarkNextCutIfDoable() {
     const View* view = nullptr;
-    MetaLogProto meta_log_proto;
+    std::optional<MetaLogProto> next_cut;
     {
         absl::ReaderMutexLock view_lk(&view_mu_);
         if (current_primary_ == nullptr || current_view_ == nullptr) {
             return;
         }
         view = current_view_;
-        {
-            auto locked_logspace = current_primary_.Lock();
-            RETURN_IF_LOGSPACE_INACTIVE(locked_logspace);
-            if (!locked_logspace->all_metalog_replicated()) {
-                HLOG(INFO) << "Not all meta log replicated, will not mark new cut";
-                return;
-            }
-            if (auto next_cut = locked_logspace->MarkNextCut(); next_cut.has_value()) {
-                meta_log_proto = std::move(*next_cut);
-            } else {
-                return;
-            }
-        }
+        auto locked_logspace = current_primary_.Lock();
+        RETURN_IF_LOGSPACE_INACTIVE(locked_logspace);
+        next_cut = locked_logspace->MarkNextCut();
     }
-    StoreMetaLogAsPrimary(DCHECK_NOTNULL(view), meta_log_proto);
+    if (next_cut.has_value()) {
+        StoreMetaLogAsPrimary(DCHECK_NOTNULL(view), std::move(next_cut.value()));
+    }
 }
 
 void Sequencer::StoreMetaLogAsPrimary(const View* view, MetaLogProto meta_log_proto) {
@@ -300,9 +315,8 @@ void Sequencer::StoreMetaLogAsPrimary(const View* view, MetaLogProto meta_log_pr
         {
             auto locked_logspace = current_primary_.Lock();
             RETURN_IF_LOGSPACE_INACTIVE(locked_logspace);
-            locked_logspace->UpdateReplicaProgress(
-                locked_logspace->sequencer_id(), metalog_seqnum + 1,
-                &replicated_metalogs);
+            locked_logspace->MarkMetaLogPersisted(metalog_seqnum);
+            locked_logspace->GrabNewlyReplicatedMetalogs(&replicated_metalogs);
         }
         PropagateMetaLogs(view, replicated_metalogs);
     };
@@ -312,7 +326,7 @@ void Sequencer::StoreMetaLogAsPrimary(const View* view, MetaLogProto meta_log_pr
     CurrentIOWorkerChecked()->JournalAppend(
         kMetalogPrimaryJournalRecordType, STRING_AS_SPAN(serialized),
         [update_progress_fn] (server::JournalFile* /* journal_file */,
-                                size_t /* offset */) {
+                              size_t /* offset */) {
             update_progress_fn();
         }
     );
@@ -344,6 +358,16 @@ void Sequencer::StoreMetaLogAsBackup(MetaLogsProto metalogs_proto) {
 }
 
 #undef RETURN_IF_LOGSPACE_INACTIVE
+
+MetaLogProto::TrimProto Sequencer::TrimProtoFromMessage(const SharedLogMessage& message) {
+    MetaLogProto::TrimProto trim_op;
+    trim_op.set_engine_id(message.origin_node_id);
+    trim_op.set_trim_op_id(message.trim_op_id);
+    trim_op.set_user_logspace(message.user_logspace);
+    trim_op.set_trim_seqnum(message.trim_seqnum);
+    trim_op.set_user_tag(message.trim_tag);
+    return trim_op;
+}
 
 }  // namespace log
 }  // namespace faas

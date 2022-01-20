@@ -13,16 +13,15 @@ public:
     MetaLogPrimary(const View* view, uint16_t sequencer_id);
     ~MetaLogPrimary();
 
-    uint32_t replicated_metalog_position() const {
-        return replicated_metalog_position_;
-    }
-    bool all_metalog_replicated() const;
-
     void UpdateStorageProgress(uint16_t storage_id,
                                const std::vector<uint32_t>& progress);
-    void UpdateReplicaProgress(uint16_t sequencer_id, uint32_t metalog_position,
-                               MetaLogProtoVec* newly_replicated_metalogs);
+    void UpdateReplicaProgress(uint16_t sequencer_id, uint32_t metalog_position);
+    void MarkMetaLogPersisted(uint32_t metalog_seqnum);
+
+    void GrabNewlyReplicatedMetalogs(MetaLogProtoVec* newly_replicated_metalogs);
+
     std::optional<MetaLogProto> MarkNextCut();
+    MetaLogProto AppendTrimOp(const MetaLogProto::TrimProto& trim_op);
 
 private:
     absl::flat_hash_set</* engine_id */ uint16_t> dirty_shards_;
@@ -31,9 +30,15 @@ private:
                                   /* storage_id */ uint16_t>,
                         uint32_t> shard_progrsses_;
 
+    std::set<uint32_t> persisted_metalog_seqnums_;
+    uint32_t persisted_metalog_position_;
+
     absl::flat_hash_map</* sequencer_id */ uint16_t,
                         uint32_t> metalog_progresses_;
     uint32_t replicated_metalog_position_;
+    MetaLogProtoVec replicated_metalogs_;
+
+    std::optional<uint32_t> previous_cut_seqnum_;
 
     uint32_t GetShardReplicatedPosition(uint16_t engine_id) const;
     void UpdateMetaLogReplicatedPosition();

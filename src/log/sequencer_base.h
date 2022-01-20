@@ -40,9 +40,9 @@ protected:
     bool SendSequencerMessage(uint16_t sequencer_id,
                               protocol::SharedLogMessage* message,
                               std::span<const char> payload = EMPTY_CHAR_SPAN);
-    bool SendEngineResponse(const protocol::SharedLogMessage& request,
-                            protocol::SharedLogMessage* response,
-                            std::span<const char> payload = EMPTY_CHAR_SPAN);
+    void SendTrimResponse(uint16_t engine_id, uint64_t trim_op_id,
+                          protocol::SharedLogResultType result,
+                          uint64_t metalog_progress = 0);
 
 private:
     const uint16_t node_id_;

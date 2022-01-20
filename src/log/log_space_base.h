@@ -33,6 +33,8 @@ public:
     // Return true if metalog_position changed
     bool ProvideMetaLog(const MetaLogProto& meta_log_proto);
 
+    bool active() const { return state_ == kNormal; }
+
     bool frozen() const { return state_ == kFrozen; }
     bool finalized() const { return state_ == kFinalized; }
 
@@ -53,8 +55,6 @@ protected:
     virtual void OnNewLogs(uint32_t metalog_seqnum,
                            uint64_t start_seqnum, uint64_t start_localid,
                            uint32_t delta) {}
-    virtual void OnTrim(uint32_t metalog_seqnum,
-                        const MetaLogProto::TrimProto& trim_op) {}
     virtual void OnMetaLogApplied(const MetaLogProto& meta_log_proto) {}
     virtual void OnFinalized(uint32_t metalog_position) {} 
 

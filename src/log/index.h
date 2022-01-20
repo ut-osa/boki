@@ -86,7 +86,11 @@ private:
 
     void OnMetaLogApplied(const MetaLogProto& meta_log_proto) override;
     void OnFinalized(uint32_t metalog_position) override;
+
+    void AddNewCut(uint32_t metalog_seqnum,
+                   const MetaLogProto::NewLogsProto& new_logs_proto);
     void AdvanceIndexProgress();
+
     PerSpaceIndex* GetOrCreateIndex(uint32_t user_logspace);
 
     void ProcessQuery(const IndexQuery& query);

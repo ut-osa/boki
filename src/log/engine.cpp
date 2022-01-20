@@ -81,6 +81,7 @@ void Engine::OnViewFinalized(const FinalizedView* finalized_view) {
     HLOG_F(INFO, "View {} finalized", finalized_view->view()->id());
     LogProducer::AppendResultVec append_results;
     Index::QueryResultVec query_results;
+    std::vector<std::pair<uint64_t, LocalOp*>> failed_trims;
     {
         absl::MutexLock view_lk(&view_mu_);
         DCHECK_EQ(finalized_view->view()->id(), current_view_->id());
@@ -106,6 +107,7 @@ void Engine::OnViewFinalized(const FinalizedView* finalized_view) {
                 locked_index->PollQueryResults(&query_results);
             }
         );
+        onging_trims_.PollAll(&failed_trims);
     }
     if (!append_results.empty()) {
         SomeIOWorker()->ScheduleFunction(
@@ -118,6 +120,15 @@ void Engine::OnViewFinalized(const FinalizedView* finalized_view) {
         SomeIOWorker()->ScheduleFunction(
             nullptr, [this, results = std::move(query_results)] {
                 ProcessIndexQueryResults(results);
+            }
+        );
+    }
+    if (!failed_trims.empty()) {
+        SomeIOWorker()->ScheduleFunction(
+            nullptr, [this, failed_trims = std::move(failed_trims)] {
+                for (const auto& [_, op] : failed_trims) {
+                    FinishLocalOpWithFailure(op, SharedLogResultType::TRIM_FAILED);
+                }
             }
         );
     }
@@ -190,7 +201,26 @@ void Engine::HandleLocalAppend(LocalOp* op) {
 
 void Engine::HandleLocalTrim(LocalOp* op) {
     DCHECK(op->type == SharedLogOpType::TRIM);
-    NOT_IMPLEMENTED();
+    HVLOG_F(1, "Handle local trim: op_id={}, logspace={}, until_seqnum={}",
+            op->id, op->user_logspace, op->seqnum);
+    SharedLogMessage request = SharedLogMessageHelper::NewTrimMessage(
+        op->user_logspace, op->seqnum);
+    request.trim_op_id = op->id;
+    {
+        absl::ReaderMutexLock view_lk(&view_mu_);
+        if (!current_view_active_) {
+            HLOG(WARNING) << "Current view not active";
+            FinishLocalOpWithFailure(op, SharedLogResultType::TRIM_FAILED);
+            return;
+        }
+        request.logspace_id = current_view_->LogSpaceIdentifier(op->user_logspace);
+        bool success = SendSequencerMessage(request.sequencer_id, &request);
+        if (success) {
+            onging_trims_.PutChecked(op->id, op);
+        } else {
+            FinishLocalOpWithFailure(op, SharedLogResultType::TRIM_FAILED);
+        }
+    }
 }
 
 void Engine::HandleLocalRead(LocalOp* op) {
@@ -435,7 +465,7 @@ void Engine::OnRecvReadResponse(SharedLogResultType result_type,
         break;
     case SharedLogResultType::DATA_LOST:
         HLOG_F(WARNING, "Receive DATA_LOST response for read request: seqnum={}, tag={}",
-                bits::HexStr0x(op->seqnum), op->query_tag);
+               bits::HexStr0x(op->seqnum), op->query_tag);
         FinishLocalOpWithFailure(op, SharedLogResultType::DATA_LOST);
         break;
     default:
@@ -445,7 +475,25 @@ void Engine::OnRecvReadResponse(SharedLogResultType result_type,
 
 void Engine::OnRecvTrimResponse(SharedLogResultType result_type,
                                 const SharedLogMessage& message) {
-    NOT_IMPLEMENTED();
+    uint64_t op_id = message.trim_op_id;
+    LocalOp* op;
+    if (!onging_trims_.Poll(op_id, &op)) {
+        HLOG_F(WARNING, "Cannot find trim op with id {}", op_id);
+        return;
+    }
+    switch (result_type) {
+    case SharedLogResultType::TRIM_OK: {
+        Message response = MessageHelper::NewSharedLogOpSucceeded(
+            SharedLogResultType::TRIM_OK);
+        FinishLocalOpWithResponse(op, &response, message.user_metalog_progress);
+        break;
+    }
+    case SharedLogResultType::TRIM_FAILED:
+        FinishLocalOpWithFailure(op, SharedLogResultType::TRIM_FAILED);
+        break;
+    default:
+        UNREACHABLE();
+    }
 }
 
 void Engine::ProcessAppendResults(const LogProducer::AppendResultVec& results) {

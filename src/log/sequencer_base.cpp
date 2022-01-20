@@ -12,6 +12,7 @@ namespace log {
 using protocol::SharedLogMessage;
 using protocol::SharedLogMessageHelper;
 using protocol::SharedLogOpType;
+using protocol::SharedLogResultType;
 
 using server::IOWorker;
 using server::ConnectionBase;
@@ -131,7 +132,18 @@ void SequencerBase::PropagateMetaLog(const View* view, const MetaLogProto& metal
         }
         break;
     case MetaLogProto::TRIM:
-        NOT_IMPLEMENTED();
+        for (size_t i = 0; i < view->num_engine_nodes(); i++) {
+            uint16_t engine_id = view->GetEngineNodes().at(i);
+            const View::Engine* engine_node = view->GetEngineNode(engine_id);
+            if (engine_node->HasIndexFor(my_node_id())) {
+                engine_nodes.insert(engine_id);
+            }
+            if (engine_id == metalog.trim_proto().engine_id()) {
+                SendTrimResponse(engine_id, metalog.trim_proto().trim_op_id(),
+                                 SharedLogResultType::TRIM_OK,
+                                 bits::JoinTwo32(logspace_id, metalog.metalog_seqnum() + 1));
+            }
+        }
         break;
     default:
         UNREACHABLE();
@@ -167,15 +179,18 @@ bool SequencerBase::SendSequencerMessage(uint16_t sequencer_id,
                                 sequencer_id, *message, payload);
 }
 
-bool SequencerBase::SendEngineResponse(const SharedLogMessage& request,
-                                       SharedLogMessage* response,
-                                       std::span<const char> payload) {
-    response->origin_node_id = node_id_;
-    response->hop_times = request.hop_times + 1;
-    response->payload_size = gsl::narrow_cast<uint32_t>(payload.size());
-    response->client_data = request.client_data;
-    return SendSharedLogMessage(protocol::ConnType::SEQUENCER_TO_ENGINE,
-                                request.origin_node_id, *response, payload);
+void SequencerBase::SendTrimResponse(uint16_t engine_id, uint64_t trim_op_id,
+                                     SharedLogResultType result,
+                                     uint64_t metalog_progress) {
+    SharedLogMessage response = SharedLogMessageHelper::NewResponse(result);
+    response.origin_node_id = node_id_;
+    response.trim_op_id = trim_op_id;
+    response.user_metalog_progress = metalog_progress;
+    bool success = SendSharedLogMessage(protocol::ConnType::SEQUENCER_TO_ENGINE,
+                                        engine_id, response, EMPTY_CHAR_SPAN);
+    if (!success) {
+        HLOG_F(ERROR, "Failed to send trim response to engine {}", engine_id);
+    }
 }
 
 void SequencerBase::OnRecvSharedLogMessage(int conn_type, uint16_t src_node_id,

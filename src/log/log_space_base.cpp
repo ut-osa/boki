@@ -206,7 +206,6 @@ void LogSpaceBase::ApplyMetaLog(const MetaLogProto& meta_log) {
         break;
     case MetaLogProto::TRIM:
         DCHECK(mode_ == kFullMode);
-        OnTrim(meta_log.metalog_seqnum(), meta_log.trim_proto());
         break;
     default:
         UNREACHABLE();
