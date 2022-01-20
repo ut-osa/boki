@@ -124,6 +124,10 @@ bool IOUring::RegisterFd(int fd) {
         HLOG_F(ERROR, "fd {} already registered", fd);
         return false;
     }
+    FileDescriptorType fd_type = FileDescriptorUtils::InferType(fd);
+    if (fd_type == FileDescriptorType::kInvalid) {
+        LOG(FATAL) << "Failed to infer type for fd " << fd;
+    }
     if (free_fd_slots_.empty()) {
         LOG(FATAL) << "No more fd slot, consider setting larger --io_uring_fd_slots";
     }
@@ -135,9 +139,12 @@ bool IOUring::RegisterFd(int fd) {
         LOG(FATAL) << "io_uring_register_files_update failed: " << ERRNO_LOGSTR(-ret);
     }
     fd_indices_[fd] = index;
-    HLOG_F(INFO, "register fd {}, {} registered fds in total", fd, fd_indices_.size());
+    HLOG_F(INFO, "register fd {} (type {}), {} registered fds in total",
+           fd, FileDescriptorUtils::TypeString(fd_type),
+           fd_indices_.size());
     Descriptor* desc = &fds_[index];
     desc->fd = fd;
+    desc->fd_type = fd_type;
     desc->index = index;
     desc->op_count = 0;
     desc->active_read_op = nullptr;
@@ -160,6 +167,8 @@ bool IOUring::RegisterFd(int fd) {
 
 bool IOUring::Connect(int fd, const struct sockaddr* addr, size_t addrlen, ConnectCallback cb) {
     GET_AND_CHECK_DESC(fd, desc);
+    DCHECK(FileDescriptorUtils::IsSocketType(desc->fd_type))
+        << "Connect only applies to socket fds";
     Op* op = AllocConnectOp(desc, addr, addrlen);
     connect_cbs_[op->id] = cb;
     EnqueueOp(op);
@@ -168,6 +177,10 @@ bool IOUring::Connect(int fd, const struct sockaddr* addr, size_t addrlen, Conne
 
 bool IOUring::StartReadInternal(int fd, uint16_t buf_gid, uint16_t flags, ReadCallback cb) {
     GET_AND_CHECK_DESC(fd, desc);
+    if ((flags & kOpFlagUseRecv) != 0) {
+        DCHECK(FileDescriptorUtils::IsSocketType(desc->fd_type))
+            << "Recv only applies to socket fds";
+    }
     if (desc->active_read_op != nullptr) {
         HLOG_F(ERROR, "fd {} already registered read callback", fd);
         return false;
@@ -222,6 +235,8 @@ bool IOUring::SendAll(int fd, std::span<const char> data, SendAllCallback cb) {
         return false;
     }
     GET_AND_CHECK_DESC(fd, desc);
+    DCHECK(FileDescriptorUtils::IsSocketType(desc->fd_type))
+        << "Send only applies to socket fds";
     Op* op = AllocSendAllOp(desc, data);
     sendall_cbs_[op->id] = cb;
     if (desc->last_send_op != nullptr) {
@@ -239,6 +254,8 @@ bool IOUring::SendAll(int fd, std::span<const char> data, SendAllCallback cb) {
 bool IOUring::SendAll(int fd, const std::vector<std::span<const char>>& data_vec,
                       SendAllCallback cb) {
     GET_AND_CHECK_DESC(fd, desc);
+    DCHECK(FileDescriptorUtils::IsSocketType(desc->fd_type))
+        << "Send only applies to socket fds";
     Op* first_op = nullptr;
     Op* last_op = desc->last_send_op;
     for (std::span<const char> data : data_vec) {

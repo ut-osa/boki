@@ -2,6 +2,7 @@
 
 #include "base/common.h"
 #include "common/stat.h"
+#include "common/fd_type.h"
 #include "utils/object_pool.h"
 #include "utils/buffer_pool.h"
 
@@ -57,6 +58,7 @@ private:
     struct Op;
     struct Descriptor {
         int fd;
+        FileDescriptorType fd_type;
         size_t index;
         size_t op_count;
         Op* active_read_op;
