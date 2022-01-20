@@ -8,11 +8,11 @@ import (
 	"log"
 	"net"
 	"os"
-	"time"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	common "cs.utexas.edu/zjia/faas/common"
 	config "cs.utexas.edu/zjia/faas/config"
