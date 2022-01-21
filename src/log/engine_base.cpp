@@ -299,6 +299,10 @@ void EngineBase::FinishLocalOpWithResponse(LocalOp* op, Message* response,
         if (fn_call_ctx_.contains(op->func_call_id)) {
             FnCallContext& ctx = fn_call_ctx_[op->func_call_id];
             if (metalog_progress > ctx.metalog_progress) {
+                HVLOG_F(1, "Update metalog progress from {} to {} for func call {}",
+                        bits::HexStr0x(ctx.metalog_progress),
+                        bits::HexStr0x(metalog_progress),
+                        bits::HexStr0x(op->func_call_id));
                 ctx.metalog_progress = metalog_progress;
             }
         }

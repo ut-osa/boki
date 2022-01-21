@@ -149,7 +149,8 @@ MetaLogProto MetaLogPrimary::AppendTrimOp(const MetaLogProto::TrimProto& trim_op
     auto* trim_proto = meta_log_proto.mutable_trim_proto();
     trim_proto->CopyFrom(trim_op);
     HVLOG_F(1, "Generate new TRIM meta log: engine_id={}, op_id={}, trim_seqnum={}",
-            trim_proto->engine_id(), trim_proto->trim_op_id(), trim_proto->trim_seqnum());
+            trim_proto->engine_id(), trim_proto->trim_op_id(),
+            bits::HexStr0x(trim_proto->trim_seqnum()));
     if (!ProvideMetaLog(meta_log_proto)) {
         HLOG(FATAL) << "Failed to advance metalog position";
     }
