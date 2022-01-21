@@ -356,7 +356,9 @@ void Engine::OnRecvNewMetaLogs(const SharedLogMessage& message,
         {
             auto locked_producer = producer_ptr.Lock();
             for (const MetaLogProto& metalog_proto : metalogs_proto.metalogs()) {
-                locked_producer->ProvideMetaLog(metalog_proto);
+                if (metalog_proto.type() == MetaLogProto::NEW_LOGS) {
+                    locked_producer->ProvideMetaLog(metalog_proto);
+                }
             }
             locked_producer->PollAppendResults(&append_results);
         }
