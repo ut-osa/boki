@@ -33,6 +33,7 @@ protocol::SharedLogOpType IndexQuery::DirectionToOpType() const {
 
 Index::Index(const View* view, uint16_t sequencer_id)
     : LogSpaceBase(LogSpaceBase::kFullMode, view, sequencer_id),
+      prev_end_seqnum_(0),
       indexed_metalog_position_(0),
       data_received_seqnum_position_(0),
       indexed_seqnum_position_(0) {
@@ -42,17 +43,26 @@ Index::Index(const View* view, uint16_t sequencer_id)
 
 Index::~Index() {}
 
+struct Index::PerSpaceIndexResult {
+    uint64_t seqnum;
+    uint64_t trim_seqnum;
+    uint16_t engine_id;
+
+    bool found() const { return seqnum != kInvalidLogSeqNum; }
+};
+
 class Index::PerSpaceIndex {
 public:
     PerSpaceIndex(uint32_t logspace_id, uint32_t user_logspace);
     ~PerSpaceIndex() {}
 
     void Add(uint32_t seqnum_lowhalf, uint16_t engine_id, const UserTagVec& user_tags);
+    void ApplyTrim(uint64_t trim_seqnum, uint64_t user_tag);
 
-    bool FindPrev(uint64_t query_seqnum, uint64_t user_tag,
-                  uint64_t* seqnum, uint16_t* engine_id) const;
-    bool FindNext(uint64_t query_seqnum, uint64_t user_tag,
-                  uint64_t* seqnum, uint16_t* engine_id) const;
+    using Result = PerSpaceIndexResult;
+
+    bool FindPrev(uint64_t query_seqnum, uint64_t user_tag, Result* result) const;
+    bool FindNext(uint64_t query_seqnum, uint64_t user_tag, Result* result) const;
 
 private:
     uint32_t logspace_id_;
@@ -61,6 +71,8 @@ private:
     absl::flat_hash_map</* seqnum */ uint32_t, uint16_t> engine_ids_;
     std::vector<uint32_t> seqnums_;
     absl::flat_hash_map</* tag */ uint64_t, std::vector<uint32_t>> seqnums_by_tag_;
+
+    uint64_t trim_seqnum_;
 
     bool FindPrev(const std::vector<uint32_t>& seqnums, uint64_t query_seqnum,
                   uint32_t* result_seqnum) const;
@@ -72,7 +84,8 @@ private:
 
 Index::PerSpaceIndex::PerSpaceIndex(uint32_t logspace_id, uint32_t user_logspace)
     : logspace_id_(logspace_id),
-      user_logspace_(user_logspace) {}
+      user_logspace_(user_logspace),
+      trim_seqnum_(0) {}
 
 void Index::PerSpaceIndex::Add(uint32_t seqnum_lowhalf, uint16_t engine_id,
                                const UserTagVec& user_tags) {
@@ -86,8 +99,17 @@ void Index::PerSpaceIndex::Add(uint32_t seqnum_lowhalf, uint16_t engine_id,
     }
 }
 
+void Index::PerSpaceIndex::ApplyTrim(uint64_t trim_seqnum, uint64_t user_tag) {
+    if (user_tag != kEmptyLogTag) {
+        NOT_IMPLEMENTED();
+    }
+    trim_seqnum_ = std::max(trim_seqnum_, trim_seqnum);
+}
+
 bool Index::PerSpaceIndex::FindPrev(uint64_t query_seqnum, uint64_t user_tag,
-                                    uint64_t* seqnum, uint16_t* engine_id) const {
+                                    Result* result) const {
+    result->seqnum = kInvalidLogSeqNum;
+    result->trim_seqnum = trim_seqnum_;
     uint32_t seqnum_lowhalf;
     if (user_tag == kEmptyLogTag) {
         if (!FindPrev(seqnums_, query_seqnum, &seqnum_lowhalf)) {
@@ -101,32 +123,41 @@ bool Index::PerSpaceIndex::FindPrev(uint64_t query_seqnum, uint64_t user_tag,
             return false;
         }
     }
+    uint64_t seqnum = bits::JoinTwo32(logspace_id_, seqnum_lowhalf);
+    DCHECK_LE(seqnum, query_seqnum);
+    if (seqnum < trim_seqnum_) {
+        return false;
+    }
+    result->seqnum = seqnum;
     DCHECK(engine_ids_.contains(seqnum_lowhalf));
-    *seqnum = bits::JoinTwo32(logspace_id_, seqnum_lowhalf);
-    DCHECK_LE(*seqnum, query_seqnum);
-    *engine_id = engine_ids_.at(seqnum_lowhalf);
+    result->engine_id = engine_ids_.at(seqnum_lowhalf);
     return true;
 }
 
 bool Index::PerSpaceIndex::FindNext(uint64_t query_seqnum, uint64_t user_tag,
-                                    uint64_t* seqnum, uint16_t* engine_id) const {
+                                    Result* result) const {
+    result->seqnum = kInvalidLogSeqNum;
+    result->trim_seqnum = trim_seqnum_;
+    uint64_t real_query_seqnum = std::max(query_seqnum, trim_seqnum_);
     uint32_t seqnum_lowhalf;
     if (user_tag == kEmptyLogTag) {
-        if (!FindNext(seqnums_, query_seqnum, &seqnum_lowhalf)) {
+        if (!FindNext(seqnums_, real_query_seqnum, &seqnum_lowhalf)) {
             return false;
         }
     } else {
         if (!seqnums_by_tag_.contains(user_tag)) {
             return false;
         }
-        if (!FindNext(seqnums_by_tag_.at(user_tag), query_seqnum, &seqnum_lowhalf)) {
+        if (!FindNext(seqnums_by_tag_.at(user_tag), real_query_seqnum, &seqnum_lowhalf)) {
             return false;
         }
     }
+    uint64_t seqnum = bits::JoinTwo32(logspace_id_, seqnum_lowhalf);
+    DCHECK_GE(seqnum, query_seqnum);
+    DCHECK_GE(seqnum, trim_seqnum_);
+    result->seqnum = seqnum;
     DCHECK(engine_ids_.contains(seqnum_lowhalf));
-    *seqnum = bits::JoinTwo32(logspace_id_, seqnum_lowhalf);
-    DCHECK_GE(*seqnum, query_seqnum);
-    *engine_id = engine_ids_.at(seqnum_lowhalf);
+    result->engine_id = engine_ids_.at(seqnum_lowhalf);
     return true;
 }
 
@@ -255,28 +286,41 @@ void Index::PollQueryResults(QueryResultVec* results) {
     pending_query_results_.clear();
 }
 
-void Index::AddNewCut(uint32_t metalog_seqnum,
-                      const MetaLogProto::NewLogsProto& new_logs_proto) {
-    uint32_t seqnum = new_logs_proto.start_seqnum();
-    for (uint32_t delta : new_logs_proto.shard_deltas()) {
-        seqnum += delta;
-    }
-    cuts_.push_back(std::make_pair(metalog_seqnum, seqnum));
-    AdvanceIndexProgress();
-}
-
 void Index::OnMetaLogApplied(const MetaLogProto& meta_log_proto) {
+    MetaLog metalog;
+    metalog.metalog_seqnum = meta_log_proto.metalog_seqnum();
     switch (meta_log_proto.type()) {
     case MetaLogProto::NEW_LOGS:
-        AddNewCut(meta_log_proto.metalog_seqnum(), meta_log_proto.new_logs_proto());
+        metalog.type = MetaLog::kCut;
+        {
+            const auto& new_logs_proto = meta_log_proto.new_logs_proto();
+            uint32_t seqnum = new_logs_proto.start_seqnum();
+            for (uint32_t delta : new_logs_proto.shard_deltas()) {
+                seqnum += delta;
+            }
+            DCHECK_GT(seqnum, prev_end_seqnum_);
+            prev_end_seqnum_ = seqnum;
+            metalog.cut.end_seqnum = seqnum;
+        }
         break;
     case MetaLogProto::TRIM:
-        HLOG_F(INFO, "Receive trim metalog entry: metalog_seqnum={}",
-               meta_log_proto.metalog_seqnum());
+        HVLOG_F(1, "Receive trim metalog entry: metalog_seqnum={}",
+                meta_log_proto.metalog_seqnum());
+        metalog.type = MetaLog::kTrim;
+        {
+            const auto& trim_proto = meta_log_proto.trim_proto();
+            metalog.trim.user_logspace = trim_proto.user_logspace();
+            metalog.trim.seqnum = trim_proto.trim_seqnum();
+            metalog.trim.tag = trim_proto.user_tag();
+        }
         break;
     default:
         UNREACHABLE();
     }
+    DCHECK(metalogs_.empty()
+             || metalogs_.back().metalog_seqnum + 1 == metalog.metalog_seqnum);
+    metalogs_.push_back(metalog);
+    AdvanceIndexProgress();
 }
 
 void Index::OnFinalized(uint32_t metalog_position) {
@@ -290,10 +334,11 @@ void Index::OnFinalized(uint32_t metalog_position) {
 }
 
 void Index::AdvanceIndexProgress() {
-    while (!cuts_.empty()) {
-        uint32_t end_seqnum = cuts_.front().second;
+    auto apply_cut_fn = [this] (const MetaLog& metalog) -> bool {
+        DCHECK(metalog.type == MetaLog::kCut);
+        uint32_t end_seqnum = metalog.cut.end_seqnum;
         if (data_received_seqnum_position_ < end_seqnum) {
-            break;
+            return false;
         }
         HVLOG_F(1, "Apply IndexData until seqnum {}", bits::HexStr0x(end_seqnum));
         auto iter = received_data_.begin();
@@ -309,20 +354,48 @@ void Index::AdvanceIndexProgress() {
         }
         DCHECK_GT(end_seqnum, indexed_seqnum_position_);
         indexed_seqnum_position_ = end_seqnum;
-        uint32_t metalog_seqnum = cuts_.front().first;
-        indexed_metalog_position_ = metalog_seqnum + 1;
-        cuts_.pop_front();
+        return true;
+    };
+
+    auto apply_trim_fn = [this] (const MetaLog& metalog) -> bool {
+        DCHECK(metalog.type == MetaLog::kTrim);
+        GetOrCreateIndex(metalog.trim.user_logspace)->ApplyTrim(
+            std::min(bits::JoinTwo32(identifier(), indexed_seqnum_position_),
+                     metalog.trim.seqnum),
+            metalog.trim.tag);
+        return true;
+    };
+
+    while (!metalogs_.empty()) {
+        const MetaLog& metalog = metalogs_.front();
+        bool applied = false;
+        switch (metalog.type) {
+        case MetaLog::kCut:
+            applied = apply_cut_fn(metalog);
+            break;
+        case MetaLog::kTrim:
+            applied = apply_trim_fn(metalog);
+            break;
+        default:
+            UNREACHABLE();
+        }
+        if (applied) {
+            indexed_metalog_position_ = metalog.metalog_seqnum + 1;
+            metalogs_.pop_front();
+        } else {
+            break;
+        }
     }
     if (!blocking_reads_.empty()) {
         int64_t current_timestamp = GetMonotonicMicroTimestamp();
-        std::vector<std::pair<int64_t, IndexQuery>> unfinished;
-        for (const auto& [start_timestamp, query] : blocking_reads_) {
-            if (!ProcessBlockingQuery(query)) {
-                if (current_timestamp - start_timestamp
+        std::vector<BlockingRead> unfinished;
+        for (const auto& read : blocking_reads_) {
+            if (!ProcessBlockingQuery(read.query)) {
+                if (current_timestamp - read.start_timestamp
                         < absl::ToInt64Microseconds(kBlockingQueryTimeout)) {
-                    unfinished.push_back(std::make_pair(start_timestamp, query));
+                    unfinished.push_back(read);
                 } else {
-                    pending_query_results_.push_back(BuildNotFoundResult(query));
+                    pending_query_results_.push_back(BuildNotFoundResult(read.query));
                 }
             }
         }
@@ -353,7 +426,10 @@ void Index::ProcessQuery(const IndexQuery& query) {
     if (query.direction == IndexQuery::kReadNextB) {
         bool success = ProcessBlockingQuery(query);
         if (!success) {
-            blocking_reads_.push_back(std::make_pair(GetMonotonicMicroTimestamp(), query));
+            blocking_reads_.push_back({
+                .start_timestamp = GetMonotonicMicroTimestamp(),
+                .query = query,
+            });
         }
     } else if (query.direction == IndexQuery::kReadNext) {
         ProcessReadNext(query);
@@ -372,14 +448,13 @@ void Index::ProcessReadNext(const IndexQuery& query) {
         HVLOG(1) << "ProcessReadNext: NotFoundResult";
         return;
     }
-    uint64_t seqnum;
-    uint16_t engine_id;
-    bool found = IndexFindNext(query, &seqnum, &engine_id);
+    PerSpaceIndexResult result;
+    bool found = IndexFindNext(query, &result);
     if (query_view_id == view_->id()) {
         if (found) {
             pending_query_results_.push_back(
-                BuildFoundResult(query, view_->id(), seqnum, engine_id));
-            HVLOG_F(1, "ProcessReadNext: FoundResult: seqnum={}", seqnum);
+                BuildFoundResult(query, view_->id(), result.seqnum, result.engine_id));
+            HVLOG_F(1, "ProcessReadNext: FoundResult: seqnum={}", result.seqnum);
         } else {
             if (query.prev_found_result.seqnum != kInvalidLogSeqNum) {
                 const IndexFoundResult& found_result = query.prev_found_result;
@@ -394,8 +469,10 @@ void Index::ProcessReadNext(const IndexQuery& query) {
             }
         }
     } else {
+        DCHECK_LT(query_view_id, view_->id());
         pending_query_results_.push_back(
-            BuildContinueResult(query, found, seqnum, engine_id));
+            BuildContinueResult(query, found, result.seqnum,
+                                result.engine_id, result.trim_seqnum));
         HVLOG(1) << "ProcessReadNext: ContinueResult";
     }
 }
@@ -404,23 +481,19 @@ void Index::ProcessReadPrev(const IndexQuery& query) {
     DCHECK(query.direction == IndexQuery::kReadPrev);
     HVLOG_F(1, "ProcessReadPrev: seqnum={}, logspace={}, tag={}",
             bits::HexStr0x(query.query_seqnum), query.user_logspace, query.user_tag);
-    uint16_t query_view_id = log_utils::GetViewId(query.query_seqnum);
-    if (query_view_id < view_->id()) {
-        pending_query_results_.push_back(BuildContinueResult(query, false, 0, 0));
-        HVLOG(1) << "ProcessReadPrev: ContinueResult";
-        return;
-    }
-    uint64_t seqnum;
-    uint16_t engine_id;
-    bool found = IndexFindPrev(query, &seqnum, &engine_id);
+    PerSpaceIndexResult result;
+    bool found = IndexFindPrev(query, &result);
+    uint64_t trim_seqnum = std::max(query.prev_trim_seqnum, result.trim_seqnum);
     if (found) {
         pending_query_results_.push_back(
-            BuildFoundResult(query, view_->id(), seqnum, engine_id));
-        HVLOG_F(1, "ProcessReadPrev: FoundResult: seqnum={}", seqnum);
-    } else if (view_->id() > 0) {
-        pending_query_results_.push_back(BuildContinueResult(query, false, 0, 0));
+            BuildFoundResult(query, view_->id(), result.seqnum, result.engine_id));
+        HVLOG_F(1, "ProcessReadPrev: FoundResult: seqnum={}", result.seqnum);
+    } else if (view_->id() > log_utils::GetViewId(trim_seqnum)) {
+        pending_query_results_.push_back(
+            BuildContinueResult(query, false, 0, 0, trim_seqnum));
         HVLOG(1) << "ProcessReadPrev: ContinueResult";
     } else {
+        DCHECK(view_->id() == 0);
         pending_query_results_.push_back(BuildNotFoundResult(query));
         HVLOG(1) << "ProcessReadPrev: NotFoundResult";
     }
@@ -433,39 +506,40 @@ bool Index::ProcessBlockingQuery(const IndexQuery& query) {
         pending_query_results_.push_back(BuildNotFoundResult(query));
         return true;
     }
-    uint64_t seqnum;
-    uint16_t engine_id;
-    bool found = IndexFindNext(query, &seqnum, &engine_id);
+    PerSpaceIndexResult result;
+    bool found = IndexFindNext(query, &result);
     if (query_view_id == view_->id()) {
         if (found) {
             pending_query_results_.push_back(
-                BuildFoundResult(query, view_->id(), seqnum, engine_id));
+                BuildFoundResult(query, view_->id(), result.seqnum, result.engine_id));
         }
         return found;
-    } else {
+    } else { 
+        DCHECK_LT(query_view_id, view_->id());
         pending_query_results_.push_back(
-            BuildContinueResult(query, found, seqnum, engine_id));
+            BuildContinueResult(query, found, result.seqnum,
+                                result.engine_id, result.trim_seqnum));
         return true;
     }
 }
 
-bool Index::IndexFindNext(const IndexQuery& query, uint64_t* seqnum, uint16_t* engine_id) {
+bool Index::IndexFindNext(const IndexQuery& query, PerSpaceIndexResult* result) {
     DCHECK(query.direction == IndexQuery::kReadNext
             || query.direction == IndexQuery::kReadNextB);
     if (!index_.contains(query.user_logspace)) {
         return false;
     }
     return GetOrCreateIndex(query.user_logspace)->FindNext(
-        query.query_seqnum, query.user_tag, seqnum, engine_id);
+        query.query_seqnum, query.user_tag, result);
 }
 
-bool Index::IndexFindPrev(const IndexQuery& query, uint64_t* seqnum, uint16_t* engine_id) {
+bool Index::IndexFindPrev(const IndexQuery& query, PerSpaceIndexResult* result) {
     DCHECK(query.direction == IndexQuery::kReadPrev);
     if (!index_.contains(query.user_logspace)) {
         return false;
     }
     return GetOrCreateIndex(query.user_logspace)->FindPrev(
-        query.query_seqnum, query.user_tag, seqnum, engine_id);
+        query.query_seqnum, query.user_tag, result);
 }
 
 IndexQueryResult Index::BuildFoundResult(const IndexQuery& query, uint16_t view_id,
@@ -496,7 +570,8 @@ IndexQueryResult Index::BuildNotFoundResult(const IndexQuery& query) {
 }
 
 IndexQueryResult Index::BuildContinueResult(const IndexQuery& query, bool found,
-                                            uint64_t seqnum, uint16_t engine_id) {
+                                            uint64_t seqnum, uint16_t engine_id,
+                                            uint64_t trim_seqnum) {
     DCHECK(view_->id() > 0);
     IndexQueryResult result = {
         .state = IndexQueryResult::kContinue,
@@ -506,9 +581,6 @@ IndexQueryResult Index::BuildContinueResult(const IndexQuery& query, bool found,
         .original_query = query,
         .found_result = IndexFoundResult {}
     };
-    if (query.direction == IndexQuery::kReadNextB) {
-        result.original_query.direction = IndexQuery::kReadNext;
-    }
     if (!query.initial) {
         result.found_result = query.prev_found_result;
     }
@@ -521,6 +593,8 @@ IndexQueryResult Index::BuildContinueResult(const IndexQuery& query, bool found,
     } else if (!query.initial && query.prev_found_result.seqnum != kInvalidLogSeqNum) {
         result.found_result = query.prev_found_result;
     }
+    DCHECK_GE(trim_seqnum, query.prev_trim_seqnum);
+    result.trim_seqnum = trim_seqnum;
     return result;
 }
 

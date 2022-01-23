@@ -71,11 +71,10 @@ private:
         };
     }
 
-    protocol::SharedLogMessage BuildReadRequestMessage(LocalOp* op);
-    protocol::SharedLogMessage BuildReadRequestMessage(const IndexQueryResult& result);
+    protocol::SharedLogMessage BuildReadRequestMessage(const IndexQuery& query);
+    IndexQuery BuildIndexQuery(const protocol::SharedLogMessage& message);
 
     IndexQuery BuildIndexQuery(LocalOp* op);
-    IndexQuery BuildIndexQuery(const protocol::SharedLogMessage& message);
     IndexQuery BuildIndexQuery(const IndexQueryResult& result);
 
     DISALLOW_COPY_AND_ASSIGN(Engine);

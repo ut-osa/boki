@@ -25,6 +25,7 @@ struct IndexQuery {
     uint64_t metalog_progress;
 
     IndexFoundResult prev_found_result;
+    uint64_t prev_trim_seqnum;
 
     static ReadDirection DirectionFromOpType(protocol::SharedLogOpType op_type);
     protocol::SharedLogOpType DirectionToOpType() const;
@@ -35,6 +36,7 @@ struct IndexQueryResult {
     State state;
     uint64_t metalog_progress;
     uint16_t next_view_id;
+    uint64_t trim_seqnum;
 
     IndexQuery       original_query;
     IndexFoundResult found_result;
@@ -56,19 +58,41 @@ public:
 
 private:
     class PerSpaceIndex;
+    struct PerSpaceIndexResult;
     absl::flat_hash_map</* user_logspace */ uint32_t,
                         std::unique_ptr<PerSpaceIndex>> index_;
 
     static constexpr uint32_t kMaxMetalogPosition = std::numeric_limits<uint32_t>::max();
 
-    std::multimap</* metalog_position */ uint32_t,
-                  IndexQuery> pending_queries_;
-    std::vector<std::pair</* start_timestamp */ int64_t,
-                          IndexQuery>> blocking_reads_;
-    QueryResultVec pending_query_results_;
+    std::multimap</* metalog_position */ uint32_t, IndexQuery> pending_queries_;
 
-    std::deque<std::pair</* metalog_seqnum */ uint32_t,
-                         /* end_seqnum */ uint32_t>> cuts_;
+    struct BlockingRead {
+        int64_t start_timestamp;
+        IndexQuery query;
+    };
+    std::vector<BlockingRead> blocking_reads_;
+    QueryResultVec pending_query_results_;
+    
+    struct MetaLog {
+        enum Type { kCut, kTrim };
+        Type type;
+        uint32_t metalog_seqnum;
+        union {
+            // Fields for cut type
+            struct {
+                uint32_t end_seqnum;
+            } cut;
+            // Fields for trim type
+            struct {
+                uint32_t user_logspace;
+                uint64_t seqnum;
+                uint64_t tag;
+            } trim;
+        };
+    };
+    std::deque<MetaLog> metalogs_;
+
+    uint32_t prev_end_seqnum_;
     uint32_t indexed_metalog_position_;
 
     struct IndexData {
@@ -87,8 +111,6 @@ private:
     void OnMetaLogApplied(const MetaLogProto& meta_log_proto) override;
     void OnFinalized(uint32_t metalog_position) override;
 
-    void AddNewCut(uint32_t metalog_seqnum,
-                   const MetaLogProto::NewLogsProto& new_logs_proto);
     void AdvanceIndexProgress();
 
     PerSpaceIndex* GetOrCreateIndex(uint32_t user_logspace);
@@ -98,14 +120,15 @@ private:
     void ProcessReadPrev(const IndexQuery& query);
     bool ProcessBlockingQuery(const IndexQuery& query);
 
-    bool IndexFindNext(const IndexQuery& query, uint64_t* seqnum, uint16_t* engine_id);
-    bool IndexFindPrev(const IndexQuery& query, uint64_t* seqnum, uint16_t* engine_id);
+    bool IndexFindNext(const IndexQuery& query, PerSpaceIndexResult* result);
+    bool IndexFindPrev(const IndexQuery& query, PerSpaceIndexResult* result);
 
     IndexQueryResult BuildFoundResult(const IndexQuery& query, uint16_t view_id,
                                       uint64_t seqnum, uint16_t engine_id);
     IndexQueryResult BuildNotFoundResult(const IndexQuery& query);
     IndexQueryResult BuildContinueResult(const IndexQuery& query, bool found,
-                                         uint64_t seqnum, uint16_t engine_id);
+                                         uint64_t seqnum, uint16_t engine_id,
+                                         uint64_t trim_seqnum);
 
     DISALLOW_COPY_AND_ASSIGN(Index);
 };
