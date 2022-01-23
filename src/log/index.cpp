@@ -549,6 +549,7 @@ IndexQueryResult Index::BuildFoundResult(const IndexQuery& query, uint16_t view_
         .metalog_progress = query.initial ? index_metalog_progress()
                                           : query.metalog_progress,
         .next_view_id = 0,
+        .trim_seqnum = 0,
         .original_query = query,
         .found_result = IndexFoundResult {
             .view_id = view_id,
@@ -564,6 +565,7 @@ IndexQueryResult Index::BuildNotFoundResult(const IndexQuery& query) {
         .metalog_progress = query.initial ? index_metalog_progress()
                                           : query.metalog_progress,
         .next_view_id = 0,
+        .trim_seqnum = 0,
         .original_query = query,
         .found_result = IndexFoundResult {},
     };
@@ -573,11 +575,13 @@ IndexQueryResult Index::BuildContinueResult(const IndexQuery& query, bool found,
                                             uint64_t seqnum, uint16_t engine_id,
                                             uint64_t trim_seqnum) {
     DCHECK(view_->id() > 0);
+    DCHECK_GE(trim_seqnum, query.prev_trim_seqnum);
     IndexQueryResult result = {
         .state = IndexQueryResult::kContinue,
         .metalog_progress = query.initial ? index_metalog_progress()
                                           : query.metalog_progress,
         .next_view_id = gsl::narrow_cast<uint16_t>(view_->id() - 1),
+        .trim_seqnum = trim_seqnum,
         .original_query = query,
         .found_result = IndexFoundResult {}
     };
@@ -593,8 +597,6 @@ IndexQueryResult Index::BuildContinueResult(const IndexQuery& query, bool found,
     } else if (!query.initial && query.prev_found_result.seqnum != kInvalidLogSeqNum) {
         result.found_result = query.prev_found_result;
     }
-    DCHECK_GE(trim_seqnum, query.prev_trim_seqnum);
-    result.trim_seqnum = trim_seqnum;
     return result;
 }
 
