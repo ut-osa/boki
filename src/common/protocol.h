@@ -286,7 +286,10 @@ struct SharedLogMessage {
         uint64_t trim_op_id;    // [48:56]
     };
 
-    uint64_t prev_found_seqnum; // [56:64]
+    union {
+        uint64_t prev_found_seqnum; // [56:64]
+        uint64_t prev_trim_seqnum;  // [56:64]
+    };
 
 } __attribute__ (( packed, aligned(__FAAS_CACHE_LINE_SIZE) ));
 
