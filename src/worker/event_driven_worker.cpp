@@ -193,7 +193,7 @@ void EventDrivenWorker::NewFuncWorker(uint16_t client_id) {
     worker_state->input_pipe_fd = input_pipe_fd;
     worker_state->output_pipe_fd = output_pipe_fd;
     worker_state->next_call_id = 0;
-    func_workers_[client_id] = std::unique_ptr<FuncWorkerState>(worker_state);
+    func_workers_[client_id] = absl::WrapUnique(worker_state);
     func_worker_by_input_fd_[input_pipe_fd] = worker_state;
 
     watch_fd_readable_cb_(input_pipe_fd);

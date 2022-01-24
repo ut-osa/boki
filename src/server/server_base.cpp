@@ -216,7 +216,7 @@ void ServerBase::SetupJournalMonitorTimers() {
             absl::bind_front(&IOWorker::JournalMonitorCallback, io_worker));
         timer->SetPeriodic(initial, absl::Seconds(1));
         RegisterConnection(io_worker, timer);
-        timers_.insert(std::unique_ptr<Timer>(timer));
+        timers_.insert(absl::WrapUnique(timer));
     });
 }
 
@@ -324,7 +324,7 @@ void ServerBase::DoAcceptConnection(int server_sockfd) {
 Timer* ServerBase::CreateTimer(int timer_type, IOWorker* io_worker, Timer::Callback cb) {
     Timer* timer = new Timer(timer_type, cb);
     RegisterConnection(io_worker, timer);
-    timers_.insert(std::unique_ptr<Timer>(timer));
+    timers_.insert(absl::WrapUnique(timer));
     return timer;
 }
 
@@ -336,7 +336,7 @@ void ServerBase::CreatePeriodicTimer(int timer_type, absl::Duration interval,
         Timer* timer = new Timer(timer_type, cb);
         timer->SetPeriodic(initial, interval * io_workers_.size());
         RegisterConnection(io_worker, timer);
-        timers_.insert(std::unique_ptr<Timer>(timer));
+        timers_.insert(absl::WrapUnique(timer));
         initial += interval;
     });
 }

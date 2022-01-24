@@ -338,7 +338,7 @@ Server::PerFuncStat::PerFuncStat(uint16_t func_id)
 
 void Server::TickNewFuncCall(uint16_t func_id, int64_t current_timestamp) {
     if (!per_func_stats_.contains(func_id)) {
-        per_func_stats_[func_id] = std::unique_ptr<PerFuncStat>(new PerFuncStat(func_id));
+        per_func_stats_[func_id] = absl::WrapUnique(new PerFuncStat(func_id));
     }
     PerFuncStat* per_func_stat = per_func_stats_[func_id].get();
     per_func_stat->incoming_requests_stat.Tick();

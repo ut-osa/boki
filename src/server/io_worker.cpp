@@ -323,7 +323,7 @@ void IOWorker::JournalMonitorCallback() {
 JournalFile* IOWorker::CreateNewJournalFile() {
     int file_id = next_journal_file_id_++;
     JournalFile* journal_file = new JournalFile(this, file_id);
-    journal_files_[file_id] = std::unique_ptr<JournalFile>(journal_file);
+    journal_files_[file_id] = absl::WrapUnique(journal_file);
     return journal_file;
 }
 
