@@ -30,8 +30,10 @@ type Environment interface {
 	SharedLogReadPrev(ctx context.Context, tag uint64, seqNum uint64) (*LogEntry, error)
 	// Alias for ReadPrev(tag, MaxSeqNum)
 	SharedLogCheckTail(ctx context.Context, tag uint64) (*LogEntry, error)
-	// Trim the log whose seqnum < `seqnum`
-	SharedLogTrim(ctx context.Context, tag uint64, seqNum uint64) error
+	// Trim the log whose seqnum < given `seqnum`
+	SharedLogTrim(ctx context.Context, seqNum uint64) error
+	// Trim log entries with `tag` whose seqnum < given `seqnum`
+	SharedLogTrimForTag(ctx context.Context, tag uint64, seqNum uint64) error
 	// Set auxiliary data for log entry of given `seqNum`
 	SharedLogSetAuxData(ctx context.Context, seqNum uint64, auxData []byte) error
 }

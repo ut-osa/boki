@@ -201,10 +201,10 @@ void Engine::HandleLocalAppend(LocalOp* op) {
 
 void Engine::HandleLocalTrim(LocalOp* op) {
     DCHECK(op->type == SharedLogOpType::TRIM);
-    HVLOG_F(1, "Handle local trim: op_id={}, logspace={}, until_seqnum={}",
-            op->id, op->user_logspace, op->seqnum);
+    HVLOG_F(1, "Handle local trim: op_id={}, logspace={}, tag={}, until_seqnum={}",
+            op->id, op->user_logspace, op->trim_tag, bits::HexStr0x(op->seqnum));
     SharedLogMessage request = SharedLogMessageHelper::NewTrimMessage(
-        op->user_logspace, op->seqnum);
+        op->user_logspace, op->trim_tag, op->seqnum);
     request.trim_op_id = op->id;
     {
         absl::ReaderMutexLock view_lk(&view_mu_);

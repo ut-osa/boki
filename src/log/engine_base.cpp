@@ -231,6 +231,7 @@ void EngineBase::OnMessageFromFuncWorker(const Message& message) {
         op->seqnum = message.log_seqnum;
         break;
     case SharedLogOpType::TRIM:
+        op->trim_tag = message.log_tag;
         op->seqnum = message.log_seqnum;
         break;
     case SharedLogOpType::SET_AUXDATA:

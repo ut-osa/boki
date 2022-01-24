@@ -634,10 +634,11 @@ public:
         return message;
     }
 
-    static SharedLogMessage NewTrimMessage(uint32_t user_logspace, uint64_t seqnum) {
+    static SharedLogMessage NewTrimMessage(uint32_t user_logspace, uint64_t tag, uint64_t seqnum) {
         NEW_EMPTY_SHAREDLOG_MESSAGE(message);
         message.op_type = static_cast<uint16_t>(SharedLogOpType::TRIM);
         message.user_logspace = user_logspace;
+        message.trim_tag = tag;
         message.trim_seqnum = seqnum;
         return message;
     }

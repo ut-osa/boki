@@ -658,6 +658,24 @@ func (w *FuncWorker) sharedLogReadCommon(ctx context.Context, message []byte, op
 	}
 }
 
+func (w *FuncWorker) sharedLogTrimCommon(ctx context.Context, tag uint64, seqNum uint64) error {
+	id, currentCallId := w.allocNextLogOp()
+	message := protocol.NewSharedLogTrimMessage(currentCallId, w.clientId, tag, seqNum, id)
+
+	outputChan, err := w.sendSharedLogMessage(id, message)
+	if err != nil {
+		return err
+	}
+
+	response := <-outputChan
+	result := protocol.GetSharedLogResultTypeFromMessage(response)
+	if result == protocol.SharedLogResultType_TRIM_OK {
+		return nil
+	} else {
+		return fmt.Errorf("Failed to trim the log until seqnum %#016x", seqNum)
+	}
+}
+
 // Implement types.Environment
 func (w *FuncWorker) GenerateUniqueID() uint64 {
 	uidLowHalf := atomic.AddUint32(&w.nextUidLowHalf, 1)
@@ -691,26 +709,16 @@ func (w *FuncWorker) SharedLogCheckTail(ctx context.Context, tag uint64) (*types
 }
 
 // Implement types.Environment
-func (w *FuncWorker) SharedLogTrim(ctx context.Context, tag uint64, seqNum uint64) error {
-	if tag != 0 {
-		return fmt.Errorf("LogTrim with non-default tag not yet implemented")
-	}
+func (w *FuncWorker) SharedLogTrim(ctx context.Context, seqNum uint64) error {
+	return w.sharedLogTrimCommon(ctx, 0 /* tag */, seqNum)
+}
 
-	id, currentCallId := w.allocNextLogOp()
-	message := protocol.NewSharedLogTrimMessage(currentCallId, w.clientId, tag, seqNum, id)
-
-	outputChan, err := w.sendSharedLogMessage(id, message)
-	if err != nil {
-		return err
+// Implement types.Environment
+func (w *FuncWorker) SharedLogTrimForTag(ctx context.Context, tag uint64, seqNum uint64) error {
+	if tag == 0 || ^tag == 0 {
+		return fmt.Errorf("Invalid tag: %v", tag)
 	}
-
-	response := <-outputChan
-	result := protocol.GetSharedLogResultTypeFromMessage(response)
-	if result == protocol.SharedLogResultType_TRIM_OK {
-		return nil
-	} else {
-		return fmt.Errorf("Failed to trim the log until seqnum %#016x", seqNum)
-	}
+	return w.sharedLogTrimCommon(ctx, tag, seqNum)
 }
 
 // Implement types.Environment

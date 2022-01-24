@@ -66,7 +66,10 @@ protected:
         uint64_t id;
         uint64_t client_data;
         uint64_t metalog_progress;
-        uint64_t query_tag;
+        union {
+            uint64_t query_tag;
+            uint64_t trim_tag;
+        };
         uint64_t seqnum;
         uint64_t func_call_id;
         int64_t start_timestamp;

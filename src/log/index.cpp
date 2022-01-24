@@ -73,6 +73,9 @@ private:
     absl::flat_hash_map</* tag */ uint64_t, std::vector<uint32_t>> seqnums_by_tag_;
 
     uint64_t trim_seqnum_;
+    absl::flat_hash_map</* tag */ uint64_t, /* seqnum */ uint64_t> trim_seqnum_by_tag_;
+
+    uint64_t GetTrimSeqNum(uint64_t user_tag) const;
 
     bool FindPrev(const std::vector<uint32_t>& seqnums, uint64_t query_seqnum,
                   uint32_t* result_seqnum) const;
@@ -100,16 +103,23 @@ void Index::PerSpaceIndex::Add(uint32_t seqnum_lowhalf, uint16_t engine_id,
 }
 
 void Index::PerSpaceIndex::ApplyTrim(uint64_t trim_seqnum, uint64_t user_tag) {
-    if (user_tag != kEmptyLogTag) {
-        NOT_IMPLEMENTED();
+    VLOG_F(1, "Apply trim for user logspace {}: trim_seqnum={}, user_tag={}",
+           user_logspace_, bits::HexStr0x(trim_seqnum), user_tag);
+    if (user_tag == kEmptyLogTag) {
+        trim_seqnum_ = std::max(trim_seqnum_, trim_seqnum);
+    } else {
+        if (!trim_seqnum_by_tag_.contains(user_tag)) {
+            trim_seqnum_by_tag_[user_tag] = trim_seqnum;
+        } else if (trim_seqnum > trim_seqnum_by_tag_[user_tag]) {
+            trim_seqnum_by_tag_[user_tag] = trim_seqnum;
+        }
     }
-    trim_seqnum_ = std::max(trim_seqnum_, trim_seqnum);
 }
 
 bool Index::PerSpaceIndex::FindPrev(uint64_t query_seqnum, uint64_t user_tag,
                                     Result* result) const {
     result->seqnum = kInvalidLogSeqNum;
-    result->trim_seqnum = trim_seqnum_;
+    result->trim_seqnum = GetTrimSeqNum(user_tag);
     uint32_t seqnum_lowhalf;
     if (user_tag == kEmptyLogTag) {
         if (!FindPrev(seqnums_, query_seqnum, &seqnum_lowhalf)) {
@@ -125,7 +135,7 @@ bool Index::PerSpaceIndex::FindPrev(uint64_t query_seqnum, uint64_t user_tag,
     }
     uint64_t seqnum = bits::JoinTwo32(logspace_id_, seqnum_lowhalf);
     DCHECK_LE(seqnum, query_seqnum);
-    if (seqnum < trim_seqnum_) {
+    if (seqnum < result->trim_seqnum) {
         return false;
     }
     result->seqnum = seqnum;
@@ -137,8 +147,8 @@ bool Index::PerSpaceIndex::FindPrev(uint64_t query_seqnum, uint64_t user_tag,
 bool Index::PerSpaceIndex::FindNext(uint64_t query_seqnum, uint64_t user_tag,
                                     Result* result) const {
     result->seqnum = kInvalidLogSeqNum;
-    result->trim_seqnum = trim_seqnum_;
-    uint64_t real_query_seqnum = std::max(query_seqnum, trim_seqnum_);
+    result->trim_seqnum = GetTrimSeqNum(user_tag);
+    uint64_t real_query_seqnum = std::max(query_seqnum, result->trim_seqnum);
     uint32_t seqnum_lowhalf;
     if (user_tag == kEmptyLogTag) {
         if (!FindNext(seqnums_, real_query_seqnum, &seqnum_lowhalf)) {
@@ -154,11 +164,19 @@ bool Index::PerSpaceIndex::FindNext(uint64_t query_seqnum, uint64_t user_tag,
     }
     uint64_t seqnum = bits::JoinTwo32(logspace_id_, seqnum_lowhalf);
     DCHECK_GE(seqnum, query_seqnum);
-    DCHECK_GE(seqnum, trim_seqnum_);
+    DCHECK_GE(seqnum, result->trim_seqnum);
     result->seqnum = seqnum;
     DCHECK(engine_ids_.contains(seqnum_lowhalf));
     result->engine_id = engine_ids_.at(seqnum_lowhalf);
     return true;
+}
+
+uint64_t Index::PerSpaceIndex::GetTrimSeqNum(uint64_t user_tag) const {
+    if (trim_seqnum_by_tag_.contains(user_tag)) {
+        return std::max(trim_seqnum_, trim_seqnum_by_tag_.at(user_tag));
+    } else {
+        return trim_seqnum_;
+    }
 }
 
 bool Index::PerSpaceIndex::FindPrev(const std::vector<uint32_t>& seqnums,
