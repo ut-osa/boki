@@ -372,10 +372,10 @@ void LogStorage::OnNewLogs(uint32_t metalog_seqnum,
     auto iter = pending_read_requests_.begin();
     while (iter != pending_read_requests_.end() && iter->first < start_seqnum) {
         HLOG_F(WARNING, "Read request for seqnum {} has past", bits::HexStr0x(iter->first));
-        pending_read_results_.push_back(ReadResult {
-            .status = ReadResult::kFailed,
-            .original_request = iter->second
-        });
+        ReadResult result;
+        result.status = ReadResult::kFailed;
+        result.original_request = iter->second;
+        pending_read_results_.push_back(std::move(result));
         iter = pending_read_requests_.erase(iter);
     }
     for (size_t i = 0; i < delta; i++) {
