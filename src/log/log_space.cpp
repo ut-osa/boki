@@ -290,7 +290,6 @@ bool LogStorage::Store(Entry new_entry) {
     }
     Entry* entry = entry_pool_.Get();
     *entry = std::move(new_entry);
-    entry->journal_file->Ref();
     pending_log_entries_[localid] = entry;
     AdvanceShardProgress(engine_id);
     journal_delay_stat_.AddSample(gsl::narrow_cast<int>(
@@ -305,17 +304,14 @@ void LogStorage::ReadAt(const protocol::SharedLogMessage& request) {
         pending_read_requests_.insert(std::make_pair(seqnum, request));
         return;
     }
-    ReadResult result = {
-        .status = ReadResult::kFailed,
-        .original_request = request
-    };
+    ReadResult result;
+    result.status = ReadResult::kFailed;
+    result.original_request = request;
     if (live_log_entries_.contains(seqnum)) {
         const Entry* entry = live_log_entries_.at(seqnum);
-        entry->journal_file->Ref();
         result.status = ReadResult::kLookupJournal;
         result.localid = entry->metadata.localid;
-        result.journal_file = entry->journal_file;
-        result.journal_offset = entry->journal_offset;
+        result.journal_record = entry->journal_record;
     } else if (seqnum < persisted_seqnum_position_) {
         result.status = ReadResult::kLookupDB;
     } else {
@@ -415,12 +411,10 @@ void LogStorage::OnNewLogs(uint32_t metalog_seqnum,
         entries_for_persistence_.push_back(log_entry);
         // Check if we have read request on it
         while (iter != pending_read_requests_.end() && iter->first == seqnum) {
-            log_entry->journal_file->Ref();
             pending_read_results_.push_back(ReadResult {
                 .status = ReadResult::kLookupJournal,
                 .localid = localid,
-                .journal_file = log_entry->journal_file,
-                .journal_offset = log_entry->journal_offset,
+                .journal_record = log_entry->journal_record,
                 .original_request = iter->second
             });
             iter = pending_read_requests_.erase(iter);
@@ -460,12 +454,12 @@ void LogStorage::ShrinkLiveEntriesIfNeeded() {
         if (seqnum >= persisted_seqnum_position_) {
             break;
         }
-        const Entry* log_entry = live_log_entries_.at(seqnum);
+        Entry* log_entry = const_cast<Entry*>(live_log_entries_.at(seqnum));
         live_log_entries_.erase(seqnum);
         live_seqnums_.pop_front();
         DCHECK_EQ(live_seqnums_.size(), live_log_entries_.size());
-        log_entry->journal_file->Unref();
-        entry_pool_.Return(const_cast<Entry*>(log_entry));
+        log_entry->journal_record.file.Reset();
+        entry_pool_.Return(log_entry);
     }
     live_entries_stat_.AddSample(gsl::narrow_cast<int>(live_seqnums_.size()));
 }

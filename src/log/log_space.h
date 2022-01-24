@@ -2,7 +2,6 @@
 
 #include "log/log_space_base.h"
 #include "common/stat.h"
-#include "server/journal.h"
 
 namespace faas {
 namespace log {
@@ -94,11 +93,10 @@ public:
     ~LogStorage();
 
     struct Entry {
-        int64_t              recv_timestamp;
-        LogMetaData          metadata;
-        UserTagVec           user_tags;
-        server::JournalFile* journal_file;
-        size_t               journal_offset;
+        int64_t        recv_timestamp;
+        LogMetaData    metadata;
+        UserTagVec     user_tags;
+        JournalRecord  journal_record;
     };
     bool Store(Entry new_entry);
     void ReadAt(const protocol::SharedLogMessage& request);
@@ -111,8 +109,7 @@ public:
         enum Status { kLookupJournal, kLookupDB, kFailed };
         Status                     status;
         uint64_t                   localid{0};
-        server::JournalFile*       journal_file{nullptr};
-        size_t                     journal_offset{0};
+        JournalRecord              journal_record;
         protocol::SharedLogMessage original_request;
     };
     using ReadResultVec = absl::InlinedVector<ReadResult, 4>;

@@ -191,8 +191,7 @@ void Storage::HandleReplicateRequest(const SharedLogMessage& message,
         .recv_timestamp = GetMonotonicMicroTimestamp(),
         .metadata       = std::move(metadata),
         .user_tags      = UserTagVec(user_tags.begin(), user_tags.end()),
-        .journal_file   = nullptr,
-        .journal_offset = 0
+        .journal_record = JournalRecord {},
     };
     auto callback = [this, view, entry] (server::JournalFile* file, size_t offset) {
         absl::ReaderMutexLock view_lk(&view_mu_);
@@ -205,8 +204,10 @@ void Storage::HandleReplicateRequest(const SharedLogMessage& message,
             auto locked_storage = storage_ptr.Lock();
             RETURN_IF_LOGSPACE_FINALIZED(locked_storage);
             LogStorage::Entry new_entry = std::move(entry);
-            new_entry.journal_file = file;
-            new_entry.journal_offset = offset;
+            new_entry.journal_record = JournalRecord {
+                .file = file->MakeAccessor(),
+                .offset = offset,
+            };
             if (!locked_storage->Store(std::move(new_entry))) {
                 HLOG(ERROR) << "Failed to store log entry";
             }
@@ -270,11 +271,6 @@ void Storage::OnRecvLogAuxData(const protocol::SharedLogMessage& message,
 void Storage::ProcessReadResults(const LogStorage::ReadResultVec& results) {
     LogEntry log_entry;
     for (const LogStorage::ReadResult& result : results) {
-        auto unref_journal_cleanup = gsl::finally([&result] () {
-            if (result.status == LogStorage::ReadResult::kLookupJournal) {
-                DCHECK_NOTNULL(result.journal_file)->Unref();
-            }
-        });
         const SharedLogMessage& request = result.original_request;
         SharedLogMessage response;
         uint64_t seqnum = bits::JoinTwo32(request.logspace_id, request.seqnum_lowhalf);
@@ -290,8 +286,7 @@ void Storage::ProcessReadResults(const LogStorage::ReadResultVec& results) {
         switch (result.status) {
         case LogStorage::ReadResult::kLookupJournal:
             log_entry = ReadLogEntryFromJournal(
-                seqnum, result.localid,
-                result.journal_file, result.journal_offset);
+                seqnum, result.localid, result.journal_record);
             response = SharedLogMessageHelper::NewReadOkResponse(request.user_metalog_progress);
             SendEngineLogResult(request, &response, log_entry);
             break;
@@ -375,8 +370,7 @@ void Storage::SendEngineLogResult(const protocol::SharedLogMessage& request,
 }
 
 LogEntry Storage::ReadLogEntryFromJournal(uint64_t seqnum, uint64_t localid,
-                                          server::JournalFile* journal_file,
-                                          size_t journal_offset) {
+                                          const JournalRecord& journal_record) {
     LogEntry log_entry;
     uint32_t logspace_id = bits::HighHalf64(seqnum);
     if (auto cached = log_cache()->GetByLocalId(logspace_id, localid); cached.has_value()) {
@@ -386,8 +380,7 @@ LogEntry Storage::ReadLogEntryFromJournal(uint64_t seqnum, uint64_t localid,
         HVLOG_F(1, "Failed to find log entry (seqnum {}, localid {}) from cache, "
                 "read from journal instead",
                 bits::HexStr0x(seqnum), bits::HexStr0x(localid));
-        log_entry = log_utils::ReadLogEntryFromJournal(
-            seqnum, DCHECK_NOTNULL(journal_file), journal_offset);
+        log_entry = log_utils::ReadLogEntryFromJournal(seqnum, journal_record);
     }
     DCHECK_EQ(log_entry.metadata.localid, localid);
     VALIDATE_LOG_ENTRY(log_entry);
@@ -442,7 +435,7 @@ void Storage::FlushLogEntries(std::span<const LogStorage::Entry*> entries) {
             }
             LogEntry log_entry = ReadLogEntryFromJournal(
                 entry->metadata.seqnum, entry->metadata.localid,
-                entry->journal_file, entry->journal_offset);
+                entry->journal_record);
             batch.keys.push_back(bits::LowHalf64(log_entry.metadata.seqnum));
             batch.data.push_back(log_utils::SerializedLogEntryToProto(log_entry));
         }

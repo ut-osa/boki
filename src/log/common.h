@@ -2,6 +2,7 @@
 
 #include "base/common.h"
 #include "common/protocol.h"
+#include "server/journal.h"
 
 __BEGIN_THIRD_PARTY_HEADERS
 #include "proto/shared_log.pb.h"
@@ -49,6 +50,11 @@ struct LogEntry {
     LogMetaData metadata;
     UserTagVec  user_tags;
     std::string data;
+};
+
+struct JournalRecord {
+    server::JournalFileRef  file;
+    size_t                  offset{0};
 };
 
 }  // namespace log

@@ -3,13 +3,14 @@
 #include "base/common.h"
 #include "utils/appendable_buffer.h"
 #include "utils/object_pool.h"
+#include "utils/ref_count.h"
 
 namespace faas {
 namespace server {
 
 class IOWorker;
 
-class JournalFile {
+class JournalFile : public RefCountedBase<JournalFile> {
 public:
     JournalFile(IOWorker* owner, int file_id);
     ~JournalFile();
@@ -32,22 +33,6 @@ public:
     void Finalize();
     void Remove();
 
-    inline void Ref() {
-        ref_count_.fetch_add(1, std::memory_order_relaxed);
-    }
-
-    inline void Unref() {
-        int value = ref_count_.fetch_add(-1, std::memory_order_acq_rel);
-        if (__FAAS_PREDICT_FALSE(value == 1)) {
-            RefBecomesZero();
-        }
-#if DCHECK_IS_ON()
-        if (__FAAS_PREDICT_FALSE(value <= 0)) {
-            LOG(FATAL) << "The reference counter is less than zero!";
-        }
-#endif
-    }
-
 private:
     enum State { kEmpty, kActive, kFinalizing, kFinalized, kClosing, kClosed, kRemoved };
 
@@ -55,8 +40,6 @@ private:
     IOWorker* owner_;
     std::string file_path_;
     int fd_;
-
-    std::atomic<int> ref_count_;
 
     size_t appended_bytes_;
     size_t flushed_bytes_;
@@ -87,10 +70,12 @@ private:
         state_.store(new_state, std::memory_order_release);
     }
 
-    void RefBecomesZero();
+    void RefBecomesZero() override;
 
     DISALLOW_COPY_AND_ASSIGN(JournalFile);
 };
+
+using JournalFileRef = JournalFile::Accessor;
 
 }  // namespace server
 }  // namespace faas

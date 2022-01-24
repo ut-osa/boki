@@ -159,12 +159,11 @@ void PopulateMetaDataToMessage(const LogMetaData& metadata, SharedLogMessage* me
     message->localid = metadata.localid;
 }
 
-log::LogEntry ReadLogEntryFromJournal(uint64_t seqnum,
-                                      server::JournalFile* file, size_t offset) {
+log::LogEntry ReadLogEntryFromJournal(uint64_t seqnum, const log::JournalRecord& record) {
     static thread_local utils::AppendableBuffer read_buffer;
     uint16_t record_type;
     read_buffer.Reset();
-    size_t nread = file->ReadRecord(offset, &record_type, &read_buffer);
+    size_t nread = record.file->ReadRecord(record.offset, &record_type, &read_buffer);
     DCHECK_EQ(record_type, kLogEntryJournalRecordType);
     const char* buf_ptr = read_buffer.data();
     auto message = reinterpret_cast<const SharedLogMessage*>(buf_ptr);

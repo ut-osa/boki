@@ -82,8 +82,7 @@ void SplitLogEntryProto(const log::LogEntryProto& log_entry_proto,
 void PopulateMetaDataToMessage(const log::LogMetaData& metadata,
                                protocol::SharedLogMessage* message);
 
-log::LogEntry ReadLogEntryFromJournal(uint64_t seqnum,
-                                      server::JournalFile* file, size_t offset);
+log::LogEntry ReadLogEntryFromJournal(uint64_t seqnum, const log::JournalRecord& record);
 
 std::string SerializedLogEntryToProto(const log::LogEntry& log_entry);
 

@@ -47,8 +47,7 @@ private:
                              const LogEntry& log_entry);
 
     LogEntry ReadLogEntryFromJournal(uint64_t seqnum, uint64_t localid,
-                                     server::JournalFile* journal_file,
-                                     size_t journal_offset);
+                                     const JournalRecord& journal_record);
 
     void SendShardProgressIfNeeded() override;
     void FlushLogEntries(std::span<const LogStorage::Entry*> entries) override;

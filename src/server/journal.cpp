@@ -18,7 +18,6 @@ JournalFile::JournalFile(IOWorker* owner, int file_id)
     : state_(kEmpty),
       owner_(owner),
       fd_(-1),
-      ref_count_(1),
       appended_bytes_(0),
       flushed_bytes_(0),
       flush_fn_scheduled_(false) {
