@@ -388,8 +388,8 @@ LogEntry Storage::ReadLogEntryFromJournal(uint64_t seqnum, uint64_t localid,
                 bits::HexStr0x(seqnum), bits::HexStr0x(localid));
         log_entry = log_utils::ReadLogEntryFromJournal(
             seqnum, DCHECK_NOTNULL(journal_file), journal_offset);
-        DCHECK_EQ(log_entry.metadata.localid, localid);
     }
+    DCHECK_EQ(log_entry.metadata.localid, localid);
     VALIDATE_LOG_ENTRY(log_entry);
     log_cache()->PutBySeqnum(log_entry);
     return log_entry;
