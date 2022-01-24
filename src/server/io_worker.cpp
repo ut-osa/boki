@@ -327,10 +327,5 @@ JournalFile* IOWorker::CreateNewJournalFile() {
     return journal_file;
 }
 
-void IOWorker::RemoveExtraJournalFiles() {
-    DCHECK(WithinMyEventLoopThread());
-    // TODO: do something
-}
-
 }  // namespace server
 }  // namespace faas

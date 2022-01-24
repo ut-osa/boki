@@ -141,7 +141,6 @@ private:
     void CloseWorkerFds();
 
     JournalFile* CreateNewJournalFile();
-    void RemoveExtraJournalFiles();
 
     DISALLOW_COPY_AND_ASSIGN(IOWorker);
 };
