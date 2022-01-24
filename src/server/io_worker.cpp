@@ -186,12 +186,8 @@ void IOWorker::ScheduleFunction(ConnectionBase* owner, std::function<void()> fn)
         HLOG(WARNING) << "Cannot schedule function in non-running state, will ignore it";
         return;
     }
-    ScheduledFunction function = {
-        .owner_id = (owner == nullptr) ? -1 : owner->id(),
-        .fn = fn
-    };
     if (WithinMyEventLoopThread()) {
-        InvokeFunction(function);
+        ScheduleIdleFunction(owner, fn);
         return;
     }
     bool need_notify = false;
@@ -200,7 +196,10 @@ void IOWorker::ScheduleFunction(ConnectionBase* owner, std::function<void()> fn)
         if (scheduled_functions_.empty()) {
             need_notify = true;
         }
-        scheduled_functions_.push_back(std::move(function));
+        scheduled_functions_.push_back(ScheduledFunction {
+            .owner_id = (owner == nullptr) ? -1 : owner->id(),
+            .fn = fn
+        });
     }
     if (need_notify) {
         DCHECK(eventfd_ >= 0);
@@ -241,10 +240,10 @@ void IOWorker::RunIdleFunctions() {
     if (state_.load(std::memory_order_acquire) != kRunning) {
         return;
     }
-    for (const ScheduledFunction& function : idle_functions_) {
-        InvokeFunction(function);
+    while (!idle_functions_.empty()) {
+        InvokeFunction(idle_functions_.front());
+        idle_functions_.pop_front();
     }
-    idle_functions_.clear();
 }
 
 void IOWorker::InvokeFunction(const ScheduledFunction& function) {

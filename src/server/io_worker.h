@@ -127,7 +127,7 @@ private:
     absl::Mutex scheduled_function_mu_;
     absl::InlinedVector<ScheduledFunction, 16>
         scheduled_functions_ ABSL_GUARDED_BY(scheduled_function_mu_);
-    absl::InlinedVector<ScheduledFunction, 16> idle_functions_;
+    std::deque<ScheduledFunction> idle_functions_;
 
     int next_journal_file_id_;
     std::map</* file_id */ int, std::unique_ptr<JournalFile>> journal_files_;
