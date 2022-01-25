@@ -14,6 +14,7 @@ ABSL_FLAG(bool, slog_engine_enable_cache, false, "");
 ABSL_FLAG(int, slog_engine_cache_cap_mb, 1024, "");
 ABSL_FLAG(bool, slog_engine_propagate_auxdata, false, "");
 
+ABSL_FLAG(bool, slog_storage_enable_journal, false, "");
 ABSL_FLAG(int, slog_storage_cache_cap_mb, 1024, "");
 ABSL_FLAG(std::string, slog_storage_backend, "rocksdb",
           "rocskdb, lmdb, tkrzw_hash, tkrzw_tree, or tkrzw_skip");

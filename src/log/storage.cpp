@@ -171,53 +171,65 @@ void Storage::HandleReadAtRequest(const SharedLogMessage& request) {
 void Storage::HandleReplicateRequest(const SharedLogMessage& message,
                                      std::span<const char> payload) {
     DCHECK(SharedLogMessageHelper::GetOpType(message) == SharedLogOpType::REPLICATE);
-    const View* view = nullptr;
-    {
-        absl::ReaderMutexLock view_lk(&view_mu_);
-        ONHOLD_IF_FROM_FUTURE_VIEW(message, payload);
-        IGNORE_IF_FROM_PAST_VIEW(message);
-        view = current_view_;
-    }
-
     LogMetaData metadata = log_utils::GetMetaDataFromMessage(message);
     std::span<const uint64_t> user_tags;
     std::span<const char> log_data;
     log_utils::SplitPayloadForMessage(message, payload, &user_tags, &log_data,
                                       /* aux_data= */ nullptr);
     VALIDATE_LOG_PARTS(metadata, user_tags, log_data);
-    log_cache()->PutByLocalId(metadata, user_tags, log_data);
-
     LogStorage::Entry entry {
         .recv_timestamp = GetMonotonicMicroTimestamp(),
         .metadata       = std::move(metadata),
         .user_tags      = UserTagVec(user_tags.begin(), user_tags.end()),
-        .journal_record = JournalRecord {},
+        .data           = JournalRecord {},
     };
-    auto callback = [this, view, entry] (server::JournalFile* file, size_t offset) {
+
+    const View* view = nullptr;
+    LockablePtr<LogStorage> storage_ptr;
+    {
         absl::ReaderMutexLock view_lk(&view_mu_);
-        if (current_view_ != view) {
+        ONHOLD_IF_FROM_FUTURE_VIEW(message, payload);
+        IGNORE_IF_FROM_PAST_VIEW(message);
+        view = current_view_;
+        storage_ptr = storage_collection_.GetLogSpaceChecked(message.logspace_id);
+    }
+
+    auto store_fn = [this] (const View* desired_view,
+                            LockablePtr<LogStorage> storage_ptr,
+                            LogStorage::Entry entry) {
+        absl::ReaderMutexLock view_lk(&view_mu_);
+        if (current_view_ != desired_view) {
             return;
         }
-        uint32_t logspace_id = bits::HighHalf64(entry.metadata.seqnum);
-        auto storage_ptr = storage_collection_.GetLogSpaceChecked(logspace_id);
-        {
-            auto locked_storage = storage_ptr.Lock();
-            RETURN_IF_LOGSPACE_FINALIZED(locked_storage);
-            LogStorage::Entry new_entry = std::move(entry);
-            new_entry.journal_record = JournalRecord {
-                .file = file->MakeAccessor(),
-                .offset = offset,
-            };
-            if (!locked_storage->Store(std::move(new_entry))) {
-                HLOG(ERROR) << "Failed to store log entry";
-            }
+        auto locked_storage = storage_ptr.Lock();
+        RETURN_IF_LOGSPACE_FINALIZED(locked_storage);
+        if (!locked_storage->Store(std::move(entry))) {
+            HLOG(FATAL) << "Failed to store log entry";
         }
     };
 
-    CurrentIOWorkerChecked()->JournalAppend(
-        kLogEntryJournalRecordType,
-        {VAR_AS_CHAR_SPAN(message, SharedLogMessage), payload},
-        callback);
+    if (journal_enabled()) {
+        log_cache()->PutByLocalId(metadata, user_tags, log_data);
+        auto binded_store_fn = absl::bind_front(store_fn, view, storage_ptr);
+        CurrentIOWorkerChecked()->JournalAppend(
+            kLogEntryJournalRecordType,
+            {VAR_AS_CHAR_SPAN(message, SharedLogMessage), payload},
+            [binded_store_fn, entry] (server::JournalFile* file, size_t offset) {
+                LogStorage::Entry new_entry = std::move(entry);
+                new_entry.data = JournalRecord {
+                    .file = file->MakeAccessor(),
+                    .offset = offset,
+                };
+                binded_store_fn(std::move(new_entry));
+            }
+        );
+    } else {
+        std::string data;
+        data.append(reinterpret_cast<const char*>(&message), sizeof(SharedLogMessage));
+        data.append(payload.data(), payload.size());
+        entry.data = std::move(data);
+        store_fn(view, std::move(storage_ptr), std::move(entry));
+    }
 }
 
 void Storage::OnRecvNewMetaLogs(const SharedLogMessage& message,
@@ -228,6 +240,7 @@ void Storage::OnRecvNewMetaLogs(const SharedLogMessage& message,
     const View* view = nullptr;
     LogStorage::ReadResultVec results;
     std::optional<IndexDataProto> index_data;
+    LogStorage::LogEntryVec new_log_entires;
     {
         absl::ReaderMutexLock view_lk(&view_mu_);
         ONHOLD_IF_FROM_FUTURE_VIEW(message, payload);
@@ -242,18 +255,21 @@ void Storage::OnRecvNewMetaLogs(const SharedLogMessage& message,
             }
             locked_storage->PollReadResults(&results);
             index_data = locked_storage->PollIndexData();
-            LogStorage::LogEntryVec new_log_entires;
             locked_storage->GrabLogEntriesForPersistence(&new_log_entires);
-            if (!new_log_entires.empty()) {
-                db_flusher()->PushLogEntriesForFlush(
-                    std::span<const LogStorage::Entry*>(new_log_entires.data(),
-                                                        new_log_entires.size()));
-            }
         }
     }
     ProcessReadResults(results);
     if (index_data.has_value()) {
         SendIndexData(DCHECK_NOTNULL(view), *index_data);
+    }
+    if (!new_log_entires.empty()) {
+        if (journal_enabled()) {
+            // TODO
+            NOT_IMPLEMENTED();
+        } else {
+            db_flusher()->PushLogEntriesForFlush(
+                gsl::make_span(new_log_entires.data(), new_log_entires.size()));
+        }
     }
 }
 
@@ -284,14 +300,18 @@ void Storage::ProcessReadResults(const LogStorage::ReadResultVec& results) {
             }
         }
         switch (result.status) {
-        case LogStorage::ReadResult::kLookupJournal:
-            log_entry = ReadLogEntryFromJournal(
-                seqnum, result.localid, result.journal_record);
+        case LogStorage::ReadResult::kInlined:
+            log_entry = ReadInlinedLogEntry(seqnum, result.localid, result.data);
             response = SharedLogMessageHelper::NewReadOkResponse(request.user_metalog_progress);
             SendEngineLogResult(request, &response, log_entry);
             break;
         case LogStorage::ReadResult::kLookupDB:
-            ProcessReadFromDB(request);
+            if (journal_enabled()) {
+                // TODO
+                NOT_IMPLEMENTED();
+            } else {
+                ProcessReadFromDB(request);
+            }
             break;
         case LogStorage::ReadResult::kFailed:
             HLOG_F(ERROR, "Failed to read log data (seqnum={})",
@@ -306,6 +326,7 @@ void Storage::ProcessReadResults(const LogStorage::ReadResultVec& results) {
 }
 
 void Storage::ProcessReadFromDB(const SharedLogMessage& request) {
+    DCHECK(!journal_enabled());
     uint64_t seqnum = bits::JoinTwo32(request.logspace_id, request.seqnum_lowhalf);
     LogEntryProto log_entry_proto;
     if (auto tmp = GetLogEntryFromDB(seqnum); tmp.has_value()) {
@@ -369,18 +390,35 @@ void Storage::SendEngineLogResult(const protocol::SharedLogMessage& request,
                         STRING_AS_SPAN(log_entry.data));
 }
 
-LogEntry Storage::ReadLogEntryFromJournal(uint64_t seqnum, uint64_t localid,
-                                          const JournalRecord& journal_record) {
+LogEntry Storage::ReadInlinedLogEntry(uint64_t seqnum, uint64_t localid,
+                                      const LogStorage::LogData& data) {
     LogEntry log_entry;
-    uint32_t logspace_id = bits::HighHalf64(seqnum);
-    if (auto cached = log_cache()->GetByLocalId(logspace_id, localid); cached.has_value()) {
-        log_entry = std::move(cached.value());
-        log_entry.metadata.seqnum = seqnum;
+    if (journal_enabled()) {
+        uint32_t logspace_id = bits::HighHalf64(seqnum);
+        if (auto cached = log_cache()->GetByLocalId(logspace_id, localid); cached.has_value()) {
+            log_entry = std::move(cached.value());
+            log_entry.metadata.seqnum = seqnum;
+        } else {
+            HVLOG_F(1, "Failed to find log entry (seqnum {}, localid {}) from cache, "
+                    "read from journal instead",
+                    bits::HexStr0x(seqnum), bits::HexStr0x(localid));
+            const JournalRecord& record = std::get<JournalRecord>(data);
+            log_entry = log_utils::ReadLogEntryFromJournal(seqnum, record);
+        }
     } else {
-        HVLOG_F(1, "Failed to find log entry (seqnum {}, localid {}) from cache, "
-                "read from journal instead",
-                bits::HexStr0x(seqnum), bits::HexStr0x(localid));
-        log_entry = log_utils::ReadLogEntryFromJournal(seqnum, journal_record);
+        const std::string& buf = std::get<std::string>(data);
+        DCHECK_GE(buf.size(), sizeof(SharedLogMessage));
+        const SharedLogMessage* message = reinterpret_cast<const SharedLogMessage*>(buf.data());
+        std::span<const char> payload(
+            buf.data() + sizeof(SharedLogMessage),
+            buf.size() - sizeof(SharedLogMessage));
+        std::span<const uint64_t> user_tags;
+        std::span<const char> log_data;
+        log_utils::SplitPayloadForMessage(*message, payload, &user_tags, &log_data,
+                                          /* aux_data= */ nullptr);
+        log_entry.metadata = log_utils::GetMetaDataFromMessage(*message);
+        log_entry.user_tags.assign(user_tags.begin(), user_tags.end());
+        log_entry.data.assign(log_data.data(), log_data.size());
     }
     DCHECK_EQ(log_entry.metadata.localid, localid);
     VALIDATE_LOG_ENTRY(log_entry);
@@ -421,6 +459,7 @@ void Storage::SendShardProgressIfNeeded() {
 }
 
 void Storage::FlushLogEntries(std::span<const LogStorage::Entry*> entries) {
+    DCHECK(!journal_enabled());
     HVLOG_F(1, "Going to flush {} entries to DB", entries.size());
     absl::flat_hash_set<uint32_t> logspace_ids;
     for (const LogStorage::Entry* entry : entries) {
@@ -433,9 +472,8 @@ void Storage::FlushLogEntries(std::span<const LogStorage::Entry*> entries) {
             if (logspace_id != bits::HighHalf64(entry->metadata.seqnum)) {
                 continue;
             }
-            LogEntry log_entry = ReadLogEntryFromJournal(
-                entry->metadata.seqnum, entry->metadata.localid,
-                entry->journal_record);
+            LogEntry log_entry = ReadInlinedLogEntry(
+                entry->metadata.seqnum, entry->metadata.localid, entry->data);
             batch.keys.push_back(bits::LowHalf64(log_entry.metadata.seqnum));
             batch.data.push_back(log_utils::SerializedLogEntryToProto(log_entry));
         }
@@ -444,6 +482,7 @@ void Storage::FlushLogEntries(std::span<const LogStorage::Entry*> entries) {
 }
 
 void Storage::CommitLogEntries(std::span<const LogStorage::Entry*> entries) {
+    DCHECK(!journal_enabled());
     HVLOG_F(1, "Will commit the persistence of {} entries", entries.size());
 
     absl::flat_hash_map<uint32_t, uint64_t> new_positions;

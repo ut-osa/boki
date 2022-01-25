@@ -22,23 +22,28 @@ using server::EgressHub;
 using server::NodeWatcher;
 
 StorageBase::StorageBase(uint16_t node_id)
-    : ServerBase(fmt::format("storage_{}", node_id), /* enable_journal= */ true),
+    : ServerBase(fmt::format("storage_{}", node_id),
+                 absl::GetFlag(FLAGS_slog_storage_enable_journal)),
       node_id_(node_id),
       db_(nullptr) {}
 
 StorageBase::~StorageBase() {}
 
 void StorageBase::StartInternal() {
-    SetupDB();
     SetupZKWatchers();
     SetupTimers();
     log_cache_.emplace(absl::GetFlag(FLAGS_slog_storage_cache_cap_mb));
-    db_flusher_.emplace(this, absl::GetFlag(FLAGS_slog_storage_flusher_threads));
+    if (!journal_enabled()) {
+        SetupDB();
+        db_flusher_.emplace(this, absl::GetFlag(FLAGS_slog_storage_flusher_threads));
+    }
 }
 
 void StorageBase::StopInternal() {
-    db_flusher()->SignalAllThreads();
-    db_flusher()->JoinAllThreads();
+    if (!journal_enabled()) {
+        db_flusher()->SignalAllThreads();
+        db_flusher()->JoinAllThreads();
+    }
 }
 
 void StorageBase::SetupDB() {

@@ -309,9 +309,9 @@ void LogStorage::ReadAt(const protocol::SharedLogMessage& request) {
     result.original_request = request;
     if (live_log_entries_.contains(seqnum)) {
         const Entry* entry = live_log_entries_.at(seqnum);
-        result.status = ReadResult::kLookupJournal;
+        result.status = ReadResult::kInlined;
         result.localid = entry->metadata.localid;
-        result.journal_record = entry->journal_record;
+        result.data = entry->data;
     } else if (seqnum < persisted_seqnum_position_) {
         result.status = ReadResult::kLookupDB;
     } else {
@@ -412,9 +412,9 @@ void LogStorage::OnNewLogs(uint32_t metalog_seqnum,
         // Check if we have read request on it
         while (iter != pending_read_requests_.end() && iter->first == seqnum) {
             pending_read_results_.push_back(ReadResult {
-                .status = ReadResult::kLookupJournal,
+                .status = ReadResult::kInlined,
                 .localid = localid,
-                .journal_record = log_entry->journal_record,
+                .data = log_entry->data,
                 .original_request = iter->second
             });
             iter = pending_read_requests_.erase(iter);
@@ -458,10 +458,19 @@ void LogStorage::ShrinkLiveEntriesIfNeeded() {
         live_log_entries_.erase(seqnum);
         live_seqnums_.pop_front();
         DCHECK_EQ(live_seqnums_.size(), live_log_entries_.size());
-        log_entry->journal_record.file.Reset();
+        ClearLogData(&log_entry->data);
         entry_pool_.Return(log_entry);
     }
     live_entries_stat_.AddSample(gsl::narrow_cast<int>(live_seqnums_.size()));
+}
+
+void LogStorage::ClearLogData(LogData* data) {
+    if (auto str = std::get_if<std::string>(data); str != nullptr) {
+        str->clear();
+    }
+    if (auto record = std::get_if<JournalRecord>(data); record != nullptr) {
+        record->file.Reset();
+    }
 }
 
 }  // namespace log

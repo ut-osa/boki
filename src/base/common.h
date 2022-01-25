@@ -50,17 +50,20 @@
 #include <string_view>
 #include <functional>
 #include <algorithm>
+#include <variant>
+#ifdef __FAAS_CPP_WORKER
+#include <mutex>
+#endif
 
 // STL containers
 #include <vector>
 #include <queue>
+#include <deque>
+#include <list>
 #include <map>
 #include <set>
 #include <unordered_map>
 #include <unordered_set>
-#ifdef __FAAS_CPP_WORKER
-#include <mutex>
-#endif
 
 // fmtlib
 #define FMT_HEADER_ONLY

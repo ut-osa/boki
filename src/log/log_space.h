@@ -92,11 +92,13 @@ public:
     LogStorage(uint16_t storage_id, const View* view, uint16_t sequencer_id);
     ~LogStorage();
 
+    using LogData = std::variant<std::string, JournalRecord>;
+
     struct Entry {
-        int64_t        recv_timestamp;
-        LogMetaData    metadata;
-        UserTagVec     user_tags;
-        JournalRecord  journal_record;
+        int64_t      recv_timestamp;
+        LogMetaData  metadata;
+        UserTagVec   user_tags;
+        LogData      data;
     };
     bool Store(Entry new_entry);
     void ReadAt(const protocol::SharedLogMessage& request);
@@ -106,10 +108,10 @@ public:
     void LogEntriesPersisted(uint64_t new_position);
 
     struct ReadResult {
-        enum Status { kLookupJournal, kLookupDB, kFailed };
+        enum Status { kInlined, kLookupDB, kFailed };
         Status                     status;
         uint64_t                   localid{0};
-        JournalRecord              journal_record;
+        LogData                    data;
         protocol::SharedLogMessage original_request;
     };
     using ReadResultVec = absl::InlinedVector<ReadResult, 4>;
@@ -150,6 +152,8 @@ private:
 
     void AdvanceShardProgress(uint16_t engine_id);
     void ShrinkLiveEntriesIfNeeded();
+
+    static void ClearLogData(LogData* data);
 
     DISALLOW_COPY_AND_ASSIGN(LogStorage);
 };

@@ -46,8 +46,8 @@ private:
                              protocol::SharedLogMessage* response,
                              const LogEntry& log_entry);
 
-    LogEntry ReadLogEntryFromJournal(uint64_t seqnum, uint64_t localid,
-                                     const JournalRecord& journal_record);
+    LogEntry ReadInlinedLogEntry(uint64_t seqnum, uint64_t localid,
+                                 const LogStorage::LogData& data);
 
     void SendShardProgressIfNeeded() override;
     void FlushLogEntries(std::span<const LogStorage::Entry*> entries) override;
