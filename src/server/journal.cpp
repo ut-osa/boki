@@ -17,6 +17,7 @@ namespace server {
 JournalFile::JournalFile(IOWorker* owner, int file_id)
     : state_(kEmpty),
       owner_(owner),
+      file_id_(file_id),
       fd_(-1),
       appended_bytes_(0),
       flushed_bytes_(0),
@@ -123,8 +124,7 @@ void JournalFile::RefBecomesZero() {
 
 void JournalFile::Create(int file_id) {
     std::string file_path = fs_utils::JoinPath(
-        absl::GetFlag(FLAGS_journal_save_path),
-        fmt::format("{}.{}", owner_->worker_name(), file_id));
+        absl::GetFlag(FLAGS_journal_save_path), fmt::format("{}", file_id));
     if (auto fd = fs_utils::Create(file_path); fd) {
         PCHECK(close(fd.value()) == 0) << "Failed to close file";
     } else {

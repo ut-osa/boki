@@ -11,6 +11,7 @@ namespace faas {
 namespace server {
 
 class IOWorker;
+class ServerBase;
 
 class ConnectionBase : public std::enable_shared_from_this<ConnectionBase> {
 public:
@@ -56,7 +57,7 @@ public:
     // Return current IOWorker within event loop thread
     static IOWorker* current() { return current_; }
 
-    void Start(int pipe_to_server_fd, bool enable_journal);
+    void Start(ServerBase* server, int pipe_to_server_fd, bool enable_journal);
     void ScheduleStop();
     void WaitForFinish();
     bool WithinMyEventLoopThread();
@@ -93,10 +94,7 @@ public:
 
     using JournalAppendCallback = JournalFile::AppendCallback;
     void JournalAppend(uint16_t type,
-                       std::span<const char> payload,
-                       JournalAppendCallback cb);
-    void JournalAppend(uint16_t type,
-                       std::span<const char> payload1, std::span<const char> payload2,
+                       std::initializer_list<std::span<const char>> payload_vec,
                        JournalAppendCallback cb);
     void JournalMonitorCallback();
 
@@ -107,6 +105,8 @@ private:
     std::atomic<State> state_;
     IOUring io_uring_;
     static thread_local IOWorker* current_;
+
+    ServerBase* server_;
 
     int eventfd_;
     int pipe_to_server_fd_;

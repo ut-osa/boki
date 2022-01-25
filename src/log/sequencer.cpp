@@ -255,7 +255,7 @@ void Sequencer::OnRecvNewMetaLogs(const SharedLogMessage& message,
         IGNORE_IF_FROM_PAST_VIEW(message);
     }
     CurrentIOWorkerChecked()->JournalAppend(
-        kMetalogBackupJournalRecordType, payload,
+        kMetalogBackupJournalRecordType, {payload},
         [this, metalogs_proto] (server::JournalFile* /* journal_file */,
                                 size_t /* offset */) {
             StoreMetaLogAsBackup(metalogs_proto);
@@ -324,7 +324,7 @@ void Sequencer::StoreMetaLogAsPrimary(const View* view, MetaLogProto meta_log_pr
     std::string serialized;
     CHECK(meta_log_proto.SerializeToString(&serialized));
     CurrentIOWorkerChecked()->JournalAppend(
-        kMetalogPrimaryJournalRecordType, STRING_AS_SPAN(serialized),
+        kMetalogPrimaryJournalRecordType, {STRING_AS_SPAN(serialized)},
         [update_progress_fn] (server::JournalFile* /* journal_file */,
                               size_t /* offset */) {
             update_progress_fn();

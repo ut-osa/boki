@@ -46,6 +46,8 @@ protected:
     Timer* CreateTimer(int timer_type, IOWorker* io_worker, Timer::Callback cb);
     void CreatePeriodicTimer(int timer_type, absl::Duration interval, Timer::Callback cb);
 
+    int NextJournalFileID();
+
     // Supposed to be implemented by sub-class
     virtual void StartInternal() = 0;
     virtual void StopInternal() = 0;
@@ -57,6 +59,8 @@ protected:
     static int GetEgressHubTypeId(protocol::ConnType conn_type, uint16_t node_id);
 
 private:
+    friend class IOWorker;
+
     std::string node_name_;
     bool enable_journal_;
 
@@ -75,6 +79,8 @@ private:
     absl::flat_hash_map</* conn_type */ int, size_t> next_io_worker_id_;
     std::atomic<int> next_connection_id_;
     absl::flat_hash_set<std::unique_ptr<Timer>> timers_;
+
+    std::atomic<int> next_journal_file_id_;
 
     void SetupIOWorkers();
     void SetupMessageServer();

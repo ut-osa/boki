@@ -30,7 +30,8 @@ ServerBase::ServerBase(std::string_view node_name, bool enable_journal)
       zk_session_(absl::GetFlag(FLAGS_zookeeper_host),
                   absl::GetFlag(FLAGS_zookeeper_root_path)),
       next_io_worker_for_pick_(0),
-      next_connection_id_(0) {
+      next_connection_id_(0),
+      next_journal_file_id_(0) {
     PCHECK(stop_eventfd_ >= 0) << "Failed to create eventfd";
     PCHECK(stat_timerfd_ >= 0) << "Failed to create timerfd";
     if (enable_journal_) {
@@ -176,7 +177,7 @@ void ServerBase::SetupIOWorkers() {
         if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pipe_fds) < 0) {
             PLOG(FATAL) << "socketpair failed";
         }
-        io_worker->Start(pipe_fds[1], enable_journal_);
+        io_worker->Start(this, pipe_fds[1], enable_journal_);
         pipes_to_io_worker_[io_worker.get()] = pipe_fds[0];
         io_workers_.push_back(std::move(io_worker));
     }
@@ -339,6 +340,11 @@ void ServerBase::CreatePeriodicTimer(int timer_type, absl::Duration interval,
         timers_.insert(absl::WrapUnique(timer));
         initial += interval;
     });
+}
+
+int ServerBase::NextJournalFileID() {
+    DCHECK(enable_journal_);
+    return next_journal_file_id_.fetch_add(1, std::memory_order_relaxed);
 }
 
 namespace {

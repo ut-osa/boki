@@ -2,6 +2,7 @@
 
 #include "common/flags.h"
 #include "server/constants.h"
+#include "server/server_base.h"
 #include "utils/fs.h"
 
 #include <sys/eventfd.h>
@@ -16,8 +17,12 @@ IOUring* ConnectionBase::current_io_uring() {
 thread_local IOWorker* IOWorker::current_ = nullptr;
 
 IOWorker::IOWorker(std::string_view worker_name)
-    : worker_name_(worker_name), state_(kCreated), io_uring_(),
-      eventfd_(-1), pipe_to_server_fd_(-1),
+    : worker_name_(worker_name),
+      state_(kCreated),
+      io_uring_(),
+      server_(nullptr),
+      eventfd_(-1),
+      pipe_to_server_fd_(-1),
       log_header_(fmt::format("{}: ", worker_name)),
       event_loop_thread_(fmt::format("{}/EL", worker_name),
                          absl::bind_front(&IOWorker::EventLoopThreadMain, this)),
@@ -33,8 +38,9 @@ IOWorker::~IOWorker() {
     DCHECK_EQ(connections_on_closing_, 0);
 }
 
-void IOWorker::Start(int pipe_to_server_fd, bool enable_journal) {
+void IOWorker::Start(ServerBase* server, int pipe_to_server_fd, bool enable_journal) {
     DCHECK(state_.load() == kCreated);
+    server_ = server;
     // Setup eventfd for scheduling functions
     eventfd_ = eventfd(0, EFD_CLOEXEC);
     PCHECK(eventfd_ >= 0) << "Failed to create eventfd";
@@ -287,23 +293,13 @@ void IOWorker::CloseWorkerFds() {
 }
 
 void IOWorker::JournalAppend(uint16_t type,
-                             std::span<const char> payload,
+                             std::initializer_list<std::span<const char>> payload_vec,
                              JournalAppendCallback cb) {
     DCHECK(WithinMyEventLoopThread());
     if (current_journal_file_ == nullptr) {
         HLOG(FATAL) << "Journal not enabled!";
     }
-    current_journal_file_->AppendRecord(type, {payload}, std::move(cb));
-}
-
-void IOWorker::JournalAppend(uint16_t type,
-                             std::span<const char> payload1, std::span<const char> payload2,
-                             JournalAppendCallback cb) {
-    DCHECK(WithinMyEventLoopThread());
-    if (current_journal_file_ == nullptr) {
-        HLOG(FATAL) << "Journal not enabled!";
-    }
-    current_journal_file_->AppendRecord(type, {payload1, payload2}, std::move(cb));
+    current_journal_file_->AppendRecord(type, payload_vec, std::move(cb));
 }
 
 void IOWorker::JournalMonitorCallback() {
@@ -321,7 +317,7 @@ void IOWorker::JournalMonitorCallback() {
 }
 
 JournalFile* IOWorker::CreateNewJournalFile() {
-    int file_id = next_journal_file_id_++;
+    int file_id = server_->NextJournalFileID();
     JournalFile* journal_file = new JournalFile(this, file_id);
     journal_files_[file_id] = absl::WrapUnique(journal_file);
     return journal_file;

@@ -216,7 +216,7 @@ void Storage::HandleReplicateRequest(const SharedLogMessage& message,
 
     CurrentIOWorkerChecked()->JournalAppend(
         kLogEntryJournalRecordType,
-        VAR_AS_CHAR_SPAN(message, SharedLogMessage), payload,
+        {VAR_AS_CHAR_SPAN(message, SharedLogMessage), payload},
         callback);
 }
 

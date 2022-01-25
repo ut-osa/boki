@@ -16,6 +16,7 @@ public:
     ~JournalFile();
 
     IOWorker* owner() const { return owner_; }
+    int file_id() const { return file_id_; }
     std::string_view file_path() const { return file_path_; }
     int fd() const { return fd_; }
     bool closed() const { return current_state() == kClosed; }
@@ -38,6 +39,7 @@ private:
 
     std::atomic<State> state_;
     IOWorker* owner_;
+    int file_id_;
     std::string file_path_;
     int fd_;
 
