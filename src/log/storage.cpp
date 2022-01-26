@@ -263,10 +263,18 @@ void Storage::OnRecvNewMetaLogs(const SharedLogMessage& message,
         SendIndexData(DCHECK_NOTNULL(view), *index_data);
     }
     if (!new_log_entires.empty()) {
-        if (journal_enabled()) {
-            // TODO
-            NOT_IMPLEMENTED();
-        } else {
+        for (const auto& entry : new_log_entires) {
+            StorageIndexer::Record indexer_record;
+            indexer_record.seqnum = entry->metadata.seqnum;
+            indexer_record.user_logspace = entry->metadata.user_logspace;
+            if (journal_enabled()) {
+                const JournalRecord& journal_record = std::get<JournalRecord>(entry->data);
+                indexer_record.journal_file_id = journal_record.file->file_id();
+                indexer_record.journal_offset = journal_record.offset;
+            }
+            indexer()->Put(indexer_record);
+        }
+        if (db_enabled()) {
             db_flusher()->PushLogEntriesForFlush(
                 gsl::make_span(new_log_entires.data(), new_log_entires.size()));
         }
@@ -307,8 +315,7 @@ void Storage::ProcessReadResults(const LogStorage::ReadResultVec& results) {
             break;
         case LogStorage::ReadResult::kLookupDB:
             if (journal_enabled()) {
-                // TODO
-                NOT_IMPLEMENTED();
+                ProcessReadFromJournal(request);
             } else {
                 ProcessReadFromDB(request);
             }
@@ -325,8 +332,13 @@ void Storage::ProcessReadResults(const LogStorage::ReadResultVec& results) {
     }
 }
 
+void Storage::ProcessReadFromJournal(const SharedLogMessage& request) {
+    // TODO
+    NOT_IMPLEMENTED();
+}
+
 void Storage::ProcessReadFromDB(const SharedLogMessage& request) {
-    DCHECK(!journal_enabled());
+    DCHECK(db_enabled());
     uint64_t seqnum = bits::JoinTwo32(request.logspace_id, request.seqnum_lowhalf);
     LogEntryProto log_entry_proto;
     if (auto tmp = GetLogEntryFromDB(seqnum); tmp.has_value()) {
@@ -459,7 +471,7 @@ void Storage::SendShardProgressIfNeeded() {
 }
 
 void Storage::FlushLogEntries(std::span<const LogStorage::Entry*> entries) {
-    DCHECK(!journal_enabled());
+    DCHECK(db_enabled());
     HVLOG_F(1, "Going to flush {} entries to DB", entries.size());
     absl::flat_hash_set<uint32_t> logspace_ids;
     for (const LogStorage::Entry* entry : entries) {
@@ -482,7 +494,7 @@ void Storage::FlushLogEntries(std::span<const LogStorage::Entry*> entries) {
 }
 
 void Storage::CommitLogEntries(std::span<const LogStorage::Entry*> entries) {
-    DCHECK(!journal_enabled());
+    DCHECK(db_enabled());
     HVLOG_F(1, "Will commit the persistence of {} entries", entries.size());
 
     absl::flat_hash_map<uint32_t, uint64_t> new_positions;

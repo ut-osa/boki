@@ -34,6 +34,7 @@ private:
                           std::span<const char> payload) override;
 
     void ProcessReadResults(const LogStorage::ReadResultVec& results);
+    void ProcessReadFromJournal(const protocol::SharedLogMessage& request);
     void ProcessReadFromDB(const protocol::SharedLogMessage& request);
     void ProcessRequests(const std::vector<SharedLogRequest>& requests);
 

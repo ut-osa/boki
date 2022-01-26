@@ -33,14 +33,15 @@ void StorageBase::StartInternal() {
     SetupZKWatchers();
     SetupTimers();
     log_cache_.emplace(absl::GetFlag(FLAGS_slog_storage_cache_cap_mb));
-    if (!journal_enabled()) {
+    if (db_enabled()) {
         SetupDB();
         db_flusher_.emplace(this, absl::GetFlag(FLAGS_slog_storage_flusher_threads));
     }
+    indexer_.emplace(db_path_, journal_enabled());
 }
 
 void StorageBase::StopInternal() {
-    if (!journal_enabled()) {
+    if (db_enabled()) {
         db_flusher()->SignalAllThreads();
         db_flusher()->JoinAllThreads();
     }

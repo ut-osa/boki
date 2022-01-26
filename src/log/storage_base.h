@@ -8,6 +8,7 @@
 #include "log/db.h"
 #include "log/cache.h"
 #include "log/log_space.h"
+#include "log/storage_indexer.h"
 #include "server/server_base.h"
 #include "server/ingress_connection.h"
 #include "server/egress_hub.h"
@@ -43,6 +44,8 @@ protected:
     virtual void FlushLogEntries(std::span<const LogStorage::Entry*> entries) = 0;
     virtual void CommitLogEntries(std::span<const LogStorage::Entry*> entries) = 0;
     virtual void SendShardProgressIfNeeded() = 0;
+
+    bool db_enabled() { return !journal_enabled(); }
 
     inline DBInterface* log_db() { return DCHECK_NOTNULL(db_.get()); }
 
@@ -108,6 +111,11 @@ protected:
         return &db_flusher_.value();
     }
 
+    inline StorageIndexer* indexer() {
+        DCHECK(indexer_.has_value());
+        return &indexer_.value();
+    }
+
 private:
     const uint16_t node_id_;
 
@@ -123,8 +131,9 @@ private:
     absl::flat_hash_map</* id */ int, std::unique_ptr<server::EgressHub>>
         egress_hubs_ ABSL_GUARDED_BY(conn_mu_);
 
-    std::optional<LRUCache> log_cache_;
-    std::optional<DBFlusher> db_flusher_;
+    std::optional<LRUCache>       log_cache_;
+    std::optional<DBFlusher>      db_flusher_;
+    std::optional<StorageIndexer> indexer_;
 
     void SetupDB();
     void SetupZKWatchers();
