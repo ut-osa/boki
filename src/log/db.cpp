@@ -314,11 +314,11 @@ std::optional<std::string> TkrzwDBMBackend::Get(uint32_t logspace_id, uint32_t k
     std::string key_str = bits::HexStr(key);
     std::string data;
     auto status = dbm->Get(key_str, &data);
-    if (status.IsOK()) {
-        return data;
-    } else {
+    if (status == tkrzw::Status::NOT_FOUND_ERROR) {
         return std::nullopt;
     }
+    TKRZW_CHECK_OK(status, Get);
+    return data;
 }
 
 void TkrzwDBMBackend::PutBatch(const Batch& batch) {

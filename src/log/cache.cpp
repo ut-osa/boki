@@ -7,6 +7,14 @@ __END_THIRD_PARTY_HEADERS
 
 ABSL_FLAG(bool, enforce_cache_miss_for_debug, false, "");
 
+#define TKRZW_CHECK_OK(STATUS_VAR, OP_NAME)                 \
+    do {                                                    \
+        if (!(STATUS_VAR).IsOK()) {                         \
+            LOG(FATAL) << "Tkrzw::" #OP_NAME " failed: "    \
+                       << tkrzw::ToString(STATUS_VAR);      \
+        }                                                   \
+    } while (0)
+
 namespace faas {
 namespace log {
 
@@ -70,7 +78,12 @@ void LRUCache::PutBySeqnum(const LogMetaData& log_metadata,
                            std::span<const uint64_t> user_tags,
                            std::span<const char> log_data) {
     std::string data = EncodeLogEntry(log_metadata, user_tags, log_data);
-    dbm_->Set(seqnum_key(log_metadata.seqnum), data, /* overwrite= */ false);
+    auto status = dbm_->Set(seqnum_key(log_metadata.seqnum), data,
+                            /* overwrite= */ false);
+    if (status == tkrzw::Status::DUPLICATION_ERROR) {
+        return;
+    }
+    TKRZW_CHECK_OK(status, Set);
 }
 
 void LRUCache::PutBySeqnum(const LogEntry& log_entry) {
@@ -85,14 +98,14 @@ std::optional<LogEntry> LRUCache::GetBySeqnum(uint64_t seqnum) {
     }
     std::string data;
     auto status = dbm_->Get(seqnum_key(seqnum), &data);
-    if (status.IsOK()) {
-        LogEntry log_entry;
-        DecodeLogEntry(std::move(data), &log_entry);
-        DCHECK_EQ(seqnum, log_entry.metadata.seqnum);
-        return log_entry;
-    } else {
+    if (status == tkrzw::Status::NOT_FOUND_ERROR) {
         return std::nullopt;
     }
+    TKRZW_CHECK_OK(status, Get);
+    LogEntry log_entry;
+    DecodeLogEntry(std::move(data), &log_entry);
+    DCHECK_EQ(seqnum, log_entry.metadata.seqnum);
+    return log_entry;
 }
 
 void LRUCache::PutByLocalId(const LogMetaData& log_metadata,
@@ -100,8 +113,12 @@ void LRUCache::PutByLocalId(const LogMetaData& log_metadata,
                             std::span<const char> log_data) {
     uint32_t logspace_id = bits::HighHalf64(log_metadata.seqnum);
     std::string data = EncodeLogEntry(log_metadata, user_tags, log_data);
-    dbm_->Set(localid_key(logspace_id, log_metadata.localid), data,
-              /* overwrite= */ false);
+    auto status = dbm_->Set(localid_key(logspace_id, log_metadata.localid), data,
+                            /* overwrite= */ false);
+    if (status == tkrzw::Status::DUPLICATION_ERROR) {
+        return;
+    }
+    TKRZW_CHECK_OK(status, Set);
 }
 
 void LRUCache::PutByLocalId(const LogEntry& log_entry) {
@@ -116,14 +133,14 @@ std::optional<LogEntry> LRUCache::GetByLocalId(uint32_t logspace_id, uint64_t lo
     }
     std::string data;
     auto status = dbm_->Get(localid_key(logspace_id, localid), &data);
-    if (status.IsOK()) {
-        LogEntry log_entry;
-        DecodeLogEntry(std::move(data), &log_entry);
-        DCHECK_EQ(localid, log_entry.metadata.localid);
-        return log_entry;
-    } else {
+    if (status == tkrzw::Status::NOT_FOUND_ERROR) {
         return std::nullopt;
     }
+    TKRZW_CHECK_OK(status, Get);
+    LogEntry log_entry;
+    DecodeLogEntry(std::move(data), &log_entry);
+    DCHECK_EQ(localid, log_entry.metadata.localid);
+    return log_entry;
 }
 
 void LRUCache::PutAuxData(uint64_t seqnum, std::span<const char> data) {
@@ -134,11 +151,11 @@ void LRUCache::PutAuxData(uint64_t seqnum, std::span<const char> data) {
 std::optional<std::string> LRUCache::GetAuxData(uint64_t seqnum) {
     std::string data;
     auto status = dbm_->Get(aux_data_key(seqnum), &data);
-    if (status.IsOK()) {
-        return data;
-    } else {
+    if (status == tkrzw::Status::NOT_FOUND_ERROR) {
         return std::nullopt;
     }
+    TKRZW_CHECK_OK(status, Get);
+    return data;
 }
 
 }  // namespace log
