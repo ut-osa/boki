@@ -277,6 +277,8 @@ void Storage::OnRecvNewMetaLogs(const SharedLogMessage& message,
         if (db_enabled()) {
             db_flusher()->PushLogEntriesForFlush(
                 gsl::make_span(new_log_entires.data(), new_log_entires.size()));
+        } else {
+            CommitLogEntries(new_log_entires);
         }
     }
 }
@@ -519,7 +521,6 @@ void Storage::FlushLogEntries(std::span<const LogStorage::Entry*> entries) {
 }
 
 void Storage::CommitLogEntries(std::span<const LogStorage::Entry*> entries) {
-    DCHECK(db_enabled());
     HVLOG_F(1, "Will commit the persistence of {} entries", entries.size());
 
     absl::flat_hash_map<uint32_t, uint64_t> new_positions;
