@@ -12,6 +12,7 @@
 #include "server/server_base.h"
 #include "server/ingress_connection.h"
 #include "server/egress_hub.h"
+#include "server/journal.h"
 
 namespace faas {
 namespace log {
@@ -116,6 +117,8 @@ protected:
         return &indexer_.value();
     }
 
+    std::optional<server::JournalFileRef> GetJournalFile(int file_id);
+
 private:
     const uint16_t node_id_;
 
@@ -131,6 +134,10 @@ private:
     absl::flat_hash_map</* id */ int, std::unique_ptr<server::EgressHub>>
         egress_hubs_ ABSL_GUARDED_BY(conn_mu_);
 
+    absl::Mutex journal_file_mu_;
+    absl::flat_hash_map</* file_id */ int, server::JournalFileRef>
+        journal_files_ ABSL_GUARDED_BY(journal_file_mu_);
+
     std::optional<LRUCache>       log_cache_;
     std::optional<DBFlusher>      db_flusher_;
     std::optional<StorageIndexer> indexer_;
@@ -144,6 +151,8 @@ private:
     void OnConnectionClose(server::ConnectionBase* connection) override;
     void OnRemoteMessageConn(const protocol::HandshakeMessage& handshake,
                              int sockfd) override;
+
+    void OnNewJournalFile(server::JournalFile* file) override;
 
     void OnRecvSharedLogMessage(int conn_type, uint16_t src_node_id,
                                 const protocol::SharedLogMessage& message,

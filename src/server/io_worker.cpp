@@ -320,6 +320,7 @@ JournalFile* IOWorker::CreateNewJournalFile() {
     int file_id = server_->NextJournalFileID();
     JournalFile* journal_file = new JournalFile(this, file_id);
     journal_files_[file_id] = absl::WrapUnique(journal_file);
+    server_->OnNewJournalFile(journal_file);
     return journal_file;
 }
 

@@ -333,8 +333,32 @@ void Storage::ProcessReadResults(const LogStorage::ReadResultVec& results) {
 }
 
 void Storage::ProcessReadFromJournal(const SharedLogMessage& request) {
-    // TODO
-    NOT_IMPLEMENTED();
+    DCHECK(journal_enabled());
+    uint64_t seqnum = bits::JoinTwo32(request.logspace_id, request.seqnum_lowhalf);
+    int file_id;
+    size_t offset;
+    bool found = indexer()->GetJournalLocation(seqnum, &file_id, &offset);
+    if (!found) {
+        HLOG_F(ERROR, "Failed to found entry (seqnum={}) in the index",
+               bits::HexStr0x(seqnum));
+        SharedLogMessage response = SharedLogMessageHelper::NewDataLostResponse();
+        SendEngineResponse(request, &response);
+        return;
+    }
+    auto journal_file = GetJournalFile(file_id);
+    if (!journal_file.has_value()) {
+        HLOG_F(FATAL, "Cannot file journal file with id {}", file_id);
+    }
+    SharedLogMessage response = SharedLogMessageHelper::NewReadOkResponse(
+        request.user_metalog_progress);
+    JournalRecord record = {
+        .file = std::move(journal_file.value()),
+        .offset = offset,
+    };
+    LogEntry log_entry = log_utils::ReadLogEntryFromJournal(seqnum, record);
+    VALIDATE_LOG_ENTRY(log_entry);
+    SendEngineLogResult(request, &response, log_entry);
+    log_cache()->PutBySeqnum(log_entry);
 }
 
 void Storage::ProcessReadFromDB(const SharedLogMessage& request) {

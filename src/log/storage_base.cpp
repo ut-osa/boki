@@ -68,10 +68,12 @@ void StorageBase::SetupZKWatchers() {
     view_watcher_.SetViewCreatedCallback(
         [this] (const View* view) {
             this->OnViewCreated(view);
-            // TODO: This is not always safe, try fix it
-            for (uint16_t sequencer_id : view->GetSequencerNodes()) {
-                if (view->is_active_phylog(sequencer_id)) {
-                    db_->InstallLogSpace(bits::JoinTwo16(view->id(), sequencer_id));
+            if (db_enabled()) {
+                // TODO: This is not always safe, try fix it
+                for (uint16_t sequencer_id : view->GetSequencerNodes()) {
+                    if (view->is_active_phylog(sequencer_id)) {
+                        db_->InstallLogSpace(bits::JoinTwo16(view->id(), sequencer_id));
+                    }
                 }
             }
         }
@@ -113,6 +115,7 @@ void StorageBase::MessageHandler(const SharedLogMessage& message,
 }
 
 std::optional<LogEntryProto> StorageBase::GetLogEntryFromDB(uint64_t seqnum) {
+    DCHECK(db_enabled());
     auto data = db_->Get(bits::HighHalf64(seqnum), bits::LowHalf64(seqnum));
     if (!data.has_value()) {
         return std::nullopt;
@@ -274,6 +277,22 @@ EgressHub* StorageBase::CreateEgressHub(protocol::ConnType conn_type,
         egress_hubs_[egress_hub->id()] = std::move(egress_hub);
     }
     return hub;
+}
+
+std::optional<server::JournalFileRef> StorageBase::GetJournalFile(int file_id) {
+    DCHECK(journal_enabled());
+    absl::ReaderMutexLock lk(&journal_file_mu_);
+    if (journal_files_.contains(file_id)) {
+        return journal_files_.at(file_id);
+    } else {
+        return std::nullopt;
+    }
+}
+
+void StorageBase::OnNewJournalFile(server::JournalFile* file) {
+    DCHECK(journal_enabled());
+    absl::MutexLock lk(&journal_file_mu_);
+    journal_files_[file->file_id()] = file->MakeAccessor();
 }
 
 StorageBase::DBFlusher::DBFlusher(StorageBase* storage, size_t num_worker_threads)

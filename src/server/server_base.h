@@ -11,6 +11,8 @@
 namespace faas {
 namespace server {
 
+class JournalFile;
+
 class ServerBase {
 public:
     ServerBase(std::string_view node_name, bool enable_journal);
@@ -47,6 +49,7 @@ protected:
     void CreatePeriodicTimer(int timer_type, absl::Duration interval, Timer::Callback cb);
 
     int NextJournalFileID();
+    virtual void OnNewJournalFile(JournalFile* file) {}
 
     // Supposed to be implemented by sub-class
     virtual void StartInternal() = 0;
