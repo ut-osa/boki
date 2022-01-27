@@ -323,7 +323,7 @@ void Index::OnMetaLogApplied(const MetaLogProto& meta_log_proto) {
         break;
     case MetaLogProto::TRIM:
         HVLOG_F(1, "Receive trim metalog entry: metalog_seqnum={}",
-                meta_log_proto.metalog_seqnum());
+                bits::HexStr0x(meta_log_proto.metalog_seqnum()));
         metalog.type = MetaLog::kTrim;
         {
             const auto& trim_proto = meta_log_proto.trim_proto();
@@ -505,7 +505,7 @@ void Index::ProcessReadPrev(const IndexQuery& query) {
     if (found) {
         pending_query_results_.push_back(
             BuildFoundResult(query, view_->id(), result.seqnum, result.engine_id));
-        HVLOG_F(1, "ProcessReadPrev: FoundResult: seqnum={}", result.seqnum);
+        HVLOG_F(1, "ProcessReadPrev: FoundResult: seqnum={}", bits::HexStr0x(result.seqnum));
     } else if (view_->id() > log_utils::GetViewId(trim_seqnum)) {
         pending_query_results_.push_back(
             BuildContinueResult(query, false, 0, 0, trim_seqnum));
