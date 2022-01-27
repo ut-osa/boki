@@ -453,6 +453,7 @@ LogEntry Storage::ReadInlinedLogEntry(uint64_t seqnum, uint64_t localid,
         log_utils::SplitPayloadForMessage(*message, payload, &user_tags, &log_data,
                                           /* aux_data= */ nullptr);
         log_entry.metadata = log_utils::GetMetaDataFromMessage(*message);
+        log_entry.metadata.seqnum = seqnum;
         log_entry.user_tags.assign(user_tags.begin(), user_tags.end());
         log_entry.data.assign(log_data.data(), log_data.size());
     }
