@@ -24,6 +24,8 @@ public:
         std::vector<std::string> data;
     };
     virtual void PutBatch(const Batch& batch) = 0;
+
+    virtual void Delete(uint32_t logspace_id, std::span<const uint32_t> keys) = 0;
 };
 
 class RocksDBBackend final : public DBInterface {
@@ -34,6 +36,7 @@ public:
     void InstallLogSpace(uint32_t logspace_id) override;
     std::optional<std::string> Get(uint32_t logspace_id, uint32_t key) override;
     void PutBatch(const Batch& batch) override;
+    void Delete(uint32_t logspace_id, std::span<const uint32_t> keys) override;
 
 private:
     std::unique_ptr<rocksdb::DB> db_;
@@ -55,6 +58,7 @@ public:
     void InstallLogSpace(uint32_t logspace_id) override;
     std::optional<std::string> Get(uint32_t logspace_id, uint32_t key) override;
     void PutBatch(const Batch& batch) override;
+    void Delete(uint32_t logspace_id, std::span<const uint32_t> keys) override;
 
 private:
     std::string db_path_;
@@ -79,6 +83,7 @@ public:
     void InstallLogSpace(uint32_t logspace_id) override;
     std::optional<std::string> Get(uint32_t logspace_id, uint32_t key) override;
     void PutBatch(const Batch& batch) override;
+    void Delete(uint32_t logspace_id, std::span<const uint32_t> keys) override;
 
 private:
     Type type_;

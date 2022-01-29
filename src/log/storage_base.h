@@ -43,13 +43,13 @@ protected:
     virtual void OnRecvLogAuxData(const protocol::SharedLogMessage& message,
                                   std::span<const char> payload) = 0;
 
-    virtual void FlushLogEntries(std::span<const LogStorage::Entry*> entries) = 0;
-    virtual void CommitLogEntries(std::span<const LogStorage::Entry*> entries) = 0;
+    virtual void FlushLogEntries(std::span<const LogStorage::Entry* const> entries) = 0;
+    virtual void CommitLogEntries(std::span<const LogStorage::Entry* const> entries) = 0;
     virtual void SendShardProgressIfNeeded() = 0;
     virtual void CollectLogTrimOps() = 0;
+    void TrimLogEntries(std::span<const uint64_t> seqnums);
 
-    bool db_enabled() { return !journal_enabled(); }
-
+    inline bool db_enabled() { return !journal_enabled(); }
     inline DBInterface* log_db() { return DCHECK_NOTNULL(db_.get()); }
 
     inline LRUCache* log_cache() {

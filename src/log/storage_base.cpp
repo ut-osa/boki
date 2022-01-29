@@ -132,6 +132,18 @@ std::optional<LogEntryProto> StorageBase::GetLogEntryFromDB(uint64_t seqnum) {
     return log_entry_proto;
 }
 
+void StorageBase::TrimLogEntries(std::span<const uint64_t> seqnums) {
+    DCHECK(db_enabled());
+    absl::flat_hash_map</* logspace_id */ uint32_t, std::vector<uint32_t>> grouped;
+    for (uint64_t seqnum : seqnums) {
+        uint32_t logspace_id = bits::HighHalf64(seqnum);
+        grouped[logspace_id].push_back(bits::LowHalf64(seqnum));
+    }
+    for (const auto& [logspace_id, keys] : grouped) {
+        db_->Delete(logspace_id, VECTOR_AS_SPAN(keys));
+    }
+}
+
 void StorageBase::SendIndexData(const View* view,
                                 const IndexDataProto& index_data_proto) {
     uint32_t logspace_id = index_data_proto.logspace_id();

@@ -136,6 +136,21 @@ void RocksDBBackend::PutBatch(const Batch& batch) {
     ROCKSDB_CHECK_OK(status, Write);
 }
 
+void RocksDBBackend::Delete(uint32_t logspace_id, std::span<const uint32_t> keys) {
+    rocksdb::ColumnFamilyHandle* cf_handle = GetCFHandle(logspace_id);
+    if (cf_handle == nullptr) {
+        HLOG_F(ERROR, "Log space {} not created", bits::HexStr0x(logspace_id));
+        return;
+    }
+    rocksdb::WriteBatch write_batch;
+    for (size_t i = 0; i < keys.size(); i++) {
+        std::string key_str = bits::HexStr(keys[i]);
+        write_batch.Delete(cf_handle, key_str);
+    }
+    auto status = db_->Write(rocksdb::WriteOptions(), &write_batch);
+    ROCKSDB_CHECK_OK(status, Write);
+}
+
 rocksdb::ColumnFamilyHandle* RocksDBBackend::GetCFHandle(uint32_t logspace_id) {
     absl::ReaderMutexLock lk(&mu_);
     if (!column_families_.contains(logspace_id)) {
@@ -242,6 +257,31 @@ void LMDBBackend::PutBatch(const Batch& batch) {
     LMDB_CHECK_OK(ret, TxnCommit);
 }
 
+void LMDBBackend::Delete(uint32_t logspace_id, std::span<const uint32_t> keys) {
+    NOT_IMPLEMENTED();
+     MDB_dbi dbi;
+    if (auto tmp = GetDB(logspace_id); tmp.has_value()) {
+        dbi = tmp.value();
+    } else {
+        HLOG_F(WARNING, "Log space {} not created", bits::HexStr0x(logspace_id));
+        return;
+    }
+    int ret = 0;
+    MDB_txn* txn;
+    ret = mdb_txn_begin(env_, /* parent= */ nullptr, /* flags= */ 0, &txn);
+    LMDB_CHECK_OK(ret, TxnBegin);
+    for (size_t i = 0; i < keys.size(); i++) {
+        MDB_val mdb_key {
+            .mv_size = sizeof(uint32_t),
+            .mv_data = const_cast<uint32_t*>(&keys[i])
+        };
+        ret = mdb_del(txn, dbi, &mdb_key, /* data= */ nullptr);
+        LMDB_CHECK_OK(ret, Put);
+    }
+    ret = mdb_txn_commit(txn);
+    LMDB_CHECK_OK(ret, TxnCommit);
+}
+
 std::optional<MDB_dbi> LMDBBackend::GetDB(uint32_t logspace_id) {
     absl::ReaderMutexLock lk(&mu_);
     if (!dbs_.contains(logspace_id)) {
@@ -328,15 +368,27 @@ void TkrzwDBMBackend::PutBatch(const Batch& batch) {
         HLOG_F(ERROR, "Log space {} not created", bits::HexStr0x(batch.logspace_id));
         return;
     }
-    std::map</* key */ std::string_view, /* value */ std::string_view> records;
-    std::vector<std::string> key_strs;
-    key_strs.reserve(batch.keys.size());
     for (size_t i = 0; i < batch.keys.size(); i++) {
-        key_strs.push_back(bits::HexStr(batch.keys[i]));
-        records[std::string_view(key_strs.back())] = std::string_view(batch.data[i]);
+        auto status = dbm->Set(bits::HexStr(batch.keys[i]), batch.data[i]);
+        TKRZW_CHECK_OK(status, Set);
     }
-    auto status = dbm->SetMulti(records);
-    TKRZW_CHECK_OK(status, SetMulti);
+}
+
+void TkrzwDBMBackend::Delete(uint32_t logspace_id, std::span<const uint32_t> keys) {
+    tkrzw::DBM* dbm = GetDBM(logspace_id);
+    if (dbm == nullptr) {
+        HLOG_F(ERROR, "Log space {} not created", bits::HexStr0x(logspace_id));
+        return;
+    }
+    for (uint32_t key : keys) {
+        auto status = dbm->Remove(bits::HexStr(key));
+        if (status == tkrzw::Status::NOT_FOUND_ERROR) {
+            HLOG_F(WARNING, "Failed to find seqnum {} in DB",
+                   bits::HexStr0x(bits::JoinTwo32(logspace_id, key)));
+            continue;
+        }
+        TKRZW_CHECK_OK(status, Remove);
+    }
 }
 
 tkrzw::DBM* TkrzwDBMBackend::GetDBM(uint32_t logspace_id) {

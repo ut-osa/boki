@@ -5,38 +5,37 @@
 namespace faas {
 namespace log {
 
-DBWorkers::DBWorkers(StorageBase* storage, size_t num_worker_threads)
+DBWorkers::DBWorkers(StorageBase* storage, size_t num_threads)
     : storage_(storage),
-      worker_threads_(num_worker_threads),
-      idle_workers_(0),
-      next_seqnum_(0),
-      commited_seqnum_(0),
-      queue_length_stat_(stat::StatisticsCollector<int>::StandardReportCallback(
-          "flush_queue_length")) {
-    for (size_t i = 0; i < num_worker_threads; i++) {
+      worker_threads_(num_threads),
+      idle_threads_(0) {
+    for (size_t i = 0; i < num_threads; i++) {
         worker_threads_[i].emplace(
             fmt::format("BG/{}", i),
             absl::bind_front(&DBWorkers::WorkerThreadMain, this, i));
         worker_threads_[i]->Start();
     }
+    flush_cq_.SetCommitFn([storage] (std::span<const LogStorage::Entry* const> entries) {
+        storage->CommitLogEntries(entries);
+    });
 }
 
 DBWorkers::~DBWorkers() {}
 
-void DBWorkers::PushLogEntriesForFlush(std::span<const LogStorage::Entry*> entries) {
-    DCHECK(!entries.empty());
+void DBWorkers::SubmitLogEntriesForFlush(std::span<const LogStorage::Entry* const> entries) {
     absl::MutexLock lk(&mu_);
-    for (const LogStorage::Entry* entry : entries) {
-        queue_.push_back(std::make_pair(next_seqnum_++, entry));
-    }
-    queue_length_stat_.AddSample(gsl::narrow_cast<int>(queue_.size()));
-    if (idle_workers_ > 0) {
+    flush_sq_.Submit(entries);
+    if (idle_threads_ > 0) {
         cv_.Signal();
     }
 }
 
-void DBWorkers::PushSeqnumsForTrim(std::span<const uint64_t> seqnums) {
-    NOT_IMPLEMENTED();
+void DBWorkers::SubmitSeqnumsForTrim(std::span<const uint64_t> seqnums) {
+    absl::MutexLock lk(&mu_);
+    trim_sq_.Submit(seqnums);
+    if (idle_threads_ > 0) {
+        cv_.Signal();
+    }
 }
 
 void DBWorkers::SignalAllThreads() {
@@ -50,51 +49,40 @@ void DBWorkers::JoinAllThreads() {
 }
 
 void DBWorkers::WorkerThreadMain(int thread_index) {
-    std::vector<const LogStorage::Entry*> entries;
-    entries.reserve(kBatchSize);
+    std::vector<const LogStorage::Entry*> log_entries;
+    std::vector<uint64_t> seqnums;
+    uint64_t starting_id;
+
     while (storage_->running()) {
         mu_.Lock();
-        while (queue_.empty()) {
-            idle_workers_++;
-            VLOG(1) << "Nothing to flush, will sleep to wait";
+        while (flush_sq_.empty() && trim_sq_.empty()) {
+            idle_threads_++;
+            VLOG(1) << "Nothing to do, will sleep to wait";
             cv_.Wait(&mu_);
             if (!storage_->running()) {
                 mu_.Unlock();
                 return;
             }
-            idle_workers_--;
-            DCHECK_GE(idle_workers_, 0);
+            idle_threads_--;
+            DCHECK_GE(idle_threads_, 0);
         }
-        uint64_t start_seqnum = queue_.front().first;
-        uint64_t end_seqnum = start_seqnum;
-        entries.clear();
-        while (entries.size() < kBatchSize && !queue_.empty()) {
-            end_seqnum = queue_.front().first + 1;
-            entries.push_back(queue_.front().second);
-            queue_.pop_front();
+        if (!flush_sq_.empty()) {
+            flush_sq_.Pull(kBatchSize, &log_entries, &starting_id);
+        } else if (!trim_sq_.empty()) {
+            trim_sq_.Pull(kBatchSize, &seqnums, &starting_id);
+        } else {
+            UNREACHABLE();
         }
         mu_.Unlock();
-
-        DCHECK_LT(start_seqnum, end_seqnum);
-        DCHECK_EQ(static_cast<size_t>(end_seqnum - start_seqnum), entries.size());
-        DCHECK_LE(entries.size(), kBatchSize);
-        storage_->FlushLogEntries(
-            std::span<const LogStorage::Entry*>(entries.data(), entries.size()));
-        {
-            absl::MutexLock lk(&commit_mu_);
-            for (size_t i = 0; i < entries.size(); i++) {
-                uint64_t seqnum = start_seqnum + static_cast<uint64_t>(i);
-                flushed_entries_[seqnum] = entries[i];
-            }
-            entries.clear();
-            auto iter = flushed_entries_.begin();
-            while (iter->first == commited_seqnum_) {
-                entries.push_back(iter->second);
-                iter = flushed_entries_.erase(iter);
-                commited_seqnum_++;
-            }
-            storage_->CommitLogEntries(
-                std::span<const LogStorage::Entry*>(entries.data(), entries.size()));
+        if (!log_entries.empty()) {
+            storage_->FlushLogEntries(VECTOR_AS_SPAN(log_entries));
+            flush_cq_.Push(VECTOR_AS_SPAN(log_entries), starting_id);
+            log_entries.clear();
+        } else if (!seqnums.empty()) {
+            storage_->TrimLogEntries(VECTOR_AS_SPAN(seqnums));
+            seqnums.clear();
+        } else {
+            UNREACHABLE();
         }
     }
     mu_.AssertNotHeld();

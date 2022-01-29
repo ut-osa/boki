@@ -275,8 +275,7 @@ void Storage::OnRecvNewMetaLogs(const SharedLogMessage& message,
             indexer()->Put(indexer_record);
         }
         if (db_enabled()) {
-            db_workers()->PushLogEntriesForFlush(
-                gsl::make_span(new_log_entires.data(), new_log_entires.size()));
+            db_workers()->SubmitLogEntriesForFlush(VECTOR_AS_SPAN(new_log_entires));
         } else {
             CommitLogEntries(new_log_entires);
         }
@@ -539,13 +538,13 @@ void Storage::CollectLogTrimOps() {
     }
     HVLOG_F(1, "Going to trim {} seqnums from DB", trimmed_seqnums.size());
     if (db_enabled()) {
-        db_workers()->PushSeqnumsForTrim(VECTOR_AS_SPAN(trimmed_seqnums));
+        db_workers()->SubmitSeqnumsForTrim(VECTOR_AS_SPAN(trimmed_seqnums));
     } else {
         // TODO: Reclaim space from journal files
     }
 }
 
-void Storage::FlushLogEntries(std::span<const LogStorage::Entry*> entries) {
+void Storage::FlushLogEntries(std::span<const LogStorage::Entry* const> entries) {
     DCHECK(db_enabled());
     HVLOG_F(1, "Going to flush {} entries to DB", entries.size());
     absl::flat_hash_set<uint32_t> logspace_ids;
@@ -568,7 +567,7 @@ void Storage::FlushLogEntries(std::span<const LogStorage::Entry*> entries) {
     }
 }
 
-void Storage::CommitLogEntries(std::span<const LogStorage::Entry*> entries) {
+void Storage::CommitLogEntries(std::span<const LogStorage::Entry* const> entries) {
     HVLOG_F(1, "Will commit the persistence of {} entries", entries.size());
 
     absl::flat_hash_map<uint32_t, uint64_t> new_positions;
