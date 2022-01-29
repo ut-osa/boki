@@ -25,8 +25,19 @@ public:
 
     bool GetJournalLocation(uint64_t seqnum, int* file_id, size_t* offset);
 
+    using SeqnumVec = absl::InlinedVector<uint64_t, 16>;
+    void TrimSeqnumsUntil(uint32_t user_logspace, uint64_t trim_seqnum,
+                          SeqnumVec* trimmed_seqnums);
+
 private:
     std::unique_ptr<tkrzw::DBM> journal_index_;
+    std::unique_ptr<tkrzw::DBM> seqnum_db_;
+
+    void SetupJournalIndex(std::string_view db_path);
+    void SetupSeqnumDB(std::string_view db_path);
+
+    void PutJournalIndex(const Record& record);
+    void PutSeqnumDB(const Record& record);
 
     DISALLOW_COPY_AND_ASSIGN(StorageIndexer);
 };

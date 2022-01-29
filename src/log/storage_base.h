@@ -45,6 +45,7 @@ protected:
     virtual void FlushLogEntries(std::span<const LogStorage::Entry*> entries) = 0;
     virtual void CommitLogEntries(std::span<const LogStorage::Entry*> entries) = 0;
     virtual void SendShardProgressIfNeeded() = 0;
+    virtual void CollectLogTrimOps() = 0;
 
     bool db_enabled() { return !journal_enabled(); }
 

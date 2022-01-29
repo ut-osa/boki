@@ -497,6 +497,43 @@ void Storage::SendShardProgressIfNeeded() {
     }
 }
 
+void Storage::CollectLogTrimOps() {
+    absl::flat_hash_map</* logspace_id */ uint32_t, LogStorage::TrimOpVec> all_trim_ops;
+    {
+        absl::ReaderMutexLock view_lk(&view_mu_);
+        storage_collection_.ForEachActiveLogSpace(
+            current_view_,
+            [&all_trim_ops] (uint32_t logspace_id, LockablePtr<LogStorage> storage_ptr) {
+                auto tmp = storage_ptr.ReaderLock()->FetchTrimOps();
+                if (!tmp.empty()) {
+                    all_trim_ops[logspace_id] = tmp;
+                }
+            }
+        );
+    }
+    std::vector<uint64_t> trimmed_seqnums;
+    for (const auto& [logspace_id, trim_ops] : all_trim_ops) {
+        for (const auto& trim_op : trim_ops) {
+            StorageIndexer::SeqnumVec seqnums;
+            indexer()->TrimSeqnumsUntil(
+                trim_op.user_logspace, trim_op.trim_seqnum, &seqnums);
+            trimmed_seqnums.insert(trimmed_seqnums.end(), seqnums.begin(), seqnums.end());
+        }
+    }
+    {
+        absl::ReaderMutexLock view_lk(&view_mu_);
+        for (const auto& [logspace_id, trim_ops] : all_trim_ops) {
+            auto locked_storage = storage_collection_.GetLogSpaceChecked(logspace_id).Lock();
+            for (const auto& trim_op : trim_ops) {
+                locked_storage->MarkTrimOpFinished(trim_op);
+            }
+        }
+    }
+    if (db_enabled()) {
+        // TODO: remove trimmed entries from DB
+    }
+}
+
 void Storage::FlushLogEntries(std::span<const LogStorage::Entry*> entries) {
     DCHECK(db_enabled());
     HVLOG_F(1, "Going to flush {} entries to DB", entries.size());

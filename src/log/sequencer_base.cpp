@@ -113,7 +113,6 @@ void SequencerBase::PropagateMetaLog(const View* view, const MetaLogProto& metal
     uint32_t logspace_id = metalog.logspace_id();
     DCHECK_EQ(bits::LowHalf32(logspace_id), my_node_id());
     absl::flat_hash_set<uint16_t> engine_nodes;
-    absl::flat_hash_set<uint16_t> storage_nodes;
     switch (metalog.type()) {
     case MetaLogProto::NEW_LOGS:
         for (size_t i = 0; i < view->num_engine_nodes(); i++) {
@@ -123,9 +122,6 @@ void SequencerBase::PropagateMetaLog(const View* view, const MetaLogProto& metal
                 static_cast<int>(i));
             if (shard_delta > 0) {
                 engine_nodes.insert(engine_id);
-                for (uint16_t storage_id : engine_node->GetStorageNodes()) {
-                    storage_nodes.insert(storage_id);
-                }
             } else if (engine_node->HasIndexFor(my_node_id())) {
                 engine_nodes.insert(engine_id);
             }
@@ -160,7 +156,7 @@ void SequencerBase::PropagateMetaLog(const View* view, const MetaLogProto& metal
             HLOG_F(ERROR, "Failed to send metalog message to engine {}", engine_id);
         }
     }
-    for (uint16_t storage_id : storage_nodes) {
+    for (uint16_t storage_id : view->GetStorageNodes()) {
         bool success = SendSharedLogMessage(
             protocol::ConnType::SEQUENCER_TO_STORAGE, storage_id,
             message, STRING_AS_SPAN(payload));

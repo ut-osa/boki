@@ -120,6 +120,14 @@ public:
     std::optional<IndexDataProto> PollIndexData();
     std::optional<std::vector<uint32_t>> GrabShardProgressForSending();
 
+    struct TrimOp {
+        uint32_t user_logspace;
+        uint64_t trim_seqnum;
+    };
+    using TrimOpVec = absl::InlinedVector<TrimOp, 4>;
+    TrimOpVec FetchTrimOps() const;
+    void MarkTrimOpFinished(const TrimOp& trim_op);
+
 private:
     const View::Storage* storage_node_;
 
@@ -142,12 +150,17 @@ private:
 
     IndexDataProto index_data_;
 
+    absl::flat_hash_map</* user_logspace */ uint32_t,
+                        /* trim_seqnum */ uint64_t> trim_seqnums_;
+
     stat::StatisticsCollector<int> journal_delay_stat_;
     stat::StatisticsCollector<int> live_entries_stat_;
 
     void OnNewLogs(uint32_t metalog_seqnum,
                    uint64_t start_seqnum, uint64_t start_localid,
                    uint32_t delta) override;
+    void OnTrim(uint32_t metalog_seqnum,
+                const MetaLogProto::TrimProto& trim_proto) override;
     void OnFinalized(uint32_t metalog_position) override;
 
     void AdvanceShardProgress(uint16_t engine_id);

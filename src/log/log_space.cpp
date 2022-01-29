@@ -259,7 +259,7 @@ void LogProducer::OnFinalized(uint32_t metalog_position) {
 }
 
 LogStorage::LogStorage(uint16_t storage_id, const View* view, uint16_t sequencer_id)
-    : LogSpaceBase(LogSpaceBase::kLiteMode, view, sequencer_id),
+    : LogSpaceBase(LogSpaceBase::kFullMode, view, sequencer_id),
       storage_node_(view_->GetStorageNode(storage_id)),
       shard_progrss_dirty_(false),
       persisted_seqnum_position_(0),
@@ -268,7 +268,6 @@ LogStorage::LogStorage(uint16_t storage_id, const View* view, uint16_t sequencer
       live_entries_stat_(stat::StatisticsCollector<int>::StandardReportCallback(
           fmt::format("log_space[{}-{}]: live_entries", view->id(), sequencer_id))) {
     for (uint16_t engine_id : storage_node_->GetSourceEngineNodes()) {
-        AddInterestedShard(engine_id);
         shard_progrsses_[engine_id] = 0;
     }
     index_data_.set_logspace_id(identifier());
@@ -321,6 +320,7 @@ void LogStorage::ReadAt(const protocol::SharedLogMessage& request) {
 }
 
 void LogStorage::GrabLogEntriesForPersistence(LogEntryVec* log_entires) {
+    DCHECK(log_entires != nullptr && log_entires->empty());
     if (entries_for_persistence_.empty()) {
         return;
     }
@@ -347,6 +347,25 @@ std::optional<IndexDataProto> LogStorage::PollIndexData() {
     index_data_.Clear();
     index_data_.set_logspace_id(identifier());
     return data;
+}
+
+LogStorage::TrimOpVec LogStorage::FetchTrimOps() const {
+    TrimOpVec trim_ops;
+    for (const auto& [user_logspace, trim_seqnum] : trim_seqnums_) {
+        trim_ops.push_back({
+            .user_logspace = user_logspace,
+            .trim_seqnum = std::min(persisted_seqnum_position_, trim_seqnum)
+        });
+    }
+    return trim_ops;
+}
+
+void LogStorage::MarkTrimOpFinished(const TrimOp& trim_op) {
+    DCHECK(trim_seqnums_.contains(trim_op.user_logspace));
+    DCHECK_GE(trim_seqnums_.at(trim_op.user_logspace), trim_op.trim_seqnum);
+    if (trim_op.trim_seqnum == trim_seqnums_.at(trim_op.user_logspace)) {
+        trim_seqnums_.erase(trim_op.user_logspace);
+    }
 }
 
 std::optional<std::vector<uint32_t>> LogStorage::GrabShardProgressForSending() {
@@ -377,6 +396,10 @@ void LogStorage::OnNewLogs(uint32_t metalog_seqnum,
         result.original_request = iter->second;
         pending_read_results_.push_back(std::move(result));
         iter = pending_read_requests_.erase(iter);
+    }
+    uint16_t engine_id = gsl::narrow_cast<uint16_t>(bits::HighHalf64(start_localid));
+    if (!storage_node_->IsSourceEngineNode(engine_id)) {
+        return;
     }
     for (size_t i = 0; i < delta; i++) {
         uint64_t seqnum = start_seqnum + i;
@@ -419,6 +442,25 @@ void LogStorage::OnNewLogs(uint32_t metalog_seqnum,
             });
             iter = pending_read_requests_.erase(iter);
         }
+    }
+}
+
+void LogStorage::OnTrim(uint32_t metalog_seqnum, const MetaLogProto::TrimProto& trim_proto) {
+    HVLOG_F(1, "Receive trim metalog entry: metalog_seqnum={}, "
+               "user_logspace={}, trim_seqnum={}, tag={}",
+            bits::HexStr0x(metalog_seqnum),
+            trim_proto.user_logspace(),
+            bits::HexStr0x(trim_proto.trim_seqnum()),
+            trim_proto.user_tag());
+    if (trim_proto.user_tag() != kEmptyLogTag) {
+        // Ignore Trim with non-zero tag for now
+        return;
+    }
+    uint32_t user_logspace = trim_proto.user_logspace();
+    uint64_t trim_seqnum = std::min(seqnum_position(), trim_proto.trim_seqnum());
+    if (!trim_seqnums_.contains(user_logspace)
+          || trim_seqnum > trim_seqnums_.at(user_logspace)) {
+        trim_seqnums_[user_logspace] = trim_seqnum;
     }
 }
 

@@ -377,6 +377,10 @@ void Index::AdvanceIndexProgress() {
 
     auto apply_trim_fn = [this] (const MetaLog& metalog) -> bool {
         DCHECK(metalog.type == MetaLog::kTrim);
+        HVLOG_F(1, "Apply trim: user_logspace={}, trim_seqnum={}, tag={}",
+                metalog.trim.user_logspace,
+                bits::HexStr0x(metalog.trim.seqnum),
+                metalog.trim.tag);
         GetOrCreateIndex(metalog.trim.user_logspace)->ApplyTrim(
             std::min(bits::JoinTwo32(identifier(), indexed_seqnum_position_),
                      metalog.trim.seqnum),

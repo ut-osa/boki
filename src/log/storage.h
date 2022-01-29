@@ -51,6 +51,7 @@ private:
                                  const LogStorage::LogData& data);
 
     void SendShardProgressIfNeeded() override;
+    void CollectLogTrimOps() override;
     void FlushLogEntries(std::span<const LogStorage::Entry*> entries) override;
     void CommitLogEntries(std::span<const LogStorage::Entry*> entries) override;
 

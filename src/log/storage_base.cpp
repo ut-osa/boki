@@ -92,6 +92,11 @@ void StorageBase::SetupTimers() {
         absl::Microseconds(absl::GetFlag(FLAGS_slog_local_cut_interval_us)),
         [this] () { this->SendShardProgressIfNeeded(); }
     );
+    CreatePeriodicTimer(
+        kLogTrimCollectorTimerId,
+        absl::Milliseconds(absl::GetFlag(FLAGS_slog_storage_trim_gc_internval_ms)),
+        [this] () { this->CollectLogTrimOps(); }
+    );
 }
 
 void StorageBase::MessageHandler(const SharedLogMessage& message,
