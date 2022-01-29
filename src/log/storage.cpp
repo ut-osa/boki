@@ -501,6 +501,9 @@ void Storage::CollectLogTrimOps() {
     absl::flat_hash_map</* logspace_id */ uint32_t, LogStorage::TrimOpVec> all_trim_ops;
     {
         absl::ReaderMutexLock view_lk(&view_mu_);
+        if (current_view_ == nullptr || view_finalized_) {
+            return;
+        }
         storage_collection_.ForEachActiveLogSpace(
             current_view_,
             [&all_trim_ops] (uint32_t logspace_id, LockablePtr<LogStorage> storage_ptr) {
@@ -517,6 +520,8 @@ void Storage::CollectLogTrimOps() {
             StorageIndexer::SeqnumVec seqnums;
             indexer()->TrimSeqnumsUntil(
                 trim_op.user_logspace, trim_op.trim_seqnum, &seqnums);
+            HVLOG_F(1, "Found {} seqnums to trim for TrimOp: user_logspace={}, trim_seqnum={}",
+                    seqnums.size(), trim_op.user_logspace, bits::HexStr0x(trim_op.trim_seqnum));
             trimmed_seqnums.insert(trimmed_seqnums.end(), seqnums.begin(), seqnums.end());
         }
     }
@@ -529,6 +534,10 @@ void Storage::CollectLogTrimOps() {
             }
         }
     }
+    if (trimmed_seqnums.empty()) {
+        return;
+    }
+    HVLOG_F(1, "Going to trim {} seqnums from DB", trimmed_seqnums.size());
     if (db_enabled()) {
         // TODO: remove trimmed entries from DB
     }

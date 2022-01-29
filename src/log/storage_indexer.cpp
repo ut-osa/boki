@@ -139,6 +139,7 @@ public:
     std::string_view ProcessFull(std::string_view key,
                                  std::string_view value) override {
         DCHECK(!finished_);
+        DCHECK_EQ(key.size(), 24U);
         if (!absl::StartsWith(key, key_prefix_)) {
             MarkFinished();
             return tkrzw::DBM::RecordProcessor::NOOP;
@@ -185,7 +186,7 @@ void StorageIndexer::TrimSeqnumsUntil(uint32_t user_logspace,
                                       SeqnumVec* trimmed_seqnums) {
     DCHECK(trimmed_seqnums != nullptr && trimmed_seqnums->empty());
     auto iter = seqnum_db_->MakeIterator();
-    std::string starting_key = bits::HexStr(user_logspace) + std::string('0', 16);
+    std::string starting_key = bits::HexStr(user_logspace) + std::string(16, '0');
     DCHECK_EQ(starting_key.size(), 24U);
     auto status = iter->JumpUpper(starting_key, /* inclusive= */ true);
     TKRZW_CHECK_OK(status, JumpUpper);
