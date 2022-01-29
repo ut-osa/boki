@@ -9,6 +9,7 @@
 #include "log/cache.h"
 #include "log/log_space.h"
 #include "log/storage_indexer.h"
+#include "log/db_workers.h"
 #include "server/server_base.h"
 #include "server/ingress_connection.h"
 #include "server/egress_hub.h"
@@ -70,47 +71,9 @@ protected:
                             std::span<const char> payload2 = EMPTY_CHAR_SPAN,
                             std::span<const char> payload3 = EMPTY_CHAR_SPAN);
 
-    class DBFlusher {
-    public:
-        explicit DBFlusher(StorageBase* storage, size_t num_worker_threads);
-        ~DBFlusher();
-
-        void PushLogEntriesForFlush(std::span<const LogStorage::Entry*> entries);
-
-        void SignalAllThreads();
-        void JoinAllThreads();
-
-    private:
-        static constexpr size_t kBatchSize = 128;
-
-        StorageBase* storage_;
-        absl::FixedArray<std::optional<base::Thread>> worker_threads_;
-
-        absl::Mutex mu_;
-        absl::CondVar cv_;
-
-        int idle_workers_ ABSL_GUARDED_BY(mu_);
-        std::deque<std::pair</* seqnum */ uint64_t,
-                             const LogStorage::Entry*>>
-            queue_ ABSL_GUARDED_BY(mu_);
-        uint64_t next_seqnum_ ABSL_GUARDED_BY(mu_);
-
-        absl::Mutex commit_mu_;
-        uint64_t commited_seqnum_    ABSL_GUARDED_BY(commit_mu_);
-        std::map</* seqnum */ uint64_t, const LogStorage::Entry*>
-            flushed_entries_         ABSL_GUARDED_BY(commit_mu_);
-
-        stat::StatisticsCollector<int> queue_length_stat_ ABSL_GUARDED_BY(mu_);
-
-        bool should_stop() { return !storage_->running(); }
-        void WorkerThreadMain(int thread_index);
-
-        DISALLOW_COPY_AND_ASSIGN(DBFlusher);
-    };
-
-    inline DBFlusher* db_flusher() {
-        DCHECK(db_flusher_.has_value());
-        return &db_flusher_.value();
+    inline DBWorkers* db_workers() {
+        DCHECK(db_workers_.has_value());
+        return &db_workers_.value();
     }
 
     inline StorageIndexer* indexer() {
@@ -121,6 +84,8 @@ protected:
     std::optional<server::JournalFileRef> GetJournalFile(int file_id);
 
 private:
+    friend class DBWorkers;
+
     const uint16_t node_id_;
 
     ViewWatcher view_watcher_;
@@ -140,7 +105,7 @@ private:
         journal_files_ ABSL_GUARDED_BY(journal_file_mu_);
 
     std::optional<LRUCache>       log_cache_;
-    std::optional<DBFlusher>      db_flusher_;
+    std::optional<DBWorkers>      db_workers_;
     std::optional<StorageIndexer> indexer_;
 
     void SetupDB();

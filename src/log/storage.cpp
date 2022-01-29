@@ -275,7 +275,7 @@ void Storage::OnRecvNewMetaLogs(const SharedLogMessage& message,
             indexer()->Put(indexer_record);
         }
         if (db_enabled()) {
-            db_flusher()->PushLogEntriesForFlush(
+            db_workers()->PushLogEntriesForFlush(
                 gsl::make_span(new_log_entires.data(), new_log_entires.size()));
         } else {
             CommitLogEntries(new_log_entires);
@@ -539,7 +539,9 @@ void Storage::CollectLogTrimOps() {
     }
     HVLOG_F(1, "Going to trim {} seqnums from DB", trimmed_seqnums.size());
     if (db_enabled()) {
-        // TODO: remove trimmed entries from DB
+        db_workers()->PushSeqnumsForTrim(VECTOR_AS_SPAN(trimmed_seqnums));
+    } else {
+        // TODO: Reclaim space from journal files
     }
 }
 
