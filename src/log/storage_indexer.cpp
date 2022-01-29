@@ -22,6 +22,7 @@ StorageIndexer::StorageIndexer(std::string_view db_path, bool journal_enabled) {
         SetupJournalIndex(db_path);
     }
     SetupSeqnumDB(db_path);
+    trimmed_seqnum_db_ = std::make_unique<tkrzw::CacheDBM>(/* cap_rec_num= */ 1<<20);
 }
 
 StorageIndexer::~StorageIndexer() {
@@ -200,6 +201,20 @@ void StorageIndexer::TrimSeqnumsUntil(uint32_t user_logspace,
         TKRZW_CHECK_OK(status, Process);
     }
     proc.GrabSeqnums(trimmed_seqnums);
+    for (uint64_t seqnum : *trimmed_seqnums) {
+        auto status = trimmed_seqnum_db_->Set(bits::HexStr(seqnum), kMarkStr);
+        TKRZW_CHECK_OK(status, Set);
+    }
+}
+
+bool StorageIndexer::CheckRecentlyTrimmed(uint64_t seqnum) {
+    std::string value;
+    auto status = trimmed_seqnum_db_->Get(bits::HexStr(seqnum), &value);
+    if (status == tkrzw::Status::NOT_FOUND_ERROR) {
+        return false;
+    }
+    TKRZW_CHECK_OK(status, Get);
+    return true;
 }
 
 }  // namespace log

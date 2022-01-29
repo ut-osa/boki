@@ -656,6 +656,12 @@ public:
         return message;
     }
 
+    static SharedLogMessage NewReadTrimmedResponse(uint64_t user_metalog_progress) {
+        SharedLogMessage message = NewResponse(SharedLogResultType::READ_TRIMMED);
+        message.user_metalog_progress = user_metalog_progress;
+        return message;
+    }
+
     static SharedLogMessage NewDataLostResponse() {
         return NewResponse(SharedLogResultType::DATA_LOST);
     }

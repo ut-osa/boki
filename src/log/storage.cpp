@@ -368,6 +368,11 @@ void Storage::ProcessReadFromDB(const SharedLogMessage& request) {
     LogEntryProto log_entry_proto;
     if (auto tmp = GetLogEntryFromDB(seqnum); tmp.has_value()) {
         log_entry_proto = std::move(*tmp);
+    } else if (indexer()->CheckRecentlyTrimmed(seqnum)) {
+        SharedLogMessage response = SharedLogMessageHelper::NewReadTrimmedResponse(
+            request.user_metalog_progress);
+        SendEngineResponse(request, &response);
+        return;
     } else {
         HLOG_F(ERROR, "Failed to read log data (seqnum={})", bits::HexStr0x(seqnum));
         SharedLogMessage response = SharedLogMessageHelper::NewDataLostResponse();

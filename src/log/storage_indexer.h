@@ -4,6 +4,7 @@
 
 __BEGIN_THIRD_PARTY_HEADERS
 #include <tkrzw_dbm.h>
+#include <tkrzw_dbm_cache.h>
 __END_THIRD_PARTY_HEADERS
 
 namespace faas {
@@ -29,9 +30,12 @@ public:
     void TrimSeqnumsUntil(uint32_t user_logspace, uint64_t trim_seqnum,
                           SeqnumVec* trimmed_seqnums);
 
+    bool CheckRecentlyTrimmed(uint64_t seqnum);
+
 private:
-    std::unique_ptr<tkrzw::DBM> journal_index_;
-    std::unique_ptr<tkrzw::DBM> seqnum_db_;
+    std::unique_ptr<tkrzw::DBM>      journal_index_;
+    std::unique_ptr<tkrzw::DBM>      seqnum_db_;
+    std::unique_ptr<tkrzw::CacheDBM> trimmed_seqnum_db_;
 
     void SetupJournalIndex(std::string_view db_path);
     void SetupSeqnumDB(std::string_view db_path);
