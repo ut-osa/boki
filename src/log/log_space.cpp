@@ -511,7 +511,7 @@ void LogStorage::ClearLogData(LogData* data) {
         str->clear();
     }
     if (auto record = std::get_if<JournalRecord>(data); record != nullptr) {
-        record->file.Reset();
+        record->file.Clear();
     }
 }
 

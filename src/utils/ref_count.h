@@ -12,7 +12,7 @@ public:
 
     virtual ~RefCountedBase() {
 #if DCHECK_IS_ON()
-        int value = ref_count_.load(std::memory_order_acq_rel);
+        long value = ref_count_.load(std::memory_order_acq_rel);
         if (value != 0) {
             LOG(FATAL) << "The reference counter is not zero within destructor!";
         }
@@ -24,7 +24,7 @@ public:
     }
 
     void Unref() {
-        int value = ref_count_.fetch_add(-1, std::memory_order_acq_rel);
+        long value = ref_count_.fetch_add(-1, std::memory_order_acq_rel);
         if (__FAAS_PREDICT_FALSE(value == 1)) {
             RefBecomesZero();
         }
@@ -38,14 +38,9 @@ public:
     class Accessor {
     public:
         Accessor() : target_(nullptr) {}
+        ~Accessor() { Clear(); }
 
-        ~Accessor() {
-            if (target_ != nullptr) {
-                target_->Unref();
-            }
-        }
-
-        void Reset() {
+        void Clear() {
             if (target_ != nullptr) {
                 target_->Unref();
                 target_ = nullptr;
@@ -64,7 +59,7 @@ public:
             if (this == &other) {
                 return *this;
             }
-            Reset();
+            Clear();
             target_ = other.target_;
             if (target_ != nullptr) {
                 target_->Ref();
@@ -76,7 +71,7 @@ public:
             if (this == &other) {
                 return *this;
             }
-            Reset();
+            Clear();
             target_ = other.target_;
             other.target_ = nullptr;
             return *this;
@@ -98,7 +93,7 @@ protected:
     virtual void RefBecomesZero() = 0;
 
 private:
-    std::atomic<int> ref_count_;
+    std::atomic<long> ref_count_;
 
     DISALLOW_COPY_AND_ASSIGN(RefCountedBase);
 };

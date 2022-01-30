@@ -26,4 +26,5 @@ ABSL_DECLARE_FLAG(std::string, zookeeper_host);
 ABSL_DECLARE_FLAG(std::string, zookeeper_root_path);
 
 ABSL_DECLARE_FLAG(std::string, journal_save_path);
+ABSL_DECLARE_FLAG(size_t, journal_file_max_records);
 ABSL_DECLARE_FLAG(size_t, journal_file_max_size_mb);

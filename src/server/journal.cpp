@@ -19,6 +19,7 @@ JournalFile::JournalFile(IOWorker* owner, int file_id)
       owner_(owner),
       file_id_(file_id),
       fd_(-1),
+      num_records_(0),
       appended_bytes_(0),
       flushed_bytes_(0),
       flush_fn_scheduled_(false) {
@@ -27,6 +28,18 @@ JournalFile::JournalFile(IOWorker* owner, int file_id)
 
 JournalFile::~JournalFile() {
     DCHECK(current_state() == kClosed || current_state() == kRemoved);
+}
+
+bool JournalFile::ReachLimit() const {
+    size_t record_cap = absl::GetFlag(FLAGS_journal_file_max_records);
+    if (record_cap > 0 && num_records_ >= record_cap) {
+        return true;
+    }
+    size_t size_cap = absl::GetFlag(FLAGS_journal_file_max_size_mb) * 1024 * 1024;
+    if (appended_bytes_ >= size_cap) {
+        return true;
+    }
+    return false;
 }
 
 void JournalFile::AppendRecord(uint16_t type,
@@ -54,6 +67,7 @@ void JournalFile::AppendRecord(uint16_t type,
     for (const auto& payload : payload_vec) {
         write_buffer_.AppendData(payload);
     }
+    num_records_++;
     appended_bytes_ += record_size;
     ScheduleFlush();
 }

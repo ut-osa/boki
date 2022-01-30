@@ -307,13 +307,11 @@ void IOWorker::JournalMonitorCallback() {
     if (current_journal_file_ == nullptr) {
         HLOG(FATAL) << "Journal not enabled!";
     }
-    size_t size_cap = absl::GetFlag(FLAGS_journal_file_max_size_mb) * 1024 * 1024;
-    if (current_journal_file_->appended_bytes() <= size_cap) {
-        return;
+    if (current_journal_file_->ReachLimit()) {
+        JournalFile* old_journal_file = current_journal_file_;
+        current_journal_file_ = CreateNewJournalFile();
+        old_journal_file->Finalize();
     }
-    JournalFile* old_journal_file = current_journal_file_;
-    current_journal_file_ = CreateNewJournalFile();
-    old_journal_file->Finalize();
 }
 
 JournalFile* IOWorker::CreateNewJournalFile() {

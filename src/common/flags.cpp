@@ -19,5 +19,7 @@ ABSL_FLAG(std::string, zookeeper_root_path, "/faas", "Root path for all znodes")
 
 ABSL_FLAG(std::string, journal_save_path, "",
           "The directory for storing journal files");
+ABSL_FLAG(size_t, journal_file_max_records, 0,
+          "Maximum number of records for individual journal file (0 means no limit)");
 ABSL_FLAG(size_t, journal_file_max_size_mb, 256,
           "Maximum size (in MB) of individual journal file");

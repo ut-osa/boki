@@ -21,8 +21,11 @@ public:
     int fd() const { return fd_; }
     bool closed() const { return current_state() == kClosed; }
 
+    size_t num_records() const { return num_records_; }
     size_t appended_bytes() const { return appended_bytes_; }
     size_t flushed_bytes() const { return flushed_bytes_; }
+
+    bool ReachLimit() const;
 
     using AppendCallback = std::function<void(JournalFile* /* file */, size_t /* offset */)>;
     void AppendRecord(uint16_t type,
@@ -43,6 +46,7 @@ private:
     std::string file_path_;
     int fd_;
 
+    size_t num_records_;
     size_t appended_bytes_;
     size_t flushed_bytes_;
 
