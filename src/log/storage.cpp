@@ -264,15 +264,7 @@ void Storage::OnRecvNewMetaLogs(const SharedLogMessage& message,
     }
     if (!new_log_entires.empty()) {
         for (const auto& entry : new_log_entires) {
-            StorageIndexer::Record indexer_record;
-            indexer_record.seqnum = entry->metadata.seqnum;
-            indexer_record.user_logspace = entry->metadata.user_logspace;
-            if (journal_enabled()) {
-                const JournalRecord& journal_record = std::get<JournalRecord>(entry->data);
-                indexer_record.journal_file_id = journal_record.file->file_id();
-                indexer_record.journal_offset = journal_record.offset;
-            }
-            indexer()->Put(indexer_record);
+            IndexerInsert(entry);
         }
         if (db_enabled()) {
             db_workers()->SubmitLogEntriesForFlush(VECTOR_AS_SPAN(new_log_entires));
@@ -336,26 +328,16 @@ void Storage::ProcessReadResults(const LogStorage::ReadResultVec& results) {
 void Storage::ProcessReadFromJournal(const SharedLogMessage& request) {
     DCHECK(journal_enabled());
     uint64_t seqnum = bits::JoinTwo32(request.logspace_id, request.seqnum_lowhalf);
-    int file_id;
-    size_t offset;
-    bool found = indexer()->GetJournalLocation(seqnum, &file_id, &offset);
-    if (!found) {
-        HLOG_F(ERROR, "Failed to found entry (seqnum={}) in the index",
+    JournalRecord record;
+    if (!FindJournalRecord(seqnum, &record)) {
+        HLOG_F(ERROR, "Failed to found entry (seqnum={}) from journal",
                bits::HexStr0x(seqnum));
         SharedLogMessage response = SharedLogMessageHelper::NewDataLostResponse();
         SendEngineResponse(request, &response);
         return;
     }
-    auto journal_file = GetJournalFile(file_id);
-    if (!journal_file.has_value()) {
-        HLOG_F(FATAL, "Cannot file journal file with id {}", file_id);
-    }
     SharedLogMessage response = SharedLogMessageHelper::NewReadOkResponse(
         request.user_metalog_progress);
-    JournalRecord record = {
-        .file = std::move(journal_file.value()),
-        .offset = offset,
-    };
     LogEntry log_entry = log_utils::ReadLogEntryFromJournal(seqnum, record);
     VALIDATE_LOG_ENTRY(log_entry);
     SendEngineLogResult(request, &response, log_entry);
@@ -545,7 +527,15 @@ void Storage::CollectLogTrimOps() {
     if (db_enabled()) {
         db_workers()->SubmitSeqnumsForTrim(VECTOR_AS_SPAN(trimmed_seqnums));
     } else {
-        // TODO: Reclaim space from journal files
+        for (uint64_t seqnum : trimmed_seqnums) {
+            JournalRecord record;
+            if (FindJournalRecord(seqnum, &record)) {
+                record.file->Unref();
+            } else {
+                HLOG_F(ERROR, "Failed to found entry (seqnum={}) from journal",
+                       bits::HexStr0x(seqnum));
+            }
+        }
     }
 }
 

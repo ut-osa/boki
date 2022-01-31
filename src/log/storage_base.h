@@ -81,7 +81,8 @@ protected:
         return &indexer_.value();
     }
 
-    std::optional<server::JournalFileRef> GetJournalFile(int file_id);
+    void IndexerInsert(const LogStorage::Entry* log_entry);
+    bool FindJournalRecord(uint64_t seqnum, JournalRecord* record);
 
 private:
     friend class DBWorkers;
@@ -101,7 +102,7 @@ private:
         egress_hubs_ ABSL_GUARDED_BY(conn_mu_);
 
     absl::Mutex journal_file_mu_;
-    absl::flat_hash_map</* file_id */ int, server::JournalFileRef>
+    absl::flat_hash_map</* file_id */ int, server::JournalFile*>
         journal_files_ ABSL_GUARDED_BY(journal_file_mu_);
 
     std::optional<LRUCache>       log_cache_;
@@ -118,7 +119,8 @@ private:
     void OnRemoteMessageConn(const protocol::HandshakeMessage& handshake,
                              int sockfd) override;
 
-    void OnNewJournalFile(server::JournalFile* file) override;
+    void OnJournalFileCreated(server::JournalFile* file) override;
+    void OnJournalFileClosed(server::JournalFile* file) override;
 
     void OnRecvSharedLogMessage(int conn_type, uint16_t src_node_id,
                                 const protocol::SharedLogMessage& message,

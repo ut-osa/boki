@@ -49,7 +49,8 @@ protected:
     void CreatePeriodicTimer(int timer_type, absl::Duration interval, Timer::Callback cb);
 
     int NextJournalFileID();
-    virtual void OnNewJournalFile(JournalFile* file) {}
+    virtual void OnJournalFileCreated(JournalFile* file) {}
+    virtual void OnJournalFileClosed(JournalFile* file) {}
 
     // Supposed to be implemented by sub-class
     virtual void StartInternal() = 0;

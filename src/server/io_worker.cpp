@@ -247,8 +247,9 @@ void IOWorker::RunIdleFunctions() {
         return;
     }
     while (!idle_functions_.empty()) {
-        InvokeFunction(idle_functions_.front());
+        ScheduledFunction fn = std::move(idle_functions_.front());
         idle_functions_.pop_front();
+        InvokeFunction(fn);
     }
 }
 
@@ -318,8 +319,17 @@ JournalFile* IOWorker::CreateNewJournalFile() {
     int file_id = server_->NextJournalFileID();
     JournalFile* journal_file = new JournalFile(this, file_id);
     journal_files_[file_id] = absl::WrapUnique(journal_file);
-    server_->OnNewJournalFile(journal_file);
+    server_->OnJournalFileCreated(journal_file);
     return journal_file;
+}
+
+void IOWorker::OnJournalFileClosed(JournalFile* file) {
+    server_->OnJournalFileClosed(file);
+}
+
+void IOWorker::OnJournalFileRemoved(JournalFile* file) {
+    DCHECK(journal_files_.contains(file->file_id()));
+    journal_files_.erase(file->file_id());
 }
 
 }  // namespace server

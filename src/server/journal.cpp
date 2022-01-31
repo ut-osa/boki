@@ -124,11 +124,14 @@ void JournalFile::Finalize() {
 
 void JournalFile::Remove() {
     DCHECK(current_state() == kClosed);
-    if (!fs_utils::Remove(file_path_)) {
-        LOG(FATAL) << "Failed to remove file " << file_path_;
-    }
-    LOG_F(INFO, "Journal file {} removed", file_path_);
-    transit_state(kRemoved);
+    owner_->ScheduleFunction(nullptr, [this] () {
+        if (!fs_utils::Remove(file_path_)) {
+            LOG(FATAL) << "Failed to remove file " << file_path_;
+        }
+        LOG_F(INFO, "Journal file {} removed", file_path_);
+        transit_state(kRemoved);
+        owner_->OnJournalFileRemoved(this);
+    });
 }
 
 void JournalFile::RefBecomesZero() {
@@ -168,6 +171,7 @@ void JournalFile::CloseFd() {
         LOG_F(INFO, "Journal file {} closed", file_path_);
         fd_ = -1;
         transit_state(kClosed);
+        owner_->OnJournalFileClosed(this);
     }));
 }
 

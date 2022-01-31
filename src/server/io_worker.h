@@ -98,6 +98,9 @@ public:
                        JournalAppendCallback cb);
     void JournalMonitorCallback();
 
+    void OnJournalFileClosed(JournalFile* file);
+    void OnJournalFileRemoved(JournalFile* file);
+
 private:
     enum State { kCreated, kRunning, kStopping, kStopped };
 
@@ -130,7 +133,7 @@ private:
     std::deque<ScheduledFunction> idle_functions_;
 
     int next_journal_file_id_;
-    std::map</* file_id */ int, std::unique_ptr<JournalFile>> journal_files_;
+    absl::flat_hash_map</* file_id */ int, std::unique_ptr<JournalFile>> journal_files_;
     JournalFile* current_journal_file_; 
 
     void EventLoopThreadMain();

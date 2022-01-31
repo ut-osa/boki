@@ -144,6 +144,19 @@ void StorageBase::TrimLogEntries(std::span<const uint64_t> seqnums) {
     }
 }
 
+void StorageBase::IndexerInsert(const LogStorage::Entry* log_entry) {
+    StorageIndexer::Record indexer_record;
+    indexer_record.seqnum = log_entry->metadata.seqnum;
+    indexer_record.user_logspace = log_entry->metadata.user_logspace;
+    if (journal_enabled()) {
+        const JournalRecord& journal_record = std::get<JournalRecord>(log_entry->data);
+        indexer_record.journal_file_id = journal_record.file->file_id();
+        indexer_record.journal_offset = journal_record.offset;
+        journal_record.file->Ref();
+    }
+    indexer()->Put(indexer_record);
+}
+
 void StorageBase::SendIndexData(const View* view,
                                 const IndexDataProto& index_data_proto) {
     uint32_t logspace_id = index_data_proto.logspace_id();
@@ -296,20 +309,41 @@ EgressHub* StorageBase::CreateEgressHub(protocol::ConnType conn_type,
     return hub;
 }
 
-std::optional<server::JournalFileRef> StorageBase::GetJournalFile(int file_id) {
+bool StorageBase::FindJournalRecord(uint64_t seqnum, JournalRecord* record) {
     DCHECK(journal_enabled());
-    absl::ReaderMutexLock lk(&journal_file_mu_);
-    if (journal_files_.contains(file_id)) {
-        return journal_files_.at(file_id);
-    } else {
-        return std::nullopt;
+    int file_id;
+    if (!indexer()->GetJournalLocation(seqnum, &file_id, &record->offset)) {
+        return false;
     }
+    server::JournalFile* file;
+    {
+        absl::ReaderMutexLock lk(&journal_file_mu_);
+        if (journal_files_.contains(file_id)) {
+            file = journal_files_.at(file_id);
+        } else {
+            return false;
+        }
+    }
+    record->file = file->MakeAccessor();
+    return true;
 }
 
-void StorageBase::OnNewJournalFile(server::JournalFile* file) {
+void StorageBase::OnJournalFileCreated(server::JournalFile* file) {
     DCHECK(journal_enabled());
     absl::MutexLock lk(&journal_file_mu_);
-    journal_files_[file->file_id()] = file->MakeAccessor();
+    DCHECK(!journal_files_.contains(file->file_id()));
+    journal_files_[file->file_id()] = file;
+}
+
+void StorageBase::OnJournalFileClosed(server::JournalFile* file) {
+    DCHECK(journal_enabled());
+    DCHECK(file->owner()->WithinMyEventLoopThread());
+    {
+        absl::MutexLock lk(&journal_file_mu_);
+        DCHECK(journal_files_.contains(file->file_id()));
+        journal_files_.erase(file->file_id());
+    }
+    file->Remove();
 }
 
 }  // namespace log
