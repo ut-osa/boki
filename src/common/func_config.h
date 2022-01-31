@@ -7,8 +7,8 @@ namespace faas {
 
 class FuncConfig {
 public:
-    FuncConfig() {}
-    ~FuncConfig() {}
+    FuncConfig() = default;
+    ~FuncConfig() = default;
 
     static constexpr int kMaxFuncId = (1 << protocol::kFuncIdBits) - 1;
     static constexpr int kMaxMethodId = (1 << protocol::kMethodIdBits) - 1;

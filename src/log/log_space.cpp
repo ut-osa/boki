@@ -27,8 +27,6 @@ MetaLogPrimary::MetaLogPrimary(const View* view, uint16_t sequencer_id)
     state_ = kNormal;
 }
 
-MetaLogPrimary::~MetaLogPrimary() {}
-
 void MetaLogPrimary::UpdateStorageProgress(uint16_t storage_id,
                                            const std::vector<uint32_t>& progress) {
     if (!view_->contains_storage_node(storage_id)) {
@@ -202,8 +200,6 @@ MetaLogBackup::MetaLogBackup(const View* view, uint16_t sequencer_id)
     state_ = kNormal;
 }
 
-MetaLogBackup::~MetaLogBackup() {}
-
 LogProducer::LogProducer(uint16_t engine_id, const View* view, uint16_t sequencer_id)
     : LogSpaceBase(LogSpaceBase::kLiteMode, view, sequencer_id),
       next_localid_(bits::JoinTwo32(engine_id, 0)) {
@@ -211,8 +207,6 @@ LogProducer::LogProducer(uint16_t engine_id, const View* view, uint16_t sequence
     log_header_ = fmt::format("LogProducer[{}-{}]: ", view->id(), sequencer_id);
     state_ = kNormal;
 }
-
-LogProducer::~LogProducer() {}
 
 void LogProducer::LocalAppend(void* caller_data, uint64_t* localid) {
     DCHECK(!pending_appends_.contains(next_localid_));
@@ -274,8 +268,6 @@ LogStorage::LogStorage(uint16_t storage_id, const View* view, uint16_t sequencer
     log_header_ = fmt::format("LogStorage[{}-{}]: ", view->id(), sequencer_id);
     state_ = kNormal;
 }
-
-LogStorage::~LogStorage() {}
 
 bool LogStorage::Store(Entry new_entry) {
     uint64_t localid = new_entry.metadata.localid;

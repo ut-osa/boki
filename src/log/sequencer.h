@@ -10,7 +10,7 @@ namespace log {
 class Sequencer final : public SequencerBase {
 public:
     explicit Sequencer(uint16_t node_id);
-    ~Sequencer();
+    ~Sequencer() = default;
 
 private:
     std::string log_header_;

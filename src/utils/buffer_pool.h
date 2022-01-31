@@ -14,7 +14,7 @@ class BufferPool {
 public:
     BufferPool(std::string_view pool_name, size_t buffer_size)
         : pool_name_(std::string(pool_name)), buffer_size_(buffer_size) {}
-    ~BufferPool() {}
+    ~BufferPool() = default;
 
     size_t buffer_size() const { return buffer_size_; }
 

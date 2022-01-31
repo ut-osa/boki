@@ -48,8 +48,6 @@ Server::Server()
       dispatch_overhead_stat_(
           stat::StatisticsCollector<int32_t>::StandardReportCallback("dispatch_overhead")) {}
 
-Server::~Server() {}
-
 void Server::StartInternal() {
     // Load function config file
     std::string func_config_json;

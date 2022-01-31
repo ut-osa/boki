@@ -17,8 +17,6 @@ Sequencer::Sequencer(uint16_t node_id)
       log_header_(fmt::format("Sequencer[{}-N]: ", node_id)),
       current_view_(nullptr) {}
 
-Sequencer::~Sequencer() {}
-
 void Sequencer::OnViewCreated(const View* view) {
     DCHECK(zk_session()->WithinMyEventLoopThread());
     HLOG_F(INFO, "New view {} created", view->id());

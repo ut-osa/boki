@@ -15,7 +15,7 @@ uint16_t GetViewId(uint64_t value);
 class FutureRequests {
 public:
     FutureRequests();
-    ~FutureRequests();
+    ~FutureRequests() = default;
 
     // Both `OnNewView` and `OnHoldRequest` are thread safe
 
@@ -37,7 +37,7 @@ private:
 template<class T>
 class ThreadedMap {
 public:
-    ThreadedMap();
+    ThreadedMap() = default;
     ~ThreadedMap();
 
     // All these APIs are thread safe
@@ -87,10 +87,6 @@ log::LogEntry ReadLogEntryFromJournal(uint64_t seqnum, const log::JournalRecord&
 std::string SerializedLogEntryToProto(const log::LogEntry& log_entry);
 
 // Start implementation of ThreadedMap
-
-template<class T>
-ThreadedMap<T>::ThreadedMap() {}
-
 template<class T>
 ThreadedMap<T>::~ThreadedMap() {
 #if DCHECK_IS_ON()

@@ -5,8 +5,6 @@ namespace server {
 
 NodeWatcher::NodeWatcher() {}
 
-NodeWatcher::~NodeWatcher() {}
-
 void NodeWatcher::StartWatching(zk::ZKSession* session) {
     watcher_.emplace(session, "node");
     watcher_->SetNodeCreatedCallback(

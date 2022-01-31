@@ -7,10 +7,6 @@
 namespace faas {
 namespace log {
 
-ViewWatcher::ViewWatcher() {}
-
-ViewWatcher::~ViewWatcher() {}
-
 void ViewWatcher::StartWatching(zk::ZKSession* session) {
     watcher_.emplace(session, "view", /* sequential_znodes= */ true);
     watcher_->SetNodeCreatedCallback(

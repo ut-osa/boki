@@ -22,8 +22,6 @@ uint16_t GetViewId(uint64_t value) {
 FutureRequests::FutureRequests()
     : next_view_id_(0) {}
 
-FutureRequests::~FutureRequests() {}
-
 void FutureRequests::OnNewView(const View* view,
                                std::vector<SharedLogRequest>* ready_requests) {
     absl::MutexLock lk(&mu_);

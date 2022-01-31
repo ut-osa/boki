@@ -9,7 +9,7 @@ template<class T>
 class RoundRobinSet {
 public:
     RoundRobinSet();
-    ~RoundRobinSet() {}
+    ~RoundRobinSet() = default;
 
     size_t size() const { return elems_.size(); }
 

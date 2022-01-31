@@ -12,7 +12,7 @@ namespace server {
 class NodeWatcher final {
 public:
     NodeWatcher();
-    ~NodeWatcher();
+    ~NodeWatcher() = default;
 
     void StartWatching(zk::ZKSession* session);
 

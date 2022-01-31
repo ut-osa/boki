@@ -34,7 +34,6 @@ zk::ZKSession* EngineBase::zk_session() {
 
 void EngineBase::Start() {
     SetupZKWatchers();
-    SetupTimers();
     // Setup cache
     if (absl::GetFlag(FLAGS_slog_engine_enable_cache)) {
         log_cache_.emplace(absl::GetFlag(FLAGS_slog_engine_cache_cap_mb));
@@ -75,9 +74,6 @@ void EngineBase::SetupZKWatchers() {
         }
     );
     view_watcher_.StartWatching(zk_session());
-}
-
-void EngineBase::SetupTimers() {
 }
 
 void EngineBase::OnNewExternalFuncCall(const FuncCall& func_call, uint32_t log_space) {

@@ -15,8 +15,6 @@ LogSpaceBase::LogSpaceBase(Mode mode, const View* view, uint16_t sequencer_id)
       shard_progrsses_(view->num_engine_nodes(), 0),
       seqnum_position_(0) {}
 
-LogSpaceBase::~LogSpaceBase() {}
-
 void LogSpaceBase::AddInterestedShard(uint16_t engine_id) {
     DCHECK(state_ == kCreated);
     const View::NodeIdVec& engine_node_ids = view_->GetEngineNodes();

@@ -27,8 +27,6 @@ StorageBase::StorageBase(uint16_t node_id)
       node_id_(node_id),
       db_(nullptr) {}
 
-StorageBase::~StorageBase() {}
-
 void StorageBase::StartInternal() {
     SetupZKWatchers();
     SetupTimers();

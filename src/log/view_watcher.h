@@ -16,8 +16,8 @@ class FinalizedView;
 
 class ViewWatcher {
 public:
-    ViewWatcher();
-    ~ViewWatcher();
+    ViewWatcher() = default;
+    ~ViewWatcher() = default;
 
     void StartWatching(zk::ZKSession* session);
 

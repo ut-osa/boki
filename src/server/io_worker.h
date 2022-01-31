@@ -16,7 +16,7 @@ class ServerBase;
 class ConnectionBase : public std::enable_shared_from_this<ConnectionBase> {
 public:
     explicit ConnectionBase(int type = -1) : type_(type), id_(-1) {}
-    virtual ~ConnectionBase() {}
+    virtual ~ConnectionBase() = default;
 
     int type() const { return type_; }
     int id() const { return id_; }

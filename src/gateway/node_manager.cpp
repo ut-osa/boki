@@ -14,8 +14,6 @@ NodeManager::NodeManager(Server* server)
     : server_(server),
       max_running_requests_(0) {}
 
-NodeManager::~NodeManager() {}
-
 bool NodeManager::PickNodeForNewFuncCall(const protocol::FuncCall& func_call, uint16_t* node_id) {
     absl::MutexLock lk(&mu_);
     if (connected_node_list_.empty()) {

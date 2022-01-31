@@ -11,7 +11,7 @@ class StorageBase;
 class DBWorkers {
 public:
     DBWorkers(StorageBase* storage, size_t num_worker_threads);
-    ~DBWorkers();
+    ~DBWorkers() = default;
 
     void SubmitLogEntriesForFlush(std::span<const LogStorage::Entry* const> entries);
     void SubmitSeqnumsForTrim(std::span<const uint64_t> seqnums);

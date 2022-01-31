@@ -13,7 +13,7 @@ class Server;
 class NodeManager {
 public:
     explicit NodeManager(Server* server);
-    ~NodeManager();
+    ~NodeManager() = default;
 
     bool PickNodeForNewFuncCall(const protocol::FuncCall& func_call, uint16_t* node_id);
     void FuncCallFinished(const protocol::FuncCall& func_call, uint16_t node_id);

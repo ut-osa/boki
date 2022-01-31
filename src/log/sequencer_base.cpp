@@ -24,8 +24,6 @@ SequencerBase::SequencerBase(uint16_t node_id)
     : ServerBase(fmt::format("sequencer_{}", node_id), /* enable_journal= */ true),
       node_id_(node_id) {}
 
-SequencerBase::~SequencerBase() {}
-
 void SequencerBase::StartInternal() {
     SetupZKWatchers();
     SetupTimers();

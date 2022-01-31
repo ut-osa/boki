@@ -23,8 +23,6 @@ Controller::Controller(uint32_t random_seed)
     LOG_F(INFO, "Random seed is {}", bits::HexStr0x(random_seed));
 }
 
-Controller::~Controller() {}
-
 void Controller::Start() {
     zk_session_.Start();
     // Setup NodeWatcher

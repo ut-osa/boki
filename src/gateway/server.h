@@ -21,7 +21,7 @@ namespace gateway {
 class Server final : public server::ServerBase {
 public:
     Server();
-    ~Server();
+    ~Server() = default;
 
     void set_http_port(int port) { http_port_ = port; }
     void set_grpc_port(int port) { grpc_port_ = port; }

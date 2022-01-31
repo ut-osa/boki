@@ -20,8 +20,6 @@ Storage::Storage(uint16_t node_id)
       current_view_(nullptr),
       view_finalized_(false) {}
 
-Storage::~Storage() {}
-
 void Storage::OnViewCreated(const View* view) {
     DCHECK(zk_session()->WithinMyEventLoopThread());
     HLOG_F(INFO, "New view {} created", view->id());

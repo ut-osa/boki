@@ -13,6 +13,7 @@ template<class T>
 class LockablePtr {
 public:
     LockablePtr() : inner_(nullptr) {}
+    ~LockablePtr() = default;
 
     // LockablePtr takes ownership of target
     explicit LockablePtr(std::unique_ptr<T> target) : inner_(nullptr) {

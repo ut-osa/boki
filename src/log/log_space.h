@@ -10,7 +10,7 @@ namespace log {
 class MetaLogPrimary final : public LogSpaceBase {
 public:
     MetaLogPrimary(const View* view, uint16_t sequencer_id);
-    ~MetaLogPrimary();
+    ~MetaLogPrimary() = default;
 
     void UpdateStorageProgress(uint16_t storage_id,
                                const std::vector<uint32_t>& progress);
@@ -49,7 +49,7 @@ private:
 class MetaLogBackup final : public LogSpaceBase {
 public:
     MetaLogBackup(const View* view, uint16_t sequencer_id);
-    ~MetaLogBackup();
+    ~MetaLogBackup() = default;
 
 private:
     DISALLOW_COPY_AND_ASSIGN(MetaLogBackup);
@@ -59,7 +59,7 @@ private:
 class LogProducer final : public LogSpaceBase {
 public:
     LogProducer(uint16_t engine_id, const View* view, uint16_t sequencer_id);
-    ~LogProducer();
+    ~LogProducer() = default;
 
     void LocalAppend(void* caller_data, uint64_t* localid);
 
@@ -90,7 +90,7 @@ private:
 class LogStorage final : public LogSpaceBase {
 public:
     LogStorage(uint16_t storage_id, const View* view, uint16_t sequencer_id);
-    ~LogStorage();
+    ~LogStorage() = default;
 
     using LogData = std::variant<std::string, JournalRecord>;
 

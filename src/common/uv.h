@@ -16,9 +16,9 @@ namespace uv {
 
 class Base {
 public:
-    virtual ~Base() {};
+    virtual ~Base() = default;
 protected:
-    Base() {}
+    Base() = default;
 private:
     DISALLOW_COPY_AND_ASSIGN(Base);
 };

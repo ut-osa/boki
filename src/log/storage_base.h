@@ -21,7 +21,7 @@ namespace log {
 class StorageBase : public server::ServerBase {
 public:
     explicit StorageBase(uint16_t node_id);
-    virtual ~StorageBase();
+    virtual ~StorageBase() = default;
 
     void set_db_path(std::string_view path) { db_path_ = std::string(path); }
 

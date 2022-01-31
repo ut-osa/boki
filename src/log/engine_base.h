@@ -141,7 +141,6 @@ private:
     std::optional<LRUCache> log_cache_;
 
     void SetupZKWatchers();
-    void SetupTimers();
 
     void PopulateLogTagsAndData(const protocol::Message& message, LocalOp* op);
 

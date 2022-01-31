@@ -13,7 +13,7 @@ namespace log {
 
 class DBInterface {
 public:
-    virtual ~DBInterface() {}
+    virtual ~DBInterface() = default;
 
     virtual void InstallLogSpace(uint32_t logspace_id) = 0;
     virtual std::optional<std::string> Get(uint32_t logspace_id, uint32_t key) = 0;

@@ -10,7 +10,7 @@ namespace log {
 class Storage final : public StorageBase {
 public:
     explicit Storage(uint16_t node_id);
-    ~Storage();
+    ~Storage() = default;
 
 private:
     std::string log_header_;

@@ -20,8 +20,6 @@ DBWorkers::DBWorkers(StorageBase* storage, size_t num_threads)
     });
 }
 
-DBWorkers::~DBWorkers() {}
-
 void DBWorkers::SubmitLogEntriesForFlush(std::span<const LogStorage::Entry* const> entries) {
     absl::MutexLock lk(&mu_);
     flush_sq_.Submit(entries);

@@ -13,7 +13,7 @@ namespace log {
 class SequencerBase : public server::ServerBase {
 public:
     explicit SequencerBase(uint16_t node_id);
-    virtual ~SequencerBase();
+    virtual ~SequencerBase() = default;
 
 protected:
     uint16_t my_node_id() const { return node_id_; }

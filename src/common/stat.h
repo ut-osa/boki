@@ -19,7 +19,7 @@ public:
         set_report_interval_in_ms(report_interval_in_ms);
         last_report_time_ = -1;
     }
-    ~ReportTimer() {}
+    ~ReportTimer() = default;
 
     void set_report_interval_in_ms(uint32_t value) {
         float tmp = gsl::narrow_cast<float>(value) * utils::GetRandomFloat(0.9f, 1.1f);
@@ -88,7 +88,7 @@ public:
           report_callback_(report_callback),
           force_enabled_(false) {}
 
-    ~StatisticsCollector() {}
+    ~StatisticsCollector() = default;
 
     void set_report_interval_in_ms(uint32_t value) {
         report_timer_.set_report_interval_in_ms(value);
@@ -175,7 +175,7 @@ public:
         : report_callback_(report_callback),
           value_(0), last_report_value_(0) {}
     
-    ~Counter() {}
+    ~Counter() = default;
 
     void set_report_interval_in_ms(uint32_t value) {
         report_timer_.set_report_interval_in_ms(value);
@@ -235,7 +235,7 @@ public:
         : report_callback_(report_callback),
           sum_(0) {}
     
-    ~CategoryCounter() {}
+    ~CategoryCounter() = default;
 
     void Tick(int category, int delta = 1) {
 #ifndef __FAAS_DISABLE_STAT

@@ -48,7 +48,7 @@ UV_CLOSE_CB_FOR_CLASS(HandleScope, HandleClose) {
 Timer::Timer()
     : timerfd_(-1) {}
 
-Timer::~Timer() {}
+Timer::~Timer() = default;
 
 void Timer::Init(uv_loop_t* loop, std::function<void(Timer*)> callback) {
     timerfd_ = io_utils::CreateTimerFd();

@@ -16,7 +16,7 @@ public:
     static constexpr size_t kDefaultNumReplicas = 3;
 
     explicit Controller(uint32_t random_seed);
-    ~Controller();
+    ~Controller() = default;
 
     void set_metalog_replicas(size_t value) { metalog_replicas_ = value; }
     void set_userlog_replicas(size_t value) { userlog_replicas_ = value; }

@@ -15,7 +15,7 @@ namespace log {
 class View {
 public:
     explicit View(const ViewProto& view_proto);
-    ~View() {}
+    ~View() = default;
 
     uint16_t id() const { return id_; }
 
@@ -59,7 +59,7 @@ public:
     class Engine {
     public:
         Engine(Engine&& other) = default;
-        ~Engine() {}
+        ~Engine() = default;
 
         const View* view() const { return view_; }
         uint16_t node_id() const { return node_id_; }
@@ -101,7 +101,7 @@ public:
     class Sequencer {
     public:
         Sequencer(Sequencer&& other) = default;
-        ~Sequencer() {}
+        ~Sequencer() = default;
 
         const View* view() const { return view_; }
         uint16_t node_id() const { return node_id_; }
@@ -153,7 +153,7 @@ public:
     class Storage {
     public:
         Storage(Storage&& other) = default;
-        ~Storage() {}
+        ~Storage() = default;
 
         const View* view() const { return view_; }
         uint16_t node_id() const { return node_id_; }

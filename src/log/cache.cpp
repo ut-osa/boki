@@ -26,8 +26,6 @@ LRUCache::LRUCache(int mem_cap_mb) {
     dbm_.reset(new tkrzw::CacheDBM(/* cap_rec_num= */ -1, cap_mem_size));
 }
 
-LRUCache::~LRUCache() {}
-
 namespace {
 static inline std::string EncodeLogEntry(const LogMetaData& log_metadata,
                                          std::span<const uint64_t> user_tags,

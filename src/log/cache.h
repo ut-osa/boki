@@ -2,8 +2,9 @@
 
 #include "log/common.h"
 
-// Forward declarations
-namespace tkrzw { class CacheDBM; }
+__BEGIN_THIRD_PARTY_HEADERS
+#include <tkrzw_dbm_cache.h>
+__END_THIRD_PARTY_HEADERS
 
 namespace faas {
 namespace log {
@@ -11,7 +12,7 @@ namespace log {
 class LRUCache {
 public:
     explicit LRUCache(int mem_cap_mb);
-    ~LRUCache();
+    ~LRUCache() = default;
 
     void PutBySeqnum(const LogMetaData& log_metadata,
                      std::span<const uint64_t> user_tags,

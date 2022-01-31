@@ -11,7 +11,7 @@ namespace log {
 
 class LogSpaceBase {
 public:
-    virtual ~LogSpaceBase();
+    virtual ~LogSpaceBase() = default;
 
     uint16_t view_id() const { return view_->id(); }
     uint16_t sequencer_id() const { return sequencer_node_->node_id(); }
@@ -86,8 +86,8 @@ private:
 template<class T>
 class LogSpaceCollection {
 public:
-    LogSpaceCollection() {}
-    ~LogSpaceCollection() {}
+    LogSpaceCollection() = default;
+    ~LogSpaceCollection() = default;
 
     // Return nullptr if not found
     LockablePtr<T> GetLogSpace(uint32_t identifier) const;

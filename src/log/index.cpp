@@ -54,7 +54,7 @@ struct Index::PerSpaceIndexResult {
 class Index::PerSpaceIndex {
 public:
     PerSpaceIndex(uint32_t logspace_id, uint32_t user_logspace);
-    ~PerSpaceIndex() {}
+    ~PerSpaceIndex() = default;
 
     void Add(uint32_t seqnum_lowhalf, uint16_t engine_id, const UserTagVec& user_tags);
     void ApplyTrim(uint64_t trim_seqnum, uint64_t user_tag);
