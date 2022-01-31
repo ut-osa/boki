@@ -90,6 +90,19 @@ static bool SetFlag(std::string_view flag_line) {
     }
     return true;
 }
+
+static void PrintAllFlags() {
+    auto all_flags = absl::GetAllFlags();
+    if (all_flags.empty()) {
+        return;
+    }
+    std::stringstream stream;
+    for (const auto& [flag_name, flag] : all_flags) {
+        stream << flag_name << ": " << flag->CurrentValue() << '\n';
+    }
+    LOG(INFO) << fmt::format("All command line flags ({} in total):\n", all_flags.size())
+              << stream.str() << "[END ALL FLAGS]";
+}
 }  // namespace
 
 void InitMain(int argc, char* argv[],
@@ -124,6 +137,8 @@ void InitMain(int argc, char* argv[],
         logging::Init(absl::GetFlag(FLAGS_v));
     }
 
+    Thread::RegisterMainThread();
+
     if (positional_args == nullptr && unparsed_args.size() > 1) {
         LOG(FATAL) << "This program does not accept positional arguments";
     }
@@ -149,7 +164,7 @@ void InitMain(int argc, char* argv[],
         }
     }
 
-    Thread::RegisterMainThread();
+    PrintAllFlags();
 }
 
 void ChainCleanupFn(std::function<void()> fn) {
