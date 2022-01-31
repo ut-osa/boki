@@ -34,6 +34,8 @@ ABSL_FLAG(std::string, profile, "", "A profile file used for setting flags");
         }                                \
     } while (0)
 
+extern char** environ;
+
 namespace faas {
 namespace base {
 
@@ -103,6 +105,15 @@ static void PrintAllFlags() {
     LOG(INFO) << fmt::format("All command line flags ({} in total):\n", all_flags.size())
               << stream.str() << "[END ALL FLAGS]";
 }
+
+static void PrintAllFaaSEnvs() {
+    for (char** s = environ; *s; s++) {
+        std::string_view env_str(*s);
+        if (absl::StartsWith(env_str, "FAAS_")) {
+            LOG(INFO) << "FaaS env: " << env_str;
+        }
+    }
+}
 }  // namespace
 
 void InitMain(int argc, char* argv[],
@@ -165,6 +176,7 @@ void InitMain(int argc, char* argv[],
     }
 
     PrintAllFlags();
+    PrintAllFaaSEnvs();
 }
 
 void ChainCleanupFn(std::function<void()> fn) {
