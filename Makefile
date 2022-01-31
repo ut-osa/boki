@@ -55,9 +55,7 @@ BUILD_BENCH ?= 0
 FORCE_DCHECK ?= 0
 
 ifneq (,$(findstring clang,$(CXX)))
-COMPILE_FLAGS += -Wthread-safety \
-	-Wno-unused-private-field \
-	-Wno-invalid-offsetof  # Protobuf issue
+COMPILE_FLAGS += -Wthread-safety
 endif
 
 ifeq ($(DISABLE_STAT),1)

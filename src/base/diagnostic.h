@@ -5,6 +5,7 @@
 #ifdef __clang__
 
 #pragma clang diagnostic error "-Wimplicit-fallthrough"
+#pragma clang diagnostic ignored "-Wunused-private-field"
 
 #if !defined(__FAAS_NOWARN_CONVERSION)
 #define __CLANG_CONVERSION_DIAGNOSTIC_ENABLED
@@ -20,7 +21,8 @@
     _Pragma("clang diagnostic push")                                         \
     _Pragma("clang diagnostic ignored \"-Winconsistent-missing-override\"")  \
     _Pragma("clang diagnostic ignored \"-Wimplicit-fallthrough\"")           \
-    _Pragma("clang diagnostic ignored \"-Wconversion\"")
+    _Pragma("clang diagnostic ignored \"-Wconversion\"")                     \
+    _Pragma("clang diagnostic ignored \"-Winvalid-offsetof\"")
 
 #define __END_THIRD_PARTY_HEADERS                                            \
     _Pragma("clang diagnostic pop")
