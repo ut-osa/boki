@@ -3,6 +3,7 @@
 #include "base/logging.h"
 #include "base/thread.h"
 #include "utils/docker.h"
+#include "utils/fs.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -12,6 +13,7 @@ __BEGIN_THIRD_PARTY_HEADERS
 
 #include <absl/flags/flag.h>
 #include <absl/flags/parse.h>
+#include <absl/flags/reflection.h>
 #include <absl/debugging/symbolize.h>
 #include <absl/debugging/failure_signal_handler.h>
 
@@ -22,6 +24,7 @@ ABSL_FLAG(std::string, log_path, "",
           "Set file path for logging. If not set, stderr is used.");
 ABSL_FLAG(bool, alsologtostderr, false,
           "If set, will log to stderr in addition to log_path");
+ABSL_FLAG(std::string, profile, "", "A profile file used for setting flags");
 
 #define RAW_CHECK(EXPR, MSG)             \
     do {                                 \
@@ -67,6 +70,26 @@ static void SignalHandler(int signo) {
         RaiseToDefaultHandler(signo);
     }
 }
+
+static bool SetFlag(std::string_view flag_line) {
+    std::vector<std::string_view> parts = absl::StrSplit(flag_line, ' ', absl::SkipWhitespace());
+    if (parts.size() == 0) {
+        return false;
+    }
+    std::string_view flag_name = parts[0];
+    absl::CommandLineFlag* flag = absl::FindCommandLineFlag(flag_name);
+    if (flag == nullptr) {
+        LOG_F(ERROR, "Failed to find flag with name {}", flag_name);
+        return false;
+    }
+    std::string_view value = (parts.size() > 1) ? parts[1] : "true";
+    std::string error_msg;
+    if (!flag->ParseFrom(value, &error_msg)) {
+        LOG_F(ERROR, "Failed to set flag {} with {}: {} ", flag_name, value, error_msg);
+        return false;
+    }
+    return true;
+}
 }  // namespace
 
 void InitMain(int argc, char* argv[],
@@ -108,6 +131,21 @@ void InitMain(int argc, char* argv[],
         positional_args->clear();
         for (size_t i = 1; i < unparsed_args.size(); i++) {
             positional_args->push_back(unparsed_args[i]);
+        }
+    }
+
+    std::string profile_file = absl::GetFlag(FLAGS_profile);
+    if (!profile_file.empty()) {
+        std::string contents;
+        if (!fs_utils::ReadContents(profile_file, &contents)) {
+            LOG(FATAL) << "Failed to read from profile " << profile_file;
+        }
+        std::vector<std::string_view> flag_lines = absl::StrSplit(
+            contents, '\n', absl::SkipWhitespace());
+        for (std::string_view line : flag_lines) {
+            if (!SetFlag(line)) {
+                LOG(FATAL) << "Invalid profile line: " << line;
+            }
         }
     }
 
