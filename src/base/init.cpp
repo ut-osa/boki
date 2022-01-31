@@ -48,10 +48,10 @@ static void RaiseToDefaultHandler(int signo) {
 
 static void SignalHandler(int signo) {
     if (signo == SIGTERM || signo == SIGABRT) {
-        size_t n = next_cleanup_fn.load();
+        int n = static_cast<int>(next_cleanup_fn.load());
         if (n > 0) {
-            fprintf(stderr, "Invoke %d clean-up functions\n", (int) n);
-            for (size_t i = n - 1; i >= 0; i--) {
+            fprintf(stderr, "Invoke %d clean-up functions\n", n);
+            for (int i = n - 1; i >= 0; i--) {
                 cleanup_fns[i]();
             }
         }
