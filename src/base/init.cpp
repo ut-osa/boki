@@ -100,6 +100,9 @@ static void PrintAllFlags() {
     }
     std::stringstream stream;
     for (const auto& [flag_name, flag] : all_flags) {
+        if (absl::EndsWith(flag->Filename(), "absl/flags/parse.cc")) {
+            continue;
+        }
         stream << flag_name << ": " << flag->CurrentValue() << '\n';
     }
     LOG(INFO) << fmt::format("All command line flags ({} in total):\n", all_flags.size())
