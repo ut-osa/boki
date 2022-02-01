@@ -34,7 +34,6 @@
 #define __GCC_CONVERSION_DIAGNOSTIC_ENABLED
 #pragma GCC diagnostic error "-Wconversion"
 #pragma GCC diagnostic error "-Wsign-conversion"
-#pragma GCC diagnostic ignored "-Wfloat-conversion"
 #endif  // !defined(__FAAS_NOWARN_CONVERSION)
 
 #ifdef __FAAS_NOWARN_SIGN_CONVERSION
@@ -44,7 +43,8 @@
 #define __BEGIN_THIRD_PARTY_HEADERS                                          \
     _Pragma("GCC diagnostic push")                                           \
     _Pragma("GCC diagnostic ignored \"-Wconversion\"")                       \
-    _Pragma("GCC diagnostic ignored \"-Wsign-conversion\"")
+    _Pragma("GCC diagnostic ignored \"-Wsign-conversion\"")                  \
+    _Pragma("GCC diagnostic ignored \"-Wfloat-conversion\"")
 
 #define __END_THIRD_PARTY_HEADERS                                            \
     _Pragma("GCC diagnostic pop")
