@@ -19,10 +19,8 @@
 
 #define __BEGIN_THIRD_PARTY_HEADERS                                          \
     _Pragma("clang diagnostic push")                                         \
-    _Pragma("clang diagnostic ignored \"-Winconsistent-missing-override\"")  \
     _Pragma("clang diagnostic ignored \"-Wimplicit-fallthrough\"")           \
-    _Pragma("clang diagnostic ignored \"-Wconversion\"")                     \
-    _Pragma("clang diagnostic ignored \"-Winvalid-offsetof\"")
+    _Pragma("clang diagnostic ignored \"-Wconversion\"")
 
 #define __END_THIRD_PARTY_HEADERS                                            \
     _Pragma("clang diagnostic pop")
@@ -34,6 +32,7 @@
 #define __GCC_CONVERSION_DIAGNOSTIC_ENABLED
 #pragma GCC diagnostic error "-Wconversion"
 #pragma GCC diagnostic error "-Wsign-conversion"
+#pragma GCC diagnostic error "-Wfloat-conversion"
 #endif  // !defined(__FAAS_NOWARN_CONVERSION)
 
 #ifdef __FAAS_NOWARN_SIGN_CONVERSION
