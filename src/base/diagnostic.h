@@ -1,9 +1,9 @@
 #pragma once
 
-#ifdef __FAAS_SRC
+#if defined(__FAAS_SRC) && !defined(__INTELLISENSE__)
 
-#ifdef __clang__
-// Compiler is clang
+#if defined(__clang__)
+// Compiler is Clang
 
 #pragma clang diagnostic error "-Wimplicit-fallthrough"
 #pragma clang diagnostic ignored "-Wunused-private-field"
@@ -32,7 +32,6 @@
 
 #if !defined(__FAAS_NOWARN_CONVERSION)
 #define __GCC_CONVERSION_DIAGNOSTIC_ENABLED
-// #pragma GCC diagnostic error "-Warith-conversion"
 #pragma GCC diagnostic error "-Wconversion"
 #pragma GCC diagnostic error "-Wsign-conversion"
 #pragma GCC diagnostic ignored "-Wfloat-conversion"
@@ -52,7 +51,7 @@
 
 #endif
 
-#endif  // __FAAS_SRC
+#endif  // defined(__FAAS_SRC) && !defined(__INTELLISENSE__)
 
 #ifndef __BEGIN_THIRD_PARTY_HEADERS
 #define __BEGIN_THIRD_PARTY_HEADERS
