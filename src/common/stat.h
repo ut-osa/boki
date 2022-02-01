@@ -139,7 +139,7 @@ private:
 
     inline T percentile(double p) {
         DCHECK(!samples_.empty());
-        size_t idx = gsl::narrow_cast<size_t>(samples_.size() * p + 0.5);
+        size_t idx = gsl::narrow_cast<size_t>(gsl::narrow_cast<double>(samples_.size()) * p + 0.5);
         if (idx >= samples_.size()) {
             idx = samples_.size() - 1;
         }
@@ -219,7 +219,8 @@ public:
             bool first = true;
             for (const auto& entry : values) {
                 if (entry.second == 0) continue;
-                double percentage = gsl::narrow_cast<double>(entry.second) / sum * 100;
+                double percentage = 100.0 * gsl::narrow_cast<double>(entry.second)
+                                          / gsl::narrow_cast<double>(sum);
                 if (!first) {
                     stream << ", ";
                 } else {

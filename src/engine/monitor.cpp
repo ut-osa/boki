@@ -184,10 +184,10 @@ void Monitor::BackgroundThreadMain() {
                    worker_name, user_load_stat, sys_load_stat);
             float voluntary_ctxt_switches_rate = compute_rate(
                 last_stat.timestamp, last_stat.voluntary_ctxt_switches,
-                stat.timestamp, stat.voluntary_ctxt_switches) * 1e6;
+                stat.timestamp, stat.voluntary_ctxt_switches) * 1e6f;
             float nonvoluntary_ctxt_switches_rate = compute_rate(
                 last_stat.timestamp, last_stat.nonvoluntary_ctxt_switches,
-                stat.timestamp, stat.nonvoluntary_ctxt_switches) * 1e6;
+                stat.timestamp, stat.nonvoluntary_ctxt_switches) * 1e6f;
             HLOG_F(INFO, "IOWorker[{}] ctxt_switches_rate: voluntary={}, nonvoluntary={}",
                    worker_name, voluntary_ctxt_switches_rate, nonvoluntary_ctxt_switches_rate);
             io_thread_stats[tid] = std::move(stat);

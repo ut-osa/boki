@@ -188,7 +188,8 @@ bool StorageBase::SendEngineResponse(const SharedLogMessage& request,
                                      std::span<const char> payload2,
                                      std::span<const char> payload3) {
     response->origin_node_id = node_id_;
-    response->hop_times = request.hop_times + 1;
+    response->hop_times = request.hop_times;
+    response->hop_times++;
     response->payload_size = gsl::narrow_cast<uint32_t>(
         payload1.size() + payload2.size() + payload3.size());
     response->client_data = request.client_data;

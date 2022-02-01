@@ -672,7 +672,8 @@ SharedLogMessage Engine::BuildReadRequestMessage(const IndexQuery& query) {
     SharedLogMessage request = SharedLogMessageHelper::NewReadMessage(
         query.DirectionToOpType());
     request.origin_node_id = query.origin_node_id;
-    request.hop_times = query.hop_times + 1;
+    request.hop_times = query.hop_times;
+    request.hop_times++;
     if (query.initial) {
         request.flags |= protocol::kReadInitialFlag;
     }

@@ -80,9 +80,9 @@ Tracer::FuncCallInfo* Tracer::OnNewFuncCall(const FuncCall& func_call,
             current_timestamp = per_func_stat->last_request_timestamp + 1;
         }
         if (per_func_stat->last_request_timestamp != -1) {
-            double instant_rps = gsl::narrow_cast<double>(
-                1e6 / (current_timestamp - per_func_stat->last_request_timestamp));
-            per_func_stat->instant_rps_stat.AddSample(instant_rps);
+            double instant_rps = 1e6 / gsl::narrow_cast<double>(
+                current_timestamp - per_func_stat->last_request_timestamp);
+            per_func_stat->instant_rps_stat.AddSample(gsl::narrow_cast<float>(instant_rps));
             per_func_stat->instant_rps_ema.AddSample(current_timestamp, instant_rps);
         }
         per_func_stat->last_request_timestamp = current_timestamp;

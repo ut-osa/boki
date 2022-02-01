@@ -73,7 +73,7 @@ void Thread::MarkThreadCategory(std::string_view category) {
         cpu_set_t set;
         CPU_ZERO(&set);
         for (const std::string_view& cpu_str : absl::StrSplit(cpuset_str, ",")) {
-            int cpu;
+            size_t cpu;
             CHECK(absl::SimpleAtoi(cpu_str, &cpu));
             CPU_SET(cpu, &set);
         }

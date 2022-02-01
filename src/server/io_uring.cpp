@@ -2,6 +2,7 @@
 
 #include "base/init.h"
 #include "common/time.h"
+#include "utils/bits.h"
 
 ABSL_FLAG(size_t, io_uring_entries, 2048, "");
 ABSL_FLAG(size_t, io_uring_fd_slots, 1024, "");
@@ -385,7 +386,7 @@ IOUring::Op* IOUring::AllocConnectOp(Descriptor* desc,
     ALLOC_OP(kConnect, op);
     op->desc = desc;
     op->addr = addr;
-    op->addrlen = addrlen;
+    op->addrlen = gsl::narrow_cast<uint32_t>(addrlen);
     desc->op_count++;
     return op;
 }
@@ -397,7 +398,8 @@ IOUring::Op* IOUring::AllocReadOp(Descriptor* desc, uint16_t buf_gid, std::span<
     op->buf_gid = buf_gid;
     op->flags = flags;
     op->buf = buf.data();
-    op->buf_len = buf.size();
+    DCHECK_EQ(bits::HighHalf64(buf.size()), 0U);
+    op->buf_len = bits::LowHalf64(buf.size());
     desc->op_count++;
     return op;
 }
@@ -406,7 +408,8 @@ IOUring::Op* IOUring::AllocWriteOp(Descriptor* desc, std::span<const char> data)
     ALLOC_OP(kWrite, op);
     op->desc = desc;
     op->data = data.data();
-    op->data_len = data.size();
+    DCHECK_EQ(bits::HighHalf64(data.size()), 0U);
+    op->data_len = bits::LowHalf64(data.size());
     desc->op_count++;
     return op;
 }
@@ -415,7 +418,8 @@ IOUring::Op* IOUring::AllocSendAllOp(Descriptor* desc, std::span<const char> dat
     ALLOC_OP(kSendAll, op);
     op->desc = desc;
     op->data = data.data();
-    op->data_len = data.size();
+    DCHECK_EQ(bits::HighHalf64(data.size()), 0U);
+    op->data_len = bits::LowHalf64(data.size());
     desc->op_count++;
     return op;
 }
@@ -451,11 +455,6 @@ void IOUring::UnregisterFd(Descriptor* desc) {
     fd_indices_.erase(fd);
     HLOG_F(INFO, "unregister fd {}, {} registered fds in total", fd, fd_indices_.size());
 }
-
-#ifdef __CLANG_CONVERSION_DIAGNOSTIC_ENABLED
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wshorten-64-to-32"
-#endif
 
 void IOUring::EnqueueOp(Op* op) {
     VLOG_F(2, "EnqueueOp: id={}, type={}, fd={}",
@@ -496,10 +495,6 @@ void IOUring::EnqueueOp(Op* op) {
     }
     io_uring_sqe_set_data(sqe, reinterpret_cast<void*>(op->id));
 }
-
-#ifdef __CLANG_CONVERSION_DIAGNOSTIC_ENABLED
-#pragma clang diagnostic pop
-#endif
 
 void IOUring::OnOpComplete(Op* op, struct io_uring_cqe* cqe) {
     int res = cqe->res;

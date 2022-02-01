@@ -33,6 +33,12 @@ constexpr uint64_t kInvalidFuncCallId = 0;
 #define NEW_EMPTY_FUNC_CALL(FC_VAR) \
     FuncCall FC_VAR; FC_VAR.full_call_id = 0
 
+
+#ifdef __GCC_CONVERSION_DIAGNOSTIC_ENABLED
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wconversion"
+#endif
+
 class FuncCallHelper {
 public:
     static FuncCall New(uint16_t func_id, uint16_t client_id, uint32_t call_id) {
@@ -67,6 +73,10 @@ public:
 private:
     DISALLOW_IMPLICIT_CONSTRUCTORS(FuncCallHelper);
 };
+
+#ifdef __GCC_CONVERSION_DIAGNOSTIC_ENABLED
+#pragma GCC diagnostic pop
+#endif
 
 #undef NEW_EMPTY_FUNC_CALL
 
@@ -294,6 +304,11 @@ struct SharedLogMessage {
 } __attribute__ (( packed, aligned(__FAAS_CACHE_LINE_SIZE) ));
 
 static_assert(sizeof(SharedLogMessage) == 64, "Unexpected SharedLogMessage size");
+
+#ifdef __GCC_CONVERSION_DIAGNOSTIC_ENABLED
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wconversion"
+#endif
 
 class MessageHelper {
 public:
@@ -563,6 +578,10 @@ public:
 private:
     DISALLOW_IMPLICIT_CONSTRUCTORS(GatewayMessageHelper);
 };
+
+#ifdef __GCC_CONVERSION_DIAGNOSTIC_ENABLED
+#pragma GCC diagnostic pop
+#endif
 
 class SharedLogMessageHelper {
 public:

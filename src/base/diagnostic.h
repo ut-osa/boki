@@ -3,6 +3,7 @@
 #ifdef __FAAS_SRC
 
 #ifdef __clang__
+// Compiler is clang
 
 #pragma clang diagnostic error "-Wimplicit-fallthrough"
 #pragma clang diagnostic ignored "-Wunused-private-field"
@@ -10,7 +11,6 @@
 #if !defined(__FAAS_NOWARN_CONVERSION)
 #define __CLANG_CONVERSION_DIAGNOSTIC_ENABLED
 #pragma clang diagnostic error "-Wconversion"
-#pragma clang diagnostic ignored "-Wimplicit-float-conversion"
 #endif  // !defined(__FAAS_NOWARN_CONVERSION)
 
 #ifdef __FAAS_NOWARN_SIGN_CONVERSION
@@ -27,7 +27,30 @@
 #define __END_THIRD_PARTY_HEADERS                                            \
     _Pragma("clang diagnostic pop")
 
-#endif  // __clang__
+#elif defined(__GNUC__)
+// Compiler is GCC
+
+#if !defined(__FAAS_NOWARN_CONVERSION)
+#define __GCC_CONVERSION_DIAGNOSTIC_ENABLED
+// #pragma GCC diagnostic error "-Warith-conversion"
+#pragma GCC diagnostic error "-Wconversion"
+#pragma GCC diagnostic error "-Wsign-conversion"
+#pragma GCC diagnostic ignored "-Wfloat-conversion"
+#endif  // !defined(__FAAS_NOWARN_CONVERSION)
+
+#ifdef __FAAS_NOWARN_SIGN_CONVERSION
+#pragma GCC diagnostic ignored "-Wsign-conversion"
+#endif  // __FAAS_NOWARN_SIGN_CONVERSION
+
+#define __BEGIN_THIRD_PARTY_HEADERS                                          \
+    _Pragma("GCC diagnostic push")                                           \
+    _Pragma("GCC diagnostic ignored \"-Wconversion\"")                       \
+    _Pragma("GCC diagnostic ignored \"-Wsign-conversion\"")
+
+#define __END_THIRD_PARTY_HEADERS                                            \
+    _Pragma("GCC diagnostic pop")
+
+#endif
 
 #endif  // __FAAS_SRC
 

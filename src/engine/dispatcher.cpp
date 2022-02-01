@@ -173,10 +173,11 @@ bool Dispatcher::DispatchPendingFuncCall(FuncWorker* func_worker) {
         PendingFuncCall pending_func_call = pending_func_calls_.front();
         pending_func_calls_.pop();
         Tracer::FuncCallInfo* func_call_info = pending_func_call.func_call_info;
-        int64_t queueing_delay;
+        double queueing_delay;
         {
             absl::ReaderMutexLock lk(&func_call_info->mu);
-            queueing_delay = current_timestamp - func_call_info->recv_timestamp;
+            queueing_delay = gsl::narrow_cast<double>(
+                current_timestamp - func_call_info->recv_timestamp);
         }
         Message* dispatch_func_call_message = pending_func_call.dispatch_func_call_message;
         FuncCall func_call = MessageHelper::GetFuncCall(*dispatch_func_call_message);

@@ -369,7 +369,8 @@ bool EngineBase::SendStorageReadRequest(const IndexQueryResult& result,
         bits::HighHalf64(seqnum), bits::LowHalf64(seqnum));
     request.user_metalog_progress = result.metalog_progress;
     request.origin_node_id = result.original_query.origin_node_id;
-    request.hop_times = result.original_query.hop_times + 1;
+    request.hop_times = result.original_query.hop_times;
+    request.hop_times++;
     request.client_data = result.original_query.client_data;
     for (int i = 0; i < kMaxRetries; i++) {
         uint16_t storage_id = engine_node->PickStorageNode();
@@ -388,7 +389,8 @@ void EngineBase::SendReadResponse(const IndexQuery& query,
                                   std::span<const char> data_payload,
                                   std::span<const char> aux_data_payload) {
     response->origin_node_id = node_id_;
-    response->hop_times = query.hop_times + 1;
+    response->hop_times = query.hop_times;
+    response->hop_times++;
     response->client_data = query.client_data;
     response->payload_size = gsl::narrow_cast<uint32_t>(
         user_tags_payload.size() + data_payload.size() + aux_data_payload.size());

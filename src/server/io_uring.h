@@ -105,9 +105,9 @@ private:
             const struct sockaddr* addr;  // Used by kConnect
         };
         union {
-            size_t buf_len;   // Used by kRead
-            size_t data_len;  // Used by kWrite, kSendAll
-            size_t addrlen;   // Used by kConnect
+            uint32_t buf_len;   // Used by kRead
+            uint32_t data_len;  // Used by kWrite, kSendAll
+            uint32_t addrlen;   // Used by kConnect
         };
         uint64_t root_op;    // Used by kSendAll
         uint64_t next_op;    // Used by kSendAll, kCancel
@@ -140,8 +140,8 @@ private:
         }
         return -1;
     }
-    inline size_t op_fd_idx(const Op* op) {
-        return DCHECK_NOTNULL(op->desc)->index;
+    inline int op_fd_idx(const Op* op) {
+        return gsl::narrow_cast<int>(DCHECK_NOTNULL(op->desc)->index);
     }
 
     bool StartReadInternal(int fd, uint16_t buf_gid, uint16_t flags, ReadCallback cb);

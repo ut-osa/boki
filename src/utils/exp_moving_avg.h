@@ -16,7 +16,7 @@ public:
     template<class T>
     void AddSample(T sample) {
         if (n_samples_ < min_samples_) {
-            avg_ += static_cast<double>(sample) / min_samples_;
+            avg_ += static_cast<double>(sample) / gsl::narrow_cast<double>(min_samples_);
         } else {
             avg_ += alpha_ * (static_cast<double>(sample) - avg_);
         }
@@ -63,22 +63,21 @@ public:
         if (last_timestamp_us_ > 0 && timestamp_us <= last_timestamp_us_) {
             return;
         }
+        double v;
+        if (p_ == 0) {
+            v = std::log(static_cast<double>(sample));
+        } else {
+            v = std::pow(static_cast<double>(sample), p_);
+        }
         if (n_samples_ < min_samples_) {
-            if (p_ == 0) {
-                avg_ += std::log(static_cast<double>(sample)) / min_samples_;
-            } else {
-                avg_ += std::pow(static_cast<double>(sample), p_) / min_samples_;
-            }
+            avg_ += v / gsl::narrow_cast<double>(min_samples_);
         } else {
             double alpha = alpha_;
             if (tau_us_ > 0) {
-                alpha = 1.0 - std::exp(-(timestamp_us - last_timestamp_us_) / tau_us_);
+                double d = gsl::narrow_cast<double>(timestamp_us - last_timestamp_us_);
+                alpha = 1.0 - std::exp(-d / tau_us_);
             }
-            if (p_ == 0) {
-                avg_ += alpha * (std::log(static_cast<double>(sample)) - avg_);
-            } else {
-                avg_ += alpha * (std::pow(static_cast<double>(sample), p_) - avg_);
-            }
+            avg_ += alpha * (v - avg_);
         }
         last_timestamp_us_ = timestamp_us;
         n_samples_++;
