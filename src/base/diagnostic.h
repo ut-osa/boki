@@ -6,7 +6,6 @@
 // Compiler is Clang
 
 #pragma clang diagnostic error "-Wimplicit-fallthrough"
-#pragma clang diagnostic ignored "-Wunused-private-field"
 
 #if !defined(__FAAS_NOWARN_CONVERSION)
 #define __CLANG_CONVERSION_DIAGNOSTIC_ENABLED
