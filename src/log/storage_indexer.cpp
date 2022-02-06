@@ -102,10 +102,9 @@ void StorageIndexer::Put(const Record& record) {
 
 bool StorageIndexer::GetJournalLocation(uint64_t seqnum,
                                         int* file_id, size_t* offset) {
-    DCHECK_NOTNULL(journal_index_);
     std::string key = bits::HexStr(seqnum);
     std::string value;
-    auto status = journal_index_->Get(key, &value);
+    auto status = DCHECK_NOTNULL(journal_index_)->Get(key, &value);
     if (status == tkrzw::Status::NOT_FOUND_ERROR) {
         return false;
     }
