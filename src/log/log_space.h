@@ -92,6 +92,10 @@ public:
     LogStorage(uint16_t storage_id, const View* view, uint16_t sequencer_id);
     ~LogStorage() = default;
 
+    bool all_persisted() const {
+        return persisted_seqnum_position_ == seqnum_position();
+    }
+
     using LogData = std::variant<std::string, JournalRecord>;
 
     struct Entry {
@@ -105,7 +109,7 @@ public:
 
     using LogEntryVec = absl::InlinedVector<const Entry*, 4>;
     void GrabLogEntriesForPersistence(LogEntryVec* log_entires);
-    void LogEntriesPersisted(uint64_t new_position);
+    void LogEntriesPersisted(std::span<const uint64_t> seqnums);
 
     struct ReadResult {
         enum Status { kInlined, kLookupDB, kFailed };
@@ -138,6 +142,8 @@ private:
     utils::SimpleObjectPool<Entry> entry_pool_;
 
     uint64_t persisted_seqnum_position_;
+    std::set<uint64_t> persisted_seqnums_;
+
     std::deque<uint64_t> live_seqnums_;
     absl::flat_hash_map</* seqnum */ uint64_t, const Entry*> live_log_entries_;
     LogEntryVec entries_for_persistence_;

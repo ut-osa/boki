@@ -28,14 +28,14 @@ StorageBase::StorageBase(uint16_t node_id)
       db_(nullptr) {}
 
 void StorageBase::StartInternal() {
-    SetupZKWatchers();
-    SetupTimers();
     log_cache_.emplace(absl::GetFlag(FLAGS_slog_storage_cache_cap_mb));
     if (db_enabled()) {
         SetupDB();
         db_workers_.emplace(this, absl::GetFlag(FLAGS_slog_storage_flusher_threads));
     }
     indexer_.emplace(db_path_, journal_enabled());
+    SetupTimers();
+    SetupZKWatchers();
 }
 
 void StorageBase::StopInternal() {

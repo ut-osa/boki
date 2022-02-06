@@ -261,13 +261,14 @@ void Storage::OnRecvNewMetaLogs(const SharedLogMessage& message,
         SendIndexData(DCHECK_NOTNULL(view), *index_data);
     }
     if (!new_log_entires.empty()) {
-        for (const auto& entry : new_log_entires) {
-            IndexerInsert(entry);
-        }
         if (db_enabled()) {
             db_workers()->SubmitLogEntriesForFlush(VECTOR_AS_SPAN(new_log_entires));
         } else {
-            CommitLogEntries(new_log_entires);
+            CurrentIOWorker()->ScheduleIdleFunction(
+                nullptr, [this, new_log_entires = std::move(new_log_entires)] {
+                    CommitLogEntries(new_log_entires);
+                }
+            );
         }
     }
 }
@@ -563,26 +564,26 @@ void Storage::FlushLogEntries(std::span<const LogStorage::Entry* const> entries)
 void Storage::CommitLogEntries(std::span<const LogStorage::Entry* const> entries) {
     HVLOG_F(1, "Will commit the persistence of {} entries", entries.size());
 
-    absl::flat_hash_map<uint32_t, uint64_t> new_positions;
+    for (const auto& entry : entries) {
+        IndexerInsert(entry);
+    }
+
+    absl::flat_hash_map<uint32_t, std::vector<uint64_t>> seqnums_by_logspace;
     for (const LogStorage::Entry* entry : entries) {
         uint64_t seqnum = entry->metadata.seqnum;
         uint32_t logspace_id = bits::HighHalf64(seqnum);
-        if (new_positions.contains(logspace_id)) {
-            DCHECK_GE(seqnum, new_positions.at(logspace_id));
-        }
-        new_positions[logspace_id] = seqnum + 1;
+        seqnums_by_logspace[logspace_id].push_back(seqnum);
     }
 
     std::vector<uint32_t> finalized_logspaces;
     {
         absl::ReaderMutexLock view_lk(&view_mu_);
-        for (const auto& [logspace_id, new_position] : new_positions) {
+        for (const auto& [logspace_id, seqnums] : seqnums_by_logspace) {
             auto storage_ptr = storage_collection_.GetLogSpaceChecked(logspace_id);
             {
                 auto locked_storage = storage_ptr.Lock();
-                locked_storage->LogEntriesPersisted(new_position);
-                if (locked_storage->finalized()
-                        && new_position >= locked_storage->seqnum_position()) {
+                locked_storage->LogEntriesPersisted(VECTOR_AS_SPAN(seqnums));
+                if (locked_storage->finalized() && locked_storage->all_persisted()) {
                     finalized_logspaces.push_back(locked_storage->identifier());
                 }
             }

@@ -320,8 +320,16 @@ void LogStorage::GrabLogEntriesForPersistence(LogEntryVec* log_entires) {
     entries_for_persistence_.clear();
 }
 
-void LogStorage::LogEntriesPersisted(uint64_t new_position) {
-    persisted_seqnum_position_ = new_position;
+void LogStorage::LogEntriesPersisted(std::span<const uint64_t> seqnums) {
+    for (const uint64_t seqnum : seqnums) {
+        DCHECK(persisted_seqnums_.count(seqnum) == 0);
+        persisted_seqnums_.insert(seqnum);
+    }
+    auto iter = persisted_seqnums_.begin();
+    while (iter != persisted_seqnums_.end() && *iter == persisted_seqnum_position_) {
+        persisted_seqnum_position_++;
+        iter = persisted_seqnums_.erase(iter);
+    }
     ShrinkLiveEntriesIfNeeded();
 }
 
