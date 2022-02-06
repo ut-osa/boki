@@ -75,7 +75,7 @@ RocksDBBackend::RocksDBBackend(std::string_view db_path) {
     HLOG_F(INFO, "Open RocksDB at path {}", db_path);
     auto status = rocksdb::DB::Open(options, std::string(db_path), &db);
     ROCKSDB_CHECK_OK(status, Open);
-    db_.reset(db);
+    db_ = absl::WrapUnique(db);
 }
 
 RocksDBBackend::~RocksDBBackend() {}
@@ -150,6 +150,17 @@ void RocksDBBackend::Delete(uint32_t logspace_id, std::span<const uint32_t> keys
     }
     auto status = db_->Write(rocksdb::WriteOptions(), &write_batch);
     ROCKSDB_CHECK_OK(status, Write);
+}
+
+void RocksDBBackend::StagingPut(std::string_view key, std::span<const char> data) {
+    auto status = db_->Put(rocksdb::WriteOptions(), key,
+                           rocksdb::Slice(data.data(), data.size()));
+    ROCKSDB_CHECK_OK(status, Put);
+}
+
+void RocksDBBackend::StagingDelete(std::string_view key) {
+    auto status = db_->Delete(rocksdb::WriteOptions(), key);
+    ROCKSDB_CHECK_OK(status, Delete);
 }
 
 rocksdb::ColumnFamilyHandle* RocksDBBackend::GetCFHandle(uint32_t logspace_id) {
@@ -259,8 +270,7 @@ void LMDBBackend::PutBatch(const Batch& batch) {
 }
 
 void LMDBBackend::Delete(uint32_t logspace_id, std::span<const uint32_t> keys) {
-    NOT_IMPLEMENTED();
-     MDB_dbi dbi;
+    MDB_dbi dbi;
     if (auto tmp = GetDB(logspace_id); tmp.has_value()) {
         dbi = tmp.value();
     } else {
@@ -283,6 +293,14 @@ void LMDBBackend::Delete(uint32_t logspace_id, std::span<const uint32_t> keys) {
     LMDB_CHECK_OK(ret, TxnCommit);
 }
 
+void LMDBBackend::StagingPut(std::string_view key, std::span<const char> data) {
+    NOT_IMPLEMENTED();
+}
+
+void LMDBBackend::StagingDelete(std::string_view key) {
+    NOT_IMPLEMENTED();
+}
+
 std::optional<MDB_dbi> LMDBBackend::GetDB(uint32_t logspace_id) {
     absl::ReaderMutexLock lk(&mu_);
     if (!dbs_.contains(logspace_id)) {
@@ -293,56 +311,26 @@ std::optional<MDB_dbi> LMDBBackend::GetDB(uint32_t logspace_id) {
 
 TkrzwDBMBackend::TkrzwDBMBackend(Type type, std::string_view db_path)
     : type_(type),
-      db_path_(db_path) {}
+      db_path_(db_path) {
+    staging_db_ = CreateDBM("staging");
+}
 
 TkrzwDBMBackend::~TkrzwDBMBackend() {
     for (const auto& [logspace_id, dbm] : dbs_) {
         auto status = dbm->Close();
         TKRZW_CHECK_OK(status, Close);
     }
+    auto status = staging_db_->Close();
+    TKRZW_CHECK_OK(status, Close);
 }
 
 void TkrzwDBMBackend::InstallLogSpace(uint32_t logspace_id) {
     HLOG_F(INFO, "Install log space {}", bits::HexStr0x(logspace_id));
-    tkrzw::DBM* db_ptr = nullptr;
-    if (type_ == kHashDBM) {
-        tkrzw::HashDBM* db = new tkrzw::HashDBM();
-        tkrzw::HashDBM::TuningParameters params;
-        auto status = db->OpenAdvanced(
-            /* path= */ fmt::format("{}/{}.tkh", db_path_, bits::HexStr(logspace_id)),
-            /* writable= */ true,
-            /* options= */ tkrzw::File::OPEN_DEFAULT,
-            /* tuning_params= */ params);
-        TKRZW_CHECK_OK(status, Open);
-        db_ptr = db;
-    } else if (type_ == kTreeDBM) {
-        tkrzw::TreeDBM* db = new tkrzw::TreeDBM();
-        tkrzw::TreeDBM::TuningParameters params;
-        auto status = db->OpenAdvanced(
-            /* path= */ fmt::format("{}/{}.tkt", db_path_, bits::HexStr(logspace_id)),
-            /* writable= */ true,
-            /* options= */ tkrzw::File::OPEN_DEFAULT,
-            /* tuning_params= */ params);
-        TKRZW_CHECK_OK(status, Open);
-        db_ptr = db;
-    } else if (type_ == kSkipDBM) {
-        tkrzw::SkipDBM* db = new tkrzw::SkipDBM();
-        tkrzw::SkipDBM::TuningParameters params;
-        auto status = db->OpenAdvanced(
-            /* path= */ fmt::format("{}/{}.tks", db_path_, bits::HexStr(logspace_id)),
-            /* writable= */ true,
-            /* options= */ tkrzw::File::OPEN_DEFAULT,
-            /* tuning_params= */ params);
-        TKRZW_CHECK_OK(status, Open);
-        db_ptr = db;
-    } else {
-        UNREACHABLE();
-    }
-
+    auto db = CreateDBM(bits::HexStr(logspace_id));
     {
         absl::MutexLock lk(&mu_);
         DCHECK(!dbs_.contains(logspace_id));
-        dbs_[logspace_id].reset(DCHECK_NOTNULL(db_ptr));
+        dbs_[logspace_id] = std::move(db);
     }
 }
 
@@ -390,6 +378,54 @@ void TkrzwDBMBackend::Delete(uint32_t logspace_id, std::span<const uint32_t> key
         }
         TKRZW_CHECK_OK(status, Remove);
     }
+}
+
+void TkrzwDBMBackend::StagingPut(std::string_view key, std::span<const char> data) {
+    auto status = staging_db_->Set(key, std::string_view(data.data(), data.size()));
+    TKRZW_CHECK_OK(status, Set);
+}
+
+void TkrzwDBMBackend::StagingDelete(std::string_view key) {
+    auto status = staging_db_->Remove(key);
+    TKRZW_CHECK_OK(status, Set);
+}
+
+std::unique_ptr<tkrzw::DBM> TkrzwDBMBackend::CreateDBM(std::string_view name) {
+    tkrzw::DBM* db_ptr = nullptr;
+    if (type_ == kHashDBM) {
+        tkrzw::HashDBM* db = new tkrzw::HashDBM();
+        tkrzw::HashDBM::TuningParameters params;
+        auto status = db->OpenAdvanced(
+            /* path= */ fmt::format("{}/{}.tkh", db_path_, name),
+            /* writable= */ true,
+            /* options= */ tkrzw::File::OPEN_DEFAULT,
+            /* tuning_params= */ params);
+        TKRZW_CHECK_OK(status, Open);
+        db_ptr = db;
+    } else if (type_ == kTreeDBM) {
+        tkrzw::TreeDBM* db = new tkrzw::TreeDBM();
+        tkrzw::TreeDBM::TuningParameters params;
+        auto status = db->OpenAdvanced(
+            /* path= */ fmt::format("{}/{}.tkt", db_path_, name),
+            /* writable= */ true,
+            /* options= */ tkrzw::File::OPEN_DEFAULT,
+            /* tuning_params= */ params);
+        TKRZW_CHECK_OK(status, Open);
+        db_ptr = db;
+    } else if (type_ == kSkipDBM) {
+        tkrzw::SkipDBM* db = new tkrzw::SkipDBM();
+        tkrzw::SkipDBM::TuningParameters params;
+        auto status = db->OpenAdvanced(
+            /* path= */ fmt::format("{}/{}.tks", db_path_, name),
+            /* writable= */ true,
+            /* options= */ tkrzw::File::OPEN_DEFAULT,
+            /* tuning_params= */ params);
+        TKRZW_CHECK_OK(status, Open);
+        db_ptr = db;
+    } else {
+        UNREACHABLE();
+    }
+    return absl::WrapUnique(db_ptr);
 }
 
 tkrzw::DBM* TkrzwDBMBackend::GetDBM(uint32_t logspace_id) {

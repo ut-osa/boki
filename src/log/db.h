@@ -26,6 +26,9 @@ public:
     virtual void PutBatch(const Batch& batch) = 0;
 
     virtual void Delete(uint32_t logspace_id, std::span<const uint32_t> keys) = 0;
+
+    virtual void StagingPut(std::string_view key, std::span<const char> data) = 0;
+    virtual void StagingDelete(std::string_view key) = 0;
 };
 
 class RocksDBBackend final : public DBInterface {
@@ -37,6 +40,8 @@ public:
     std::optional<std::string> Get(uint32_t logspace_id, uint32_t key) override;
     void PutBatch(const Batch& batch) override;
     void Delete(uint32_t logspace_id, std::span<const uint32_t> keys) override;
+    void StagingPut(std::string_view key, std::span<const char> data) override;
+    void StagingDelete(std::string_view key) override;
 
 private:
     std::unique_ptr<rocksdb::DB> db_;
@@ -59,6 +64,8 @@ public:
     std::optional<std::string> Get(uint32_t logspace_id, uint32_t key) override;
     void PutBatch(const Batch& batch) override;
     void Delete(uint32_t logspace_id, std::span<const uint32_t> keys) override;
+    void StagingPut(std::string_view key, std::span<const char> data) override;
+    void StagingDelete(std::string_view key) override;
 
 private:
     std::string db_path_;
@@ -84,16 +91,21 @@ public:
     std::optional<std::string> Get(uint32_t logspace_id, uint32_t key) override;
     void PutBatch(const Batch& batch) override;
     void Delete(uint32_t logspace_id, std::span<const uint32_t> keys) override;
+    void StagingPut(std::string_view key, std::span<const char> data) override;
+    void StagingDelete(std::string_view key) override;
 
 private:
     Type type_;
     std::string db_path_;
+
+    std::unique_ptr<tkrzw::DBM> staging_db_;
 
     absl::Mutex mu_;
     absl::flat_hash_map</* logspace_id */ uint32_t,
                         std::unique_ptr<tkrzw::DBM>>
         dbs_ ABSL_GUARDED_BY(mu_);
 
+    std::unique_ptr<tkrzw::DBM> CreateDBM(std::string_view name);
     tkrzw::DBM* GetDBM(uint32_t logspace_id);
 
     DISALLOW_COPY_AND_ASSIGN(TkrzwDBMBackend);
