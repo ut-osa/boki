@@ -331,6 +331,7 @@ void LogStorage::LogEntriesPersisted(std::span<const uint64_t> seqnums) {
         DCHECK(live_iter != live_seqnums_.end());
         if (*live_iter == *persisted_iter) {
             persisted_seqnum_position_ = *live_iter + 1;
+            live_iter++;
             persisted_iter = persisted_seqnums_.erase(persisted_iter);
         } else {
             DCHECK_GT(*persisted_iter, *live_iter);
