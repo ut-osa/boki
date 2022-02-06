@@ -325,10 +325,17 @@ void LogStorage::LogEntriesPersisted(std::span<const uint64_t> seqnums) {
         DCHECK(persisted_seqnums_.count(seqnum) == 0);
         persisted_seqnums_.insert(seqnum);
     }
-    auto iter = persisted_seqnums_.begin();
-    while (iter != persisted_seqnums_.end() && *iter == persisted_seqnum_position_) {
-        persisted_seqnum_position_++;
-        iter = persisted_seqnums_.erase(iter);
+    auto live_iter = absl::c_lower_bound(live_seqnums_, persisted_seqnum_position_);
+    auto persisted_iter = persisted_seqnums_.begin();
+    while (persisted_iter != persisted_seqnums_.end()) {
+        DCHECK(live_iter != live_seqnums_.end());
+        if (*live_iter == *persisted_iter) {
+            persisted_seqnum_position_ = *live_iter + 1;
+            persisted_iter = persisted_seqnums_.erase(persisted_iter);
+        } else {
+            DCHECK_GT(*persisted_iter, *live_iter);
+            break;
+        }
     }
     ShrinkLiveEntriesIfNeeded();
 }
@@ -354,7 +361,7 @@ LogStorage::TrimOpVec LogStorage::FetchTrimOps() const {
     for (const auto& [user_logspace, trim_seqnum] : trim_seqnums_) {
         trim_ops.push_back({
             .user_logspace = user_logspace,
-            .trim_seqnum = std::min(persisted_seqnum_position_, trim_seqnum)
+            .trim_seqnum = trim_seqnum,
         });
     }
     return trim_ops;

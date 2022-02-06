@@ -93,7 +93,7 @@ public:
     ~LogStorage() = default;
 
     bool all_persisted() const {
-        return persisted_seqnum_position_ == seqnum_position();
+        return live_seqnums_.empty() || live_seqnums_.back() < persisted_seqnum_position_;
     }
 
     using LogData = std::variant<std::string, JournalRecord>;
