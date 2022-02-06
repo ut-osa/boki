@@ -264,7 +264,7 @@ void Storage::OnRecvNewMetaLogs(const SharedLogMessage& message,
         if (db_enabled()) {
             db_workers()->SubmitLogEntriesForFlush(VECTOR_AS_SPAN(new_log_entires));
         } else {
-            CurrentIOWorker()->ScheduleIdleFunction(
+            CurrentIOWorkerChecked()->ScheduleIdleFunction(
                 nullptr, [this, new_log_entires = std::move(new_log_entires)] {
                     CommitLogEntries(new_log_entires);
                 }

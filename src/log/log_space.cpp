@@ -256,7 +256,7 @@ LogStorage::LogStorage(uint16_t storage_id, const View* view, uint16_t sequencer
     : LogSpaceBase(LogSpaceBase::kFullMode, view, sequencer_id),
       storage_node_(view_->GetStorageNode(storage_id)),
       shard_progrss_dirty_(false),
-      persisted_seqnum_position_(0),
+      persisted_seqnum_position_(bits::JoinTwo32(identifier(), 0)),
       journal_delay_stat_(stat::StatisticsCollector<int>::StandardReportCallback(
           fmt::format("log_space[{}-{}]: journal_delay", view->id(), sequencer_id))),
       live_entries_stat_(stat::StatisticsCollector<int>::StandardReportCallback(
