@@ -6,7 +6,7 @@
 #include <fcntl.h>
 #include <poll.h>
 
-#define log_header_ "ZKSession: "
+#define LOG_HEADER "ZKSession: "
 
 ABSL_FLAG(int, zk_recv_timeout_ms, 2000, "");
 ABSL_FLAG(std::string, zk_logfile, "", "");

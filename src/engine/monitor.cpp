@@ -7,7 +7,7 @@
 
 #include <sys/timerfd.h>
 
-#define log_header_ "Monitor: "
+#define LOG_HEADER "Monitor: "
 
 namespace faas {
 namespace engine {

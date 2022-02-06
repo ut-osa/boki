@@ -2,6 +2,8 @@
 
 #include "log/utils.h"
 
+#define LOG_HEADER log_header_
+
 namespace faas {
 namespace log {
 

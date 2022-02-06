@@ -7,6 +7,8 @@
 
 ABSL_FLAG(bool, hostname_in_output_fname, false, "");
 
+#define LOG_HEADER log_header_
+
 namespace faas {
 namespace launcher {
 

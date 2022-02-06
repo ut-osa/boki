@@ -48,7 +48,7 @@ ABSL_FLAG(size_t, lmdb_mapsize_mb, 1024, "");
         }                                                   \
     } while (0)
 
-#define log_header_ "LogDB: "
+#define LOG_HEADER "LogDB: "
 
 static constexpr size_t kMBytesMultiplier = size_t{1}<<20;
 

@@ -12,7 +12,7 @@
 #include "log/engine.h"
 #include "engine/flags.h"
 
-#define log_header_ "Engine: "
+#define LOG_HEADER "Engine: "
 
 namespace faas {
 namespace engine {

@@ -5,6 +5,8 @@
 #include "utils/bits.h"
 #include "utils/random.h"
 
+#define LOG_HEADER log_header_
+
 namespace faas {
 namespace log {
 

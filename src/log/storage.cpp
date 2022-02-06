@@ -7,6 +7,8 @@
 #include "utils/timerfd.h"
 #include "server/constants.h"
 
+#define LOG_HEADER log_header_
+
 namespace faas {
 namespace log {
 

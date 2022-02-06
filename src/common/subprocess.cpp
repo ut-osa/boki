@@ -1,7 +1,7 @@
 #define __FAAS_NOWARN_SIGN_CONVERSION
 #include "common/subprocess.h"
 
-#define log_header_ "Subprocess: "
+#define LOG_HEADER "Subprocess: "
 
 namespace faas {
 namespace uv {

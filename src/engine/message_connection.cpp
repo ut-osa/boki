@@ -8,6 +8,8 @@
 #include "server/constants.h"
 #include "engine/engine.h"
 
+#define LOG_HEADER log_header_
+
 namespace faas {
 namespace engine {
 

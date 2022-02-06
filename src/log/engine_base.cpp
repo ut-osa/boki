@@ -7,7 +7,7 @@
 #include "engine/engine.h"
 #include "utils/bits.h"
 
-#define log_header_ "LogEngineBase: "
+#define LOG_HEADER "LogEngineBase: "
 
 namespace faas {
 namespace log {

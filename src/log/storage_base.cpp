@@ -6,7 +6,7 @@
 
 #include <sys/eventfd.h>
 
-#define log_header_ "StorageBase: "
+#define LOG_HEADER "StorageBase: "
 
 namespace faas {
 namespace log {

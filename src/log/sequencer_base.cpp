@@ -4,7 +4,7 @@
 #include "server/constants.h"
 #include "utils/bits.h"
 
-#define log_header_ "SequencerBase: "
+#define LOG_HEADER "SequencerBase: "
 
 namespace faas {
 namespace log {

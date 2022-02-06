@@ -11,7 +11,7 @@
 #include <fcntl.h>
 #include <nlohmann/json.hpp>
 
-#define log_header_ "Server: "
+#define LOG_HEADER "Server: "
 
 namespace faas {
 namespace gateway {

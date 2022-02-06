@@ -224,9 +224,9 @@ T CheckNotNull(const char* file, int line, const char* exprtext, T&& t) {
 
 #define DVLOG(level) DLOG_IF(INFO, __FAAS_PREDICT_FALSE((level) <= faas::logging::get_vlog_level()))
 
-#define HLOG(l)  LOG(l)  << log_header_
-#define HPLOG(l) PLOG(l) << log_header_
-#define HVLOG(l) VLOG(l) << log_header_
+#define HLOG(l)  LOG(l)  << LOG_HEADER
+#define HPLOG(l) PLOG(l) << LOG_HEADER
+#define HVLOG(l) VLOG(l) << LOG_HEADER
 
 #define LOG_F(l, fstr, ...)   LOG(l)   << fmt::format(fstr, __VA_ARGS__)
 #define VLOG_F(l, fstr, ...)  VLOG(l)  << fmt::format(fstr, __VA_ARGS__)

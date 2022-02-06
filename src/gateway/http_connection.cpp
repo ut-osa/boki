@@ -7,6 +7,8 @@
 #include <nlohmann/json.hpp>
 using json = nlohmann::json;
 
+#define LOG_HEADER log_header_
+
 namespace faas {
 namespace gateway {
 

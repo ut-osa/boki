@@ -4,6 +4,8 @@
 #include "server/constants.h"
 #include "utils/socket.h"
 
+#define LOG_HEADER log_header_
+
 namespace faas {
 namespace server {
 

@@ -2,7 +2,7 @@
 
 #include "utils/bits.h"
 
-#define log_header_ "ViewWatcher: "
+#define LOG_HEADER "ViewWatcher: "
 
 namespace faas {
 namespace log {

@@ -13,7 +13,7 @@
 #include <fcntl.h>
 #include <poll.h>
 
-#define log_header_ "ServerBase: "
+#define LOG_HEADER "ServerBase: "
 
 namespace faas {
 namespace server {

@@ -17,6 +17,8 @@
 #define LOAD(T, ptr) *reinterpret_cast<const T*>(ptr)
 #define STORE(T, ptr, value) *reinterpret_cast<T*>(ptr) = (value)
 
+#define LOG_HEADER log_header_
+
 namespace faas {
 namespace gateway {
 

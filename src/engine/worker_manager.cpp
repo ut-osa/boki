@@ -4,7 +4,7 @@
 #include "ipc/fifo.h"
 #include "engine/engine.h"
 
-#define log_header_ "WorkerManager: "
+#define LOG_HEADER "WorkerManager: "
 
 namespace faas {
 namespace engine {

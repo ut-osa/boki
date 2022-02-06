@@ -5,7 +5,7 @@
 #include "utils/bits.h"
 #include "utils/hash.h"
 
-#define log_header_ "Controller: "
+#define LOG_HEADER "Controller: "
 
 namespace faas {
 namespace log {

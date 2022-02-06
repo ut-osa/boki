@@ -13,6 +13,8 @@ ABSL_FLAG(uint32_t, io_uring_cq_wait_timeout_us, 0, "");
 
 #define ERRNO_LOGSTR(errno) fmt::format("{} [{}]", strerror(errno), errno)
 
+#define LOG_HEADER log_header_
+
 namespace faas {
 namespace server {
 
