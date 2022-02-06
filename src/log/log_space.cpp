@@ -321,9 +321,19 @@ void LogStorage::GrabLogEntriesForPersistence(LogEntryVec* log_entires) {
 }
 
 void LogStorage::LogEntriesPersisted(std::span<const uint64_t> seqnums) {
+    if (seqnums.empty()) {
+        return;
+    }
+    uint64_t previous_head = kInvalidLogSeqNum;
+    if (!persisted_seqnums_.empty()) {
+        previous_head = *(persisted_seqnums_.begin());
+    }
     for (const uint64_t seqnum : seqnums) {
         DCHECK(persisted_seqnums_.count(seqnum) == 0);
         persisted_seqnums_.insert(seqnum);
+    }
+    if (*(persisted_seqnums_.begin()) == previous_head) {
+        return;
     }
     auto live_iter = absl::c_lower_bound(live_seqnums_, persisted_seqnum_position_);
     auto persisted_iter = persisted_seqnums_.begin();
@@ -382,6 +392,9 @@ std::optional<std::vector<uint32_t>> LogStorage::GrabShardProgressForSending() {
     }
     size_t max_size = absl::GetFlag(FLAGS_slog_storage_max_live_entries);
     if (live_seqnums_.size() > max_size * 2) {
+        HLOG_F(WARNING, "There are too many live seqnums ({} in total), "
+                        "refuse to produce new shard progres",
+               live_seqnums_.size());
         return std::nullopt;
     }
     std::vector<uint32_t> progress;
