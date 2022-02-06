@@ -45,6 +45,7 @@ private:
     int file_id_;
     std::string file_path_;
     int fd_;
+    bool checksum_enabled_;
 
     size_t num_records_;
     size_t appended_bytes_;

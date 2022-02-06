@@ -23,3 +23,4 @@ ABSL_FLAG(size_t, journal_file_max_records, 0,
           "Maximum number of records for individual journal file (0 means no limit)");
 ABSL_FLAG(size_t, journal_file_max_size_mb, 256,
           "Maximum size (in MB) of individual journal file");
+ABSL_FLAG(bool, journal_disable_checksum, false, "Disable checksum for journal records");

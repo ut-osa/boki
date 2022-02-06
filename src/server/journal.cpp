@@ -19,6 +19,7 @@ JournalFile::JournalFile(IOWorker* owner, int file_id)
       owner_(owner),
       file_id_(file_id),
       fd_(-1),
+      checksum_enabled_(!absl::GetFlag(FLAGS_journal_disable_checksum)),
       num_records_(0),
       appended_bytes_(0),
       flushed_bytes_(0),
@@ -55,7 +56,7 @@ void JournalFile::AppendRecord(uint16_t type,
         .type         = type,
         .payload_size = gsl::narrow_cast<uint32_t>(payload_size),
         .timestamp    = GetRealtimeNanoTimestamp(),
-        .checksum     = hash::xxHash64(payload_vec),
+        .checksum     = checksum_enabled_ ? hash::xxHash64(payload_vec) : uint64_t{0},
     };
     size_t record_size = sizeof(hdr) + payload_size;
     OngoingAppend* append_op = append_op_pool_.Get();
@@ -104,7 +105,7 @@ size_t JournalFile::ReadRecord(size_t offset, uint16_t* type,
     char* buf_ptr = buffer->data() + (buffer->length() - hdr.payload_size);
     ReadBytes(fd_, offset + sizeof(hdr), hdr.payload_size, buf_ptr);
     std::span<const char> record_data(buf_ptr, hdr.payload_size);
-    if (hdr.checksum != hash::xxHash64(record_data)) {
+    if (checksum_enabled_ && hdr.checksum != hash::xxHash64(record_data)) {
         LOG(FATAL) << "Checksum check failed for journal record";
     }
     *type = hdr.type;
