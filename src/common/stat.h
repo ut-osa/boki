@@ -15,15 +15,16 @@ class ReportTimer {
 public:
     static constexpr uint32_t kDefaultReportIntervalInMs = 10000;  /* 10 seconds */
 
-    explicit ReportTimer(uint32_t report_interval_in_ms = kDefaultReportIntervalInMs) {
-        set_report_interval_in_ms(report_interval_in_ms);
-        last_report_time_ = -1;
+    explicit ReportTimer(uint32_t report_interval_in_ms = kDefaultReportIntervalInMs)
+        : report_interval_in_ms_(report_interval_in_ms),
+          last_report_time_(-1) {
+        UpdateNextReportInterval();
     }
     ~ReportTimer() = default;
 
     void set_report_interval_in_ms(uint32_t value) {
-        float tmp = gsl::narrow_cast<float>(value) * utils::GetRandomFloat(0.9f, 1.1f);
-        report_interval_in_ms_ = gsl::narrow_cast<uint32_t>(tmp);
+        report_interval_in_ms_ = value;
+        UpdateNextReportInterval();
     }
 
     bool Check() {
@@ -32,8 +33,7 @@ public:
             last_report_time_ = current_time;
             return false;
         } else {
-            return current_time - last_report_time_
-                     > int64_t{report_interval_in_ms_} * 1000; 
+            return current_time - last_report_time_ >= next_report_interval_;
         }
     }
 
@@ -41,11 +41,19 @@ public:
         int64_t current_time = GetMonotonicMicroTimestamp();
         *duration_ms = gsl::narrow_cast<int>((current_time - last_report_time_) / 1000);
         last_report_time_ = current_time;
+        UpdateNextReportInterval();
     }
 
 private:
     uint32_t report_interval_in_ms_;
     int64_t last_report_time_;
+    int64_t next_report_interval_;
+
+    void UpdateNextReportInterval() {
+        float tmp = gsl::narrow_cast<float>(report_interval_in_ms_)
+                  * utils::GetRandomFloat(0.9f, 1.1f);
+        next_report_interval_ = static_cast<int64_t>(tmp * 1000.0f);
+    }
 
     DISALLOW_COPY_AND_ASSIGN(ReportTimer);
 };
@@ -56,7 +64,7 @@ public:
     static constexpr size_t kDefaultMinReportSamples = 200;
 
     struct Report {
-        T p30; T p50; T p70; T p90; T p99; T p99_9;
+        T p30; T p50; T p70; T p90; T p99;
     };
 
     using ReportCallback =
@@ -66,9 +74,9 @@ public:
         return [name = std::string(stat_name)] (int duration_ms, size_t n_samples,
                                                 const Report& report) {
             LOG_F(INFO, "{} statistics ({} samples): "
-                        "p30={}, p50={}, p70={}, p90={}, p99={}, p99.9={}",
+                        "p30={}, p50={}, p70={}, p90={}, p99={}",
                   name, n_samples,
-                  report.p30, report.p50, report.p70, report.p90, report.p99, report.p99_9);
+                  report.p30, report.p50, report.p70, report.p90, report.p99);
         };
     }
 
@@ -77,9 +85,9 @@ public:
         return [name = std::string(stat_name)] (int duration_ms, size_t n_samples,
                                                 const Report& report) {
             VLOG_F(L, "{} statistics ({} samples): "
-                      "p30={}, p50={}, p70={}, p90={}, p99={}, p99.9={}",
+                      "p30={}, p50={}, p70={}, p90={}, p99={}",
                    name, n_samples,
-                   report.p30, report.p50, report.p70, report.p90, report.p99, report.p99_9);
+                   report.p30, report.p50, report.p70, report.p90, report.p99);
         };
     }
 
@@ -132,8 +140,7 @@ private:
             .p50 = percentile(0.5),
             .p70 = percentile(0.7),
             .p90 = percentile(0.9),
-            .p99 = percentile(0.99),
-            .p99_9 = percentile(0.999)
+            .p99 = percentile(0.99)
         };
     }
 
