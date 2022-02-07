@@ -3,7 +3,6 @@
 #include "base/common.h"
 #include "common/time.h"
 #include "utils/bst.h"
-#include "utils/env_variables.h"
 #include "utils/random.h"
 
 #include <math.h>
@@ -94,7 +93,9 @@ public:
     explicit StatisticsCollector(ReportCallback report_callback)
         : min_report_samples_(kDefaultMinReportSamples),
           report_callback_(report_callback),
-          force_enabled_(false) {}
+          force_enabled_(false) {
+        samples_.reserve(min_report_samples_);
+    }
 
     ~StatisticsCollector() = default;
 
@@ -103,6 +104,7 @@ public:
     }
     void set_min_report_samples(size_t value) {
         min_report_samples_ = value;
+        samples_.reserve(min_report_samples_);
     }
     void set_force_enabled(bool value) {
         force_enabled_ = value;
@@ -146,7 +148,8 @@ private:
 
     inline T percentile(double p) {
         DCHECK(!samples_.empty());
-        size_t idx = gsl::narrow_cast<size_t>(gsl::narrow_cast<double>(samples_.size()) * p + 0.5);
+        size_t idx = gsl::narrow_cast<size_t>(
+            gsl::narrow_cast<double>(samples_.size()) * p + 0.5);
         if (idx >= samples_.size()) {
             idx = samples_.size() - 1;
         }
