@@ -1,10 +1,5 @@
 #include "log/cache.h"
 
-__BEGIN_THIRD_PARTY_HEADERS
-#include <absl/flags/flag.h>
-#include <tkrzw_dbm_cache.h>
-__END_THIRD_PARTY_HEADERS
-
 ABSL_FLAG(bool, enforce_cache_miss_for_debug, false, "");
 
 #define TKRZW_CHECK_OK(STATUS_VAR, OP_NAME)                 \

@@ -4,8 +4,6 @@
 #include "server/constants.h"
 #include "utils/fs.h"
 
-#include <sys/eventfd.h>
-
 #define LOG_HEADER "StorageBase: "
 
 namespace faas {
