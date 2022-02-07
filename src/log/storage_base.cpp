@@ -37,6 +37,9 @@ void StorageBase::StartInternal() {
     if (db_enabled()) {
         SetupDB();
         db_workers_.emplace(this, absl::GetFlag(FLAGS_slog_storage_flusher_threads));
+    } else {
+        DCHECK(journal_for_storage_ && journal_enabled());
+        HLOG(INFO) << "Use journal for storage";
     }
     indexer_.emplace(db_path_, journal_for_storage_);
     SetupTimers();
@@ -63,6 +66,8 @@ void StorageBase::SetupDB() {
     } else {
         HLOG(FATAL) << "Unknown storage backend: " << db_backend;
     }
+    HLOG_F(INFO, "Use {} storage backend {} journal",
+           db_backend, journal_enabled() ? "with" : "without");
 }
 
 void StorageBase::SetupZKWatchers() {
