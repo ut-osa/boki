@@ -19,6 +19,7 @@ using protocol::SharedLogOpType;
 Storage::Storage(uint16_t node_id)
     : StorageBase(node_id),
       log_header_(fmt::format("Storage[{}-N]: ", node_id)),
+      enable_db_staging_(absl::GetFlag(FLAGS_slog_storage_enable_db_staging)),
       current_view_(nullptr),
       view_finalized_(false) {}
 
@@ -227,9 +228,11 @@ void Storage::HandleReplicateRequest(const SharedLogMessage& message,
         std::string data;
         data.append(reinterpret_cast<const char*>(&message), sizeof(SharedLogMessage));
         data.append(payload.data(), payload.size());
-        std::string staging_key = fmt::format("{}-{}",
-            bits::HexStr(message.logspace_id), bits::HexStr(message.localid));
-        log_db()->StagingPut(staging_key, STRING_AS_SPAN(data));
+        if (enable_db_staging_) {
+            std::string staging_key = fmt::format("{}-{}",
+                bits::HexStr(message.logspace_id), bits::HexStr(message.localid));
+            log_db()->StagingPut(staging_key, STRING_AS_SPAN(data));
+        }
         entry.data = std::move(data);
         store_fn(view, std::move(storage_ptr), std::move(entry));
     }
@@ -550,9 +553,11 @@ void Storage::FlushLogEntries(std::span<const LogStorage::Entry* const> entries)
     for (const LogStorage::Entry* entry : entries) {
         uint32_t logspace_id = bits::HighHalf64(entry->metadata.seqnum);
         logspace_ids.insert(logspace_id);
-        std::string staging_key = fmt::format("{}-{}",
-            bits::HexStr(logspace_id), bits::HexStr(entry->metadata.localid));
-        log_db()->StagingDelete(staging_key);
+        if (enable_db_staging_) {
+            std::string staging_key = fmt::format("{}-{}",
+                bits::HexStr(logspace_id), bits::HexStr(entry->metadata.localid));
+            log_db()->StagingDelete(staging_key);
+        }
     }
     for (uint32_t logspace_id : logspace_ids) {
         DBInterface::Batch batch;

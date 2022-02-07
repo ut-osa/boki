@@ -18,7 +18,7 @@ ABSL_FLAG(size_t, rocksdb_block_cache_size_mb, 32, "");
 ABSL_FLAG(size_t, rocksdb_max_mbytes_for_level_base, 256, "");
 ABSL_FLAG(size_t, rocksdb_mbytes_per_sync, 1, "");
 ABSL_FLAG(size_t, rocksdb_max_total_wal_size_mb, 16, "");
-ABSL_FLAG(size_t, rocksdb_rate_mbytes_per_sec, 128, "");
+ABSL_FLAG(size_t, rocksdb_rate_mbytes_per_sec, 0, "");
 ABSL_FLAG(bool, rocksdb_use_direct_io, false, "");
 
 // LMDB tunables
@@ -69,8 +69,11 @@ RocksDBBackend::RocksDBBackend(std::string_view db_path) {
         FLAGS_rocksdb_max_total_wal_size_mb);
     options.use_direct_io_for_flush_and_compaction = absl::GetFlag(
         FLAGS_rocksdb_use_direct_io);
-    options.rate_limiter.reset(rocksdb::NewGenericRateLimiter(static_cast<int64_t>(
-        kMBytesMultiplier * absl::GetFlag(FLAGS_rocksdb_rate_mbytes_per_sec))));
+    size_t rate_mbytes_per_sec = absl::GetFlag(FLAGS_rocksdb_rate_mbytes_per_sec);
+    if (rate_mbytes_per_sec > 0) {
+        int64_t rate_limit = static_cast<int64_t>(kMBytesMultiplier * rate_mbytes_per_sec);
+        options.rate_limiter.reset(rocksdb::NewGenericRateLimiter(rate_limit));
+    }
     rocksdb::DB* db;
     HLOG_F(INFO, "Open RocksDB at path {}", db_path);
     auto status = rocksdb::DB::Open(options, std::string(db_path), &db);

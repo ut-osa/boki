@@ -14,6 +14,7 @@ public:
 
 private:
     std::string log_header_;
+    bool enable_db_staging_;
 
     absl::Mutex                    view_mu_;
     const View*                    current_view_        ABSL_GUARDED_BY(view_mu_);
