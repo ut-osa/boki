@@ -32,6 +32,8 @@ public:
 
     bool CheckRecentlyTrimmed(uint64_t seqnum);
 
+    void Flush();
+
 private:
     std::unique_ptr<tkrzw::DBM>      journal_index_;
     std::unique_ptr<tkrzw::DBM>      seqnum_db_;

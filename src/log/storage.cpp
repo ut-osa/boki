@@ -506,6 +506,7 @@ void Storage::CollectLogTrimOps() {
             }
         );
     }
+
     std::vector<uint64_t> trimmed_seqnums;
     for (const auto& [logspace_id, trim_ops] : all_trim_ops) {
         for (const auto& trim_op : trim_ops) {
@@ -517,6 +518,8 @@ void Storage::CollectLogTrimOps() {
             trimmed_seqnums.insert(trimmed_seqnums.end(), seqnums.begin(), seqnums.end());
         }
     }
+    indexer()->Flush();
+
     {
         absl::ReaderMutexLock view_lk(&view_mu_);
         for (const auto& [logspace_id, trim_ops] : all_trim_ops) {
@@ -526,6 +529,7 @@ void Storage::CollectLogTrimOps() {
             }
         }
     }
+
     if (trimmed_seqnums.empty()) {
         return;
     }
@@ -576,6 +580,7 @@ void Storage::CommitLogEntries(std::span<const LogStorage::Entry* const> entries
     for (const auto& entry : entries) {
         IndexerInsert(entry);
     }
+    indexer()->Flush();
 
     absl::flat_hash_map<uint32_t, std::vector<uint64_t>> seqnums_by_logspace;
     for (const LogStorage::Entry* entry : entries) {

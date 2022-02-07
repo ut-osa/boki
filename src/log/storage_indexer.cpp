@@ -101,6 +101,13 @@ void StorageIndexer::Put(const Record& record) {
     PutSeqnumDB(record);
 }
 
+void StorageIndexer::Flush() {
+    if (journal_index_ != nullptr) {
+        journal_index_->Synchronize(/* hard= */ false);
+    }
+    seqnum_db_->Synchronize(/* hard= */ false);
+}
+
 bool StorageIndexer::GetJournalLocation(uint64_t seqnum,
                                         int* file_id, size_t* offset) {
     std::string key = bits::HexStr(seqnum);
