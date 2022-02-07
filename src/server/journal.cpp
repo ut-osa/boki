@@ -1,7 +1,6 @@
 #include "server/journal.h"
 
 #include "common/flags.h"
-#include "common/protocol.h"
 #include "server/io_worker.h"
 #include "server/io_uring.h"
 #include "utils/fs.h"
@@ -14,6 +13,8 @@ ABSL_FLAG(bool, journal_file_openflag_dsync, false, "");
 namespace faas {
 namespace server {
 
+using protocol::JournalRecordHeader;
+
 JournalFile::JournalFile(IOWorker* owner, int file_id)
     : state_(kEmpty),
       owner_(owner),
@@ -24,6 +25,9 @@ JournalFile::JournalFile(IOWorker* owner, int file_id)
       appended_bytes_(0),
       flushed_bytes_(0),
       flush_fn_scheduled_(false) {
+    if (!checksum_enabled_) {
+        LOG(WARNING) << "Checksum disabled for journal records";
+    }
     Create(file_id);
 }
 
@@ -52,16 +56,20 @@ void JournalFile::AppendRecord(uint16_t type,
     for (const auto& payload : payload_vec) {
         payload_size += payload.size();
     }
-    protocol::JournalRecordHeader hdr = {
+    if (payload_size > kMaxRecordPayloadSize) {
+        LOG_F(FATAL, "Payload size ({}) too large for a single journal record!", payload_size);
+    }
+    size_t record_size = sizeof(JournalRecordHeader) + payload_size;
+    JournalRecordHeader hdr = {
         .type         = type,
         .payload_size = gsl::narrow_cast<uint32_t>(payload_size),
+        .record_size  = gsl::narrow_cast<uint32_t>(record_size),
         .timestamp    = GetRealtimeNanoTimestamp(),
         .checksum     = checksum_enabled_ ? hash::xxHash64(payload_vec) : uint64_t{0},
     };
-    size_t record_size = sizeof(hdr) + payload_size;
     OngoingAppend* append_op = append_op_pool_.Get();
     append_op->offset = appended_bytes_;
-    append_op->record_size = record_size;
+    append_op->header = hdr;
     append_op->cb = std::move(cb);
     ongoing_appends_[append_op->offset] = append_op;
     write_buffer_.AppendData(reinterpret_cast<const char*>(&hdr), sizeof(hdr));
@@ -224,8 +232,10 @@ void JournalFile::DataFlushed(size_t delta_bytes) {
         ongoing_appends_.erase(offset);
         DCHECK_EQ(append_op->offset, offset);
         append_op->cb(this, offset);
-        offset += append_op->record_size;
-        delta_bytes -= append_op->record_size;
+        owner_->OnJournalRecordAppended(append_op->header);
+        size_t record_size = append_op->header.record_size;
+        offset += record_size;
+        delta_bytes -= record_size;
         append_op_pool_.Return(append_op);
     }
     flushed_bytes_ = offset;

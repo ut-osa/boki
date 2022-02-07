@@ -1,6 +1,7 @@
 #pragma once
 
 #include "base/common.h"
+#include "common/protocol.h"
 #include "utils/appendable_buffer.h"
 #include "utils/object_pool.h"
 #include "utils/ref_count.h"
@@ -37,6 +38,9 @@ public:
     void Finalize();
     void Remove();
 
+    static constexpr size_t kMaxRecordPayloadSize = std::numeric_limits<uint32_t>::max()
+                                                  - sizeof(protocol::JournalRecordHeader);
+
 private:
     enum State { kEmpty, kActive, kFinalizing, kFinalized, kClosing, kClosed, kRemoved };
 
@@ -52,9 +56,9 @@ private:
     size_t flushed_bytes_;
 
     struct OngoingAppend {
-        size_t          offset;
-        size_t          record_size;
-        AppendCallback  cb;
+        size_t offset;
+        protocol::JournalRecordHeader header;
+        AppendCallback cb;
     };
     utils::SimpleObjectPool<OngoingAppend> append_op_pool_;
     absl::flat_hash_map</* offset */ size_t, OngoingAppend*> ongoing_appends_;

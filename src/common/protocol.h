@@ -83,10 +83,11 @@ private:
 struct JournalRecordHeader {
     uint16_t type;
     uint16_t __padding1__ {0};
+    uint32_t __padding2__ {0};
     uint32_t payload_size;
+    uint32_t record_size;
     int64_t  timestamp;
     uint64_t checksum;
-    uint64_t __padding2__ {0};
 } __attribute__ ((packed));
 
 static_assert(sizeof(JournalRecordHeader) == 32, "Unexpected JournalRecordHeader size");

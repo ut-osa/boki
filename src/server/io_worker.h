@@ -2,6 +2,7 @@
 
 #include "base/common.h"
 #include "base/thread.h"
+#include "common/stat.h"
 #include "utils/buffer_pool.h"
 #include "utils/round_robin_set.h"
 #include "server/io_uring.h"
@@ -100,6 +101,7 @@ public:
 
     void OnJournalFileClosed(JournalFile* file);
     void OnJournalFileRemoved(JournalFile* file);
+    void OnJournalRecordAppended(const protocol::JournalRecordHeader& hdr);
 
 private:
     enum State { kCreated, kRunning, kStopping, kStopped };
@@ -135,6 +137,9 @@ private:
     int next_journal_file_id_;
     absl::flat_hash_map</* file_id */ int, std::unique_ptr<JournalFile>> journal_files_;
     JournalFile* current_journal_file_; 
+
+    stat::StatisticsCollector<uint32_t> journal_record_size_stat_;
+    stat::StatisticsCollector<int32_t> journal_append_latency_stat_;
 
     void EventLoopThreadMain();
     void RunScheduledFunctions();

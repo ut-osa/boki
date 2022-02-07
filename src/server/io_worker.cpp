@@ -31,7 +31,11 @@ IOWorker::IOWorker(std::string_view worker_name)
       write_buffer_pool_(fmt::format("{}_Write", worker_name), kWriteBufferSize),
       connections_on_closing_(0),
       next_journal_file_id_(0),
-      current_journal_file_(nullptr) {}
+      current_journal_file_(nullptr),
+      journal_record_size_stat_(stat::StatisticsCollector<uint32_t>::StandardReportCallback(
+          fmt::format("journal_record_size[{}]", worker_name))),
+      journal_append_latency_stat_(stat::StatisticsCollector<int32_t>::StandardReportCallback(
+          fmt::format("journal_append_latency[{}]", worker_name))) {}
 
 IOWorker::~IOWorker() {
     State state = state_.load();
@@ -332,6 +336,13 @@ void IOWorker::OnJournalFileClosed(JournalFile* file) {
 void IOWorker::OnJournalFileRemoved(JournalFile* file) {
     DCHECK(journal_files_.contains(file->file_id()));
     journal_files_.erase(file->file_id());
+}
+
+void IOWorker::OnJournalRecordAppended(const protocol::JournalRecordHeader& hdr) {
+    DCHECK(WithinMyEventLoopThread());
+    journal_record_size_stat_.AddSample(hdr.record_size);
+    journal_append_latency_stat_.AddSample(
+        gsl::narrow_cast<int32_t>((GetRealtimeNanoTimestamp() - hdr.timestamp) / 1000));
 }
 
 }  // namespace server
