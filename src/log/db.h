@@ -5,7 +5,6 @@
 __BEGIN_THIRD_PARTY_HEADERS
 #include <rocksdb/db.h>
 #include <tkrzw_dbm.h>
-#include <lmdb.h>
 __END_THIRD_PARTY_HEADERS
 
 namespace faas {
