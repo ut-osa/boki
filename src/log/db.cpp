@@ -21,23 +21,11 @@ ABSL_FLAG(size_t, rocksdb_max_total_wal_size_mb, 16, "");
 ABSL_FLAG(size_t, rocksdb_rate_mbytes_per_sec, 0, "");
 ABSL_FLAG(bool, rocksdb_use_direct_io, false, "");
 
-// LMDB tunables
-ABSL_FLAG(int, lmdb_maxdbs, 16, "");
-ABSL_FLAG(size_t, lmdb_mapsize_mb, 1024, "");
-
 #define ROCKSDB_CHECK_OK(STATUS_VAR, OP_NAME)               \
     do {                                                    \
         if (!(STATUS_VAR).ok()) {                           \
             LOG(FATAL) << "RocksDB::" #OP_NAME " failed: "  \
                        << (STATUS_VAR).ToString();          \
-        }                                                   \
-    } while (0)
-
-#define LMDB_CHECK_OK(RETCODE_VAR, OP_NAME)                 \
-    do {                                                    \
-        if ((RETCODE_VAR) != 0) {                           \
-            LOG(FATAL) << "LMDB::" #OP_NAME " failed: "     \
-                       << mdb_strerror(RETCODE_VAR);        \
         }                                                   \
     } while (0)
 
@@ -172,144 +160,6 @@ rocksdb::ColumnFamilyHandle* RocksDBBackend::GetCFHandle(uint32_t logspace_id) {
         return nullptr;
     }
     return column_families_.at(logspace_id).get();
-}
-
-LMDBBackend::LMDBBackend(std::string_view db_path) {
-    int ret = 0;
-    ret = mdb_env_create(&env_);
-    LMDB_CHECK_OK(ret, EnvCreate);
-    size_t mapsize = kMBytesMultiplier * absl::GetFlag(FLAGS_lmdb_mapsize_mb);
-    ret = mdb_env_set_mapsize(env_, mapsize);
-    LMDB_CHECK_OK(ret, EnvSetMapSize);
-    MDB_dbi maxdbs = static_cast<MDB_dbi>(absl::GetFlag(FLAGS_lmdb_maxdbs));
-    ret = mdb_env_set_maxdbs(env_, maxdbs);
-    LMDB_CHECK_OK(ret, EnvSetMaxDbs);
-    ret = mdb_env_open(
-        /* env= */ env_,
-        /* path= */ std::string(db_path).c_str(),
-        /* flags= */ 0,
-        /* mode= */ __FAAS_FILE_CREAT_MODE);
-    LMDB_CHECK_OK(ret, EnvOpen);
-}
-
-LMDBBackend::~LMDBBackend() {
-    mdb_env_close(env_);
-}
-
-void LMDBBackend::InstallLogSpace(uint32_t logspace_id) {
-    int ret = 0;
-    MDB_txn* txn;
-    ret = mdb_txn_begin(env_, /* parent= */ nullptr, /* flags= */ 0, &txn);
-    LMDB_CHECK_OK(ret, TxnBegin);
-    std::string name(bits::HexStr(logspace_id));
-    MDB_dbi dbi;
-    ret = mdb_dbi_open(txn, name.c_str(), /* flags= */ MDB_INTEGERKEY | MDB_CREATE, &dbi);
-    LMDB_CHECK_OK(ret, DdiOpen);
-    ret = mdb_txn_commit(txn);
-    LMDB_CHECK_OK(ret, TxnCommit);
-    {
-        absl::MutexLock lk(&mu_);
-        DCHECK(!dbs_.contains(logspace_id));
-        dbs_[logspace_id] = dbi;
-    }
-}
-
-std::optional<std::string> LMDBBackend::Get(uint32_t logspace_id, uint32_t key) {
-    MDB_dbi dbi;
-    if (auto tmp = GetDB(logspace_id); tmp.has_value()) {
-        dbi = tmp.value();
-    } else {
-        HLOG_F(WARNING, "Log space {} not created", bits::HexStr0x(logspace_id));
-        return std::nullopt;
-    }
-    int ret = 0;
-    MDB_txn* txn;
-    ret = mdb_txn_begin(env_, /* parent= */ nullptr, /* flags= */ MDB_RDONLY, &txn);
-    LMDB_CHECK_OK(ret, TxnBegin);
-    MDB_val mdb_key {
-        .mv_size = sizeof(uint32_t),
-        .mv_data = &key
-    };
-    std::optional<std::string> result = std::nullopt;
-    MDB_val data;
-    ret = mdb_get(txn, dbi, &mdb_key, &data);
-    if (ret == 0) {
-        result.emplace(reinterpret_cast<const char*>(data.mv_data), data.mv_size);
-    } else if (ret != MDB_NOTFOUND) {
-        LMDB_CHECK_OK(ret, Get);
-    }
-    mdb_txn_abort(txn);
-    return result;
-}
-
-void LMDBBackend::PutBatch(const Batch& batch) {
-    DCHECK_EQ(batch.keys.size(), batch.data.size());
-    MDB_dbi dbi;
-    if (auto tmp = GetDB(batch.logspace_id); tmp.has_value()) {
-        dbi = tmp.value();
-    } else {
-        HLOG_F(WARNING, "Log space {} not created", bits::HexStr0x(batch.logspace_id));
-        return;
-    }
-    int ret = 0;
-    MDB_txn* txn;
-    ret = mdb_txn_begin(env_, /* parent= */ nullptr, /* flags= */ 0, &txn);
-    LMDB_CHECK_OK(ret, TxnBegin);
-    for (size_t i = 0; i < batch.keys.size(); i++) {
-        MDB_val mdb_key {
-            .mv_size = sizeof(uint32_t),
-            .mv_data = const_cast<uint32_t*>(&batch.keys[i])
-        };
-        std::span<const char> data = batch.data[i];
-        MDB_val mdb_data {
-            .mv_size = data.size(),
-            .mv_data = const_cast<char*>(data.data())
-        };
-        ret = mdb_put(txn, dbi, &mdb_key, &mdb_data, /* flags= */ 0);
-        LMDB_CHECK_OK(ret, Put);
-    }
-    ret = mdb_txn_commit(txn);
-    LMDB_CHECK_OK(ret, TxnCommit);
-}
-
-void LMDBBackend::Delete(uint32_t logspace_id, std::span<const uint32_t> keys) {
-    MDB_dbi dbi;
-    if (auto tmp = GetDB(logspace_id); tmp.has_value()) {
-        dbi = tmp.value();
-    } else {
-        HLOG_F(WARNING, "Log space {} not created", bits::HexStr0x(logspace_id));
-        return;
-    }
-    int ret = 0;
-    MDB_txn* txn;
-    ret = mdb_txn_begin(env_, /* parent= */ nullptr, /* flags= */ 0, &txn);
-    LMDB_CHECK_OK(ret, TxnBegin);
-    for (size_t i = 0; i < keys.size(); i++) {
-        MDB_val mdb_key {
-            .mv_size = sizeof(uint32_t),
-            .mv_data = const_cast<uint32_t*>(&keys[i])
-        };
-        ret = mdb_del(txn, dbi, &mdb_key, /* data= */ nullptr);
-        LMDB_CHECK_OK(ret, Put);
-    }
-    ret = mdb_txn_commit(txn);
-    LMDB_CHECK_OK(ret, TxnCommit);
-}
-
-void LMDBBackend::StagingPut(std::string_view key, std::span<const char> data) {
-    NOT_IMPLEMENTED();
-}
-
-void LMDBBackend::StagingDelete(std::string_view key) {
-    NOT_IMPLEMENTED();
-}
-
-std::optional<MDB_dbi> LMDBBackend::GetDB(uint32_t logspace_id) {
-    absl::ReaderMutexLock lk(&mu_);
-    if (!dbs_.contains(logspace_id)) {
-        return std::nullopt;
-    }
-    return dbs_.at(logspace_id);
 }
 
 TkrzwDBMBackend::TkrzwDBMBackend(Type type, std::string_view db_path)

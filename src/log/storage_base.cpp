@@ -49,8 +49,6 @@ void StorageBase::SetupDB() {
     std::string db_backend = absl::GetFlag(FLAGS_slog_storage_backend);
     if (db_backend == "rocksdb") {
         db_.reset(new RocksDBBackend(db_path_));
-    } else if (db_backend == "lmdb") {
-        db_.reset(new LMDBBackend(db_path_));
     } else if (db_backend == "tkrzw_hash") {
         db_.reset(new TkrzwDBMBackend(TkrzwDBMBackend::kHashDBM, db_path_));
     } else if (db_backend == "tkrzw_tree") {

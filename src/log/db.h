@@ -55,32 +55,6 @@ private:
     DISALLOW_COPY_AND_ASSIGN(RocksDBBackend);
 };
 
-class LMDBBackend final : public DBInterface {
-public:
-    explicit LMDBBackend(std::string_view db_path);
-    ~LMDBBackend();
-
-    void InstallLogSpace(uint32_t logspace_id) override;
-    std::optional<std::string> Get(uint32_t logspace_id, uint32_t key) override;
-    void PutBatch(const Batch& batch) override;
-    void Delete(uint32_t logspace_id, std::span<const uint32_t> keys) override;
-    void StagingPut(std::string_view key, std::span<const char> data) override;
-    void StagingDelete(std::string_view key) override;
-
-private:
-    std::string db_path_;
-
-    MDB_env* env_;
-
-    absl::Mutex mu_;
-    absl::flat_hash_map</* logspace_id */ uint32_t, MDB_dbi>
-        dbs_ ABSL_GUARDED_BY(mu_);
-
-    std::optional<MDB_dbi> GetDB(uint32_t logspace_id);
-
-    DISALLOW_COPY_AND_ASSIGN(LMDBBackend);
-};
-
 class TkrzwDBMBackend final : public DBInterface {
 public:
     enum Type { kHashDBM, kTreeDBM, kSkipDBM };
