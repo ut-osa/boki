@@ -2,6 +2,7 @@
 
 #include "utils/bits.h"
 #include "utils/appendable_buffer.h"
+#include "utils/fs.h"
 
 __BEGIN_THIRD_PARTY_HEADERS
 #include <rocksdb/rate_limiter.h>
@@ -249,32 +250,29 @@ std::unique_ptr<tkrzw::DBM> TkrzwDBMBackend::CreateDBM(std::string_view name) {
     tkrzw::DBM* db_ptr = nullptr;
     if (type_ == kHashDBM) {
         tkrzw::HashDBM* db = new tkrzw::HashDBM();
-        tkrzw::HashDBM::TuningParameters params;
         auto status = db->OpenAdvanced(
-            /* path= */ fmt::format("{}/{}.tkh", db_path_, name),
+            /* path= */ fs_utils::JoinPath(db_path_, fmt::format("{}.tkh", name)),
             /* writable= */ true,
             /* options= */ tkrzw::File::OPEN_DEFAULT,
-            /* tuning_params= */ params);
+            /* tuning_params= */ tkrzw::HashDBM::TuningParameters());
         TKRZW_CHECK_OK(status, Open);
         db_ptr = db;
     } else if (type_ == kTreeDBM) {
         tkrzw::TreeDBM* db = new tkrzw::TreeDBM();
-        tkrzw::TreeDBM::TuningParameters params;
         auto status = db->OpenAdvanced(
-            /* path= */ fmt::format("{}/{}.tkt", db_path_, name),
+            /* path= */ fs_utils::JoinPath(db_path_, fmt::format("{}.tkt", name)),
             /* writable= */ true,
             /* options= */ tkrzw::File::OPEN_DEFAULT,
-            /* tuning_params= */ params);
+            /* tuning_params= */ tkrzw::TreeDBM::TuningParameters());
         TKRZW_CHECK_OK(status, Open);
         db_ptr = db;
     } else if (type_ == kSkipDBM) {
         tkrzw::SkipDBM* db = new tkrzw::SkipDBM();
-        tkrzw::SkipDBM::TuningParameters params;
         auto status = db->OpenAdvanced(
-            /* path= */ fmt::format("{}/{}.tks", db_path_, name),
+            /* path= */ fs_utils::JoinPath(db_path_, fmt::format("{}.tks", name)),
             /* writable= */ true,
             /* options= */ tkrzw::File::OPEN_DEFAULT,
-            /* tuning_params= */ params);
+            /* tuning_params= */ tkrzw::SkipDBM::TuningParameters());
         TKRZW_CHECK_OK(status, Open);
         db_ptr = db;
     } else {

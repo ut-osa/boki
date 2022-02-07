@@ -1,6 +1,7 @@
 #include "log/storage_indexer.h"
 
 #include "utils/bits.h"
+#include "utils/fs.h"
 
 __BEGIN_THIRD_PARTY_HEADERS
 #include <tkrzw_dbm_tree.h>
@@ -38,21 +39,23 @@ StorageIndexer::~StorageIndexer() {
 }
 
 void StorageIndexer::SetupJournalIndex(std::string_view db_path) {
-    tkrzw::TreeDBM::TuningParameters params;
-    std::string path = fmt::format("{}/journal_index.tkt", db_path);
     tkrzw::TreeDBM* dbm = new tkrzw::TreeDBM();
-    auto status = dbm->OpenAdvanced(path, /* writable= */ true,
-                                    tkrzw::File::OPEN_DEFAULT, params);
+    auto status = dbm->OpenAdvanced(
+        /* path= */ fs_utils::JoinPath(db_path, "journal_index.tkt"),
+        /* writable= */ true,
+        /* options= */ tkrzw::File::OPEN_DEFAULT,
+        /* tuning_params= */ tkrzw::TreeDBM::TuningParameters());
     TKRZW_CHECK_OK(status, Open);
     journal_index_ = absl::WrapUnique(dbm);
 }
 
 void StorageIndexer::SetupSeqnumDB(std::string_view db_path) {
-    tkrzw::TreeDBM::TuningParameters params;
-    std::string path = fmt::format("{}/seqnum_db.tkt", db_path);
     tkrzw::TreeDBM* dbm = new tkrzw::TreeDBM();
-    auto status = dbm->OpenAdvanced(path, /* writable= */ true,
-                                    tkrzw::File::OPEN_DEFAULT, params);
+    auto status = dbm->OpenAdvanced(
+        /* path= */ fs_utils::JoinPath(db_path, "seqnum_db.tkt"),
+        /* writable= */ true,
+        /* options= */ tkrzw::File::OPEN_DEFAULT,
+        /* tuning_params= */ tkrzw::TreeDBM::TuningParameters());
     TKRZW_CHECK_OK(status, Open);
     seqnum_db_ = absl::WrapUnique(dbm);
 }
