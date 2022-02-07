@@ -17,8 +17,9 @@ __END_THIRD_PARTY_HEADERS
 namespace faas {
 namespace log {
 
-StorageIndexer::StorageIndexer(std::string_view db_path, bool journal_enabled) {
-    if (journal_enabled) {
+StorageIndexer::StorageIndexer(std::string_view db_path,
+                               bool journal_for_storage) {
+    if (journal_for_storage) {
         SetupJournalIndex(db_path);
     }
     SetupSeqnumDB(db_path);

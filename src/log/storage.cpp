@@ -19,7 +19,6 @@ using protocol::SharedLogOpType;
 Storage::Storage(uint16_t node_id)
     : StorageBase(node_id),
       log_header_(fmt::format("Storage[{}-N]: ", node_id)),
-      enable_db_staging_(absl::GetFlag(FLAGS_slog_storage_enable_db_staging)),
       current_view_(nullptr),
       view_finalized_(false) {}
 
@@ -228,11 +227,6 @@ void Storage::HandleReplicateRequest(const SharedLogMessage& message,
         std::string data;
         data.append(reinterpret_cast<const char*>(&message), sizeof(SharedLogMessage));
         data.append(payload.data(), payload.size());
-        if (enable_db_staging_) {
-            std::string staging_key = fmt::format("{}-{}",
-                bits::HexStr(message.logspace_id), bits::HexStr(message.localid));
-            log_db()->StagingPut(staging_key, STRING_AS_SPAN(data));
-        }
         entry.data = std::move(data);
         store_fn(view, std::move(storage_ptr), std::move(entry));
     }
@@ -269,15 +263,7 @@ void Storage::OnRecvNewMetaLogs(const SharedLogMessage& message,
         SendIndexData(DCHECK_NOTNULL(view), *index_data);
     }
     if (!new_log_entires.empty()) {
-        if (db_enabled()) {
-            db_workers()->SubmitLogEntriesForFlush(VECTOR_AS_SPAN(new_log_entires));
-        } else {
-            CurrentIOWorkerChecked()->ScheduleIdleFunction(
-                nullptr, [this, new_log_entires = std::move(new_log_entires)] {
-                    CommitLogEntries(new_log_entires);
-                }
-            );
-        }
+        ScheduleStoreLogEntires(std::move(new_log_entires));
     }
 }
 
@@ -314,7 +300,7 @@ void Storage::ProcessReadResults(const LogStorage::ReadResultVec& results) {
             SendEngineLogResult(request, &response, log_entry);
             break;
         case LogStorage::ReadResult::kLookupDB:
-            if (journal_enabled()) {
+            if (journal_for_storage()) {
                 ProcessReadFromJournal(request);
             } else {
                 ProcessReadFromDB(request);
@@ -333,7 +319,7 @@ void Storage::ProcessReadResults(const LogStorage::ReadResultVec& results) {
 }
 
 void Storage::ProcessReadFromJournal(const SharedLogMessage& request) {
-    DCHECK(journal_enabled());
+    DCHECK(journal_for_storage());
     uint64_t seqnum = bits::JoinTwo32(request.logspace_id, request.seqnum_lowhalf);
     JournalRecord record;
     if (!FindJournalRecord(seqnum, &record)) {
@@ -490,6 +476,19 @@ void Storage::SendShardProgressIfNeeded() {
     }
 }
 
+void Storage::ScheduleStoreLogEntires(LogStorage::LogEntryVec entries) {
+    DCHECK(!entries.empty());
+    if (db_enabled()) {
+        db_workers()->SubmitLogEntriesForFlush(VECTOR_AS_SPAN(entries));
+    } else {
+        CurrentIOWorkerChecked()->ScheduleIdleFunction(
+            nullptr, [this, entries = std::move(entries)] {
+                CommitLogEntries(entries);
+            }
+        );
+    }
+}
+
 void Storage::CollectLogTrimOps() {
     absl::flat_hash_map</* logspace_id */ uint32_t, LogStorage::TrimOpVec> all_trim_ops;
     {
@@ -530,10 +529,11 @@ void Storage::CollectLogTrimOps() {
     if (trimmed_seqnums.empty()) {
         return;
     }
-    HVLOG_F(1, "Going to trim {} seqnums from DB", trimmed_seqnums.size());
     if (db_enabled()) {
+        HVLOG_F(1, "Going to trim {} seqnums from DB", trimmed_seqnums.size());
         db_workers()->SubmitSeqnumsForTrim(VECTOR_AS_SPAN(trimmed_seqnums));
     } else {
+        HVLOG_F(1, "Trim {} seqnums from journal", trimmed_seqnums.size());
         for (uint64_t seqnum : trimmed_seqnums) {
             JournalRecord record;
             if (FindJournalRecord(seqnum, &record)) {
@@ -546,18 +546,13 @@ void Storage::CollectLogTrimOps() {
     }
 }
 
-void Storage::FlushLogEntries(std::span<const LogStorage::Entry* const> entries) {
+void Storage::DBFlushLogEntries(std::span<const LogStorage::Entry* const> entries) {
     DCHECK(db_enabled());
     HVLOG_F(1, "Going to flush {} entries to DB", entries.size());
     absl::flat_hash_set<uint32_t> logspace_ids;
     for (const LogStorage::Entry* entry : entries) {
         uint32_t logspace_id = bits::HighHalf64(entry->metadata.seqnum);
         logspace_ids.insert(logspace_id);
-        if (enable_db_staging_) {
-            std::string staging_key = fmt::format("{}-{}",
-                bits::HexStr(logspace_id), bits::HexStr(entry->metadata.localid));
-            log_db()->StagingDelete(staging_key);
-        }
     }
     for (uint32_t logspace_id : logspace_ids) {
         DBInterface::Batch batch;

@@ -12,7 +12,7 @@ namespace log {
 
 class StorageIndexer {
 public:
-    StorageIndexer(std::string_view db_path, bool journal_enabled);
+    StorageIndexer(std::string_view db_path, bool journal_for_storage);
     ~StorageIndexer();
 
     struct Record {

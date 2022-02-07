@@ -25,7 +25,12 @@ StorageBase::StorageBase(uint16_t node_id)
     : ServerBase(fmt::format("storage_{}", node_id),
                  absl::GetFlag(FLAGS_slog_storage_enable_journal)),
       node_id_(node_id),
-      db_(nullptr) {}
+      journal_for_storage_(absl::GetFlag(FLAGS_slog_storage_backend) == "journal"),
+      db_(nullptr) {
+    if (journal_for_storage_ && !journal_enabled()) {
+        HLOG(FATAL) << "Storage backend is journal, but journal not enabled!";
+    }
+}
 
 void StorageBase::StartInternal() {
     log_cache_.emplace(absl::GetFlag(FLAGS_slog_storage_cache_cap_mb));
@@ -33,7 +38,7 @@ void StorageBase::StartInternal() {
         SetupDB();
         db_workers_.emplace(this, absl::GetFlag(FLAGS_slog_storage_flusher_threads));
     }
-    indexer_.emplace(db_path_, journal_enabled());
+    indexer_.emplace(db_path_, journal_for_storage_);
     SetupTimers();
     SetupZKWatchers();
 }
@@ -144,7 +149,7 @@ void StorageBase::IndexerInsert(const LogStorage::Entry* log_entry) {
     StorageIndexer::Record indexer_record;
     indexer_record.seqnum = log_entry->metadata.seqnum;
     indexer_record.user_logspace = log_entry->metadata.user_logspace;
-    if (journal_enabled()) {
+    if (journal_for_storage()) {
         const JournalRecord& journal_record = std::get<JournalRecord>(log_entry->data);
         indexer_record.journal_file_id = journal_record.file->file_id();
         indexer_record.journal_offset = journal_record.offset;
@@ -307,7 +312,7 @@ EgressHub* StorageBase::CreateEgressHub(protocol::ConnType conn_type,
 }
 
 bool StorageBase::FindJournalRecord(uint64_t seqnum, JournalRecord* record) {
-    DCHECK(journal_enabled());
+    DCHECK(journal_for_storage());
     int file_id;
     if (!indexer()->GetJournalLocation(seqnum, &file_id, &record->offset)) {
         return false;

@@ -73,7 +73,7 @@ void DBWorkers::WorkerThreadMain(int thread_index) {
         }
         mu_.Unlock();
         if (!log_entries.empty()) {
-            storage_->FlushLogEntries(VECTOR_AS_SPAN(log_entries));
+            storage_->DBFlushLogEntries(VECTOR_AS_SPAN(log_entries));
             flush_cq_.Push(VECTOR_AS_SPAN(log_entries), starting_id);
             log_entries.clear();
         } else if (!seqnums.empty()) {

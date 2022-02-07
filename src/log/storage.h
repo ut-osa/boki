@@ -14,7 +14,6 @@ public:
 
 private:
     std::string log_header_;
-    bool enable_db_staging_;
 
     absl::Mutex                    view_mu_;
     const View*                    current_view_        ABSL_GUARDED_BY(view_mu_);
@@ -53,7 +52,8 @@ private:
 
     void SendShardProgressIfNeeded() override;
     void CollectLogTrimOps() override;
-    void FlushLogEntries(std::span<const LogStorage::Entry* const> entries) override;
+    void ScheduleStoreLogEntires(LogStorage::LogEntryVec entries);
+    void DBFlushLogEntries(std::span<const LogStorage::Entry* const> entries) override;
     void CommitLogEntries(std::span<const LogStorage::Entry* const> entries) override;
 
     DISALLOW_COPY_AND_ASSIGN(Storage);
