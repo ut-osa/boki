@@ -3,6 +3,7 @@
 #include "engine/flags.h"
 #include "engine/engine.h"
 #include "engine/worker_manager.h"
+#include "utils/float.h"
 
 #define LOG_HEADER "Tracer: "
 
@@ -80,7 +81,7 @@ Tracer::FuncCallInfo* Tracer::OnNewFuncCall(const FuncCall& func_call,
             current_timestamp = per_func_stat->last_request_timestamp + 1;
         }
         if (per_func_stat->last_request_timestamp != -1) {
-            double instant_rps = 1e6 / gsl::narrow_cast<double>(
+            double instant_rps = 1e6 / float_utils::AsDouble(
                 current_timestamp - per_func_stat->last_request_timestamp);
             per_func_stat->instant_rps_stat.AddSample(gsl::narrow_cast<float>(instant_rps));
             per_func_stat->instant_rps_ema.AddSample(current_timestamp, instant_rps);

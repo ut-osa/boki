@@ -1,5 +1,7 @@
 #include "utils/malloc.h"
 
+#include "utils/float.h"
+
 #ifdef __FAAS_USE_JEMALLOC
 
 __BEGIN_THIRD_PARTY_HEADERS
@@ -43,12 +45,12 @@ std::string FormatBytes(size_t bytes) {
         return fmt::format("{}B", bytes);
     }
     if (bytes < size_t{10} * 1024 * 1024) {
-        return fmt::format("{:.1f}KB", static_cast<float>(bytes)/1024);
+        return fmt::format("{:.1f}KB", float_utils::GetRatio<float>(bytes, 1<<10));
     }
     if (bytes < size_t{10} * 1024 * 1024 * 1024) {
-        return fmt::format("{:.1f}MB", static_cast<float>(bytes)/1024/1024);
+        return fmt::format("{:.1f}MB", float_utils::GetRatio<float>(bytes, 1<<20));
     }
-    return fmt::format("{:.1f}GB", static_cast<float>(bytes)/1024/1024/1024);
+    return fmt::format("{:.1f}GB", float_utils::GetRatio<float>(bytes, 1<<30));
 }
 
 void WriteCallback(void* ptr, const char* s) {

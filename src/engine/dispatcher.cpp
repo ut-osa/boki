@@ -3,6 +3,7 @@
 #include "ipc/base.h"
 #include "engine/flags.h"
 #include "engine/engine.h"
+#include "utils/float.h"
 
 #define LOG_HEADER log_header_
 
@@ -178,7 +179,7 @@ bool Dispatcher::DispatchPendingFuncCall(FuncWorker* func_worker) {
         double queueing_delay;
         {
             absl::ReaderMutexLock lk(&func_call_info->mu);
-            queueing_delay = gsl::narrow_cast<double>(
+            queueing_delay = float_utils::AsDouble(
                 current_timestamp - func_call_info->recv_timestamp);
         }
         Message* dispatch_func_call_message = pending_func_call.dispatch_func_call_message;

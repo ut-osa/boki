@@ -7,6 +7,7 @@
 #include "utils/io.h"
 #include "utils/docker.h"
 #include "utils/socket.h"
+#include "utils/float.h"
 #include "worker/worker_lib.h"
 #include "server/constants.h"
 #include "log/engine.h"
@@ -459,7 +460,7 @@ void Engine::OnExternalFuncCall(const FuncCall& func_call, uint32_t logspace,
         }
         if (last_external_request_timestamp_ != -1) {
             int64_t delta = current_timestamp - last_external_request_timestamp_;
-            external_requests_instant_rps_stat_.AddSample(1e6f / gsl::narrow_cast<float>(delta));
+            external_requests_instant_rps_stat_.AddSample(1e6f / float_utils::AsFloat(delta));
         }
         last_external_request_timestamp_ = current_timestamp;
         inflight_external_requests_stat_.AddSample(

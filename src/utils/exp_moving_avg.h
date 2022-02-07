@@ -1,6 +1,7 @@
 #pragma once
 
 #include "base/common.h"
+#include "utils/float.h"
 
 #include <math.h>
 
@@ -16,9 +17,9 @@ public:
     template<class T>
     void AddSample(T sample) {
         if (n_samples_ < min_samples_) {
-            avg_ += static_cast<double>(sample) / gsl::narrow_cast<double>(min_samples_);
+            avg_ += float_utils::GetRatio<double>(sample, min_samples_);
         } else {
-            avg_ += alpha_ * (static_cast<double>(sample) - avg_);
+            avg_ += alpha_ * (float_utils::AsDouble(sample) - avg_);
         }
         n_samples_++;
     }
@@ -65,16 +66,16 @@ public:
         }
         double v;
         if (p_ == 0) {
-            v = std::log(static_cast<double>(sample));
+            v = std::log(float_utils::AsDouble(sample));
         } else {
-            v = std::pow(static_cast<double>(sample), p_);
+            v = std::pow(float_utils::AsDouble(sample), p_);
         }
         if (n_samples_ < min_samples_) {
-            avg_ += v / gsl::narrow_cast<double>(min_samples_);
+            avg_ += v / float_utils::AsDouble(min_samples_);
         } else {
             double alpha = alpha_;
             if (tau_us_ > 0) {
-                double d = gsl::narrow_cast<double>(timestamp_us - last_timestamp_us_);
+                double d = float_utils::AsDouble(timestamp_us - last_timestamp_us_);
                 alpha = 1.0 - std::exp(-d / tau_us_);
             }
             avg_ += alpha * (v - avg_);

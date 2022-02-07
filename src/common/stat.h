@@ -4,6 +4,7 @@
 #include "common/time.h"
 #include "utils/bst.h"
 #include "utils/random.h"
+#include "utils/float.h"
 
 #include <math.h>
 
@@ -49,7 +50,7 @@ private:
     int64_t next_report_interval_;
 
     void UpdateNextReportInterval() {
-        float tmp = gsl::narrow_cast<float>(report_interval_in_ms_)
+        float tmp = float_utils::AsFloat(report_interval_in_ms_)
                   * utils::GetRandomFloat(0.9f, 1.1f);
         next_report_interval_ = static_cast<int64_t>(tmp * 1000.0f);
     }
@@ -138,18 +139,18 @@ private:
     inline Report BuildReport() {
         std::sort(samples_.begin(), samples_.end());
         return {
-            .p30 = percentile(0.3),
-            .p50 = percentile(0.5),
-            .p70 = percentile(0.7),
-            .p90 = percentile(0.9),
-            .p99 = percentile(0.99)
+            .p30 = percentile(0.3f),
+            .p50 = percentile(0.5f),
+            .p70 = percentile(0.7f),
+            .p90 = percentile(0.9f),
+            .p99 = percentile(0.99f)
         };
     }
 
-    inline T percentile(double p) {
+    inline T percentile(float p) {
         DCHECK(!samples_.empty());
         size_t idx = gsl::narrow_cast<size_t>(
-            gsl::narrow_cast<double>(samples_.size()) * p + 0.5);
+            gsl::narrow_cast<float>(samples_.size()) * p + 0.5);
         if (idx >= samples_.size()) {
             idx = samples_.size() - 1;
         }
@@ -167,7 +168,8 @@ public:
     static ReportCallback StandardReportCallback(std::string_view counter_name) {
         return [name = std::string(counter_name)] (int duration_ms,
                                                    int64_t new_value, int64_t old_value) {
-            double rate = gsl::narrow_cast<double>(new_value - old_value) / duration_ms * 1000;
+            float rate = 1000.0f * float_utils::GetRatio<float>(
+                new_value - old_value, duration_ms);
             LOG_F(INFO, "{} counter: value={}, rate={} per second", name, new_value, rate);
         };
     }
@@ -176,7 +178,8 @@ public:
     static ReportCallback VerboseLogReportCallback(std::string_view counter_name) {
         return [name = std::string(counter_name)] (int duration_ms,
                                                    int64_t new_value, int64_t old_value) {
-            double rate = gsl::narrow_cast<double>(new_value - old_value) / duration_ms * 1000;
+            float rate = 1000.0f * float_utils::GetRatio<float>(
+                new_value - old_value, duration_ms);
             VLOG_F(L, "{} counter: value={}, rate={} per second", name, new_value, rate);
         };
     }
@@ -229,8 +232,7 @@ public:
             bool first = true;
             for (const auto& entry : values) {
                 if (entry.second == 0) continue;
-                double percentage = 100.0 * gsl::narrow_cast<double>(entry.second)
-                                          / gsl::narrow_cast<double>(sum);
+                float percentage = 100.0f * float_utils::GetRatio<float>(entry.second, sum);
                 if (!first) {
                     stream << ", ";
                 } else {

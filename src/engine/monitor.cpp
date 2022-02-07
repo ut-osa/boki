@@ -3,6 +3,7 @@
 #include "common/time.h"
 #include "utils/docker.h"
 #include "utils/procfs.h"
+#include "utils/float.h"
 #include "engine/engine.h"
 
 #include <sys/timerfd.h>
@@ -61,7 +62,7 @@ void Monitor::OnNewFuncContainer(uint16_t func_id, std::string_view container_id
 
 namespace {
 static float compute_rate(int64_t timestamp1, int64_t value1, int64_t timestamp2, int64_t value2) {
-    return gsl::narrow_cast<float>(value2 - value1) / gsl::narrow_cast<float>(timestamp2 - timestamp1);
+    return float_utils::GetRatio<float>(value2 - value1, timestamp2 - timestamp1);
 }
 
 // One tick is 10ms
