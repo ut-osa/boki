@@ -33,20 +33,20 @@ Server::Server()
       next_call_id_(1),
       background_thread_("BG", absl::bind_front(&Server::BackgroundThreadMain, this)),
       last_request_timestamp_(-1),
-      incoming_requests_stat_(
-          stat::Counter::StandardReportCallback("incoming_requests")),
-      request_interval_stat_(
-          stat::StatisticsCollector<int32_t>::StandardReportCallback("request_interval")),
-      requests_instant_rps_stat_(
-          stat::StatisticsCollector<float>::StandardReportCallback("requests_instant_rps")),
-      inflight_requests_stat_(
-          stat::StatisticsCollector<uint16_t>::StandardReportCallback("inflight_requests")),
-      running_requests_stat_(
-          stat::StatisticsCollector<uint16_t>::StandardReportCallback("running_requests")),
-      queueing_delay_stat_(
-          stat::StatisticsCollector<int32_t>::StandardReportCallback("queueing_delay")),
-      dispatch_overhead_stat_(
-          stat::StatisticsCollector<int32_t>::StandardReportCallback("dispatch_overhead")) {}
+      incoming_requests_stat_(stat::Counter::StandardReportCallback(
+          "incoming_requests"), "gateway"),
+      request_interval_stat_(stat::StatisticsCollector<int32_t>::StandardReportCallback(
+          "request_interval"), "gateway"),
+      requests_instant_rps_stat_(stat::StatisticsCollector<float>::StandardReportCallback(
+          "requests_instant_rps"), "gateway"),
+      inflight_requests_stat_(stat::StatisticsCollector<uint16_t>::StandardReportCallback(
+          "inflight_requests"), "gateway"),
+      running_requests_stat_(stat::StatisticsCollector<uint16_t>::StandardReportCallback(
+          "running_requests"), "gateway"),
+      queueing_delay_stat_(stat::StatisticsCollector<int32_t>::StandardReportCallback(
+          "queueing_delay"), "gateway"),
+      dispatch_overhead_stat_(stat::StatisticsCollector<int32_t>::StandardReportCallback(
+          "dispatch_overhead"), "gateway") {}
 
 void Server::StartInternal() {
     // Load function config file
@@ -328,11 +328,11 @@ void Server::OnRecvEngineMessage(uint16_t node_id, const GatewayMessage& message
 Server::PerFuncStat::PerFuncStat(uint16_t func_id)
     : last_request_timestamp(-1),
       incoming_requests_stat(stat::Counter::StandardReportCallback(
-          fmt::format("incoming_requests[{}]", func_id))),
+          fmt::format("incoming_requests[{}]", func_id)), "gateway"),
       request_interval_stat(stat::StatisticsCollector<int32_t>::StandardReportCallback(
-          fmt::format("request_interval[{}]", func_id))),
+          fmt::format("request_interval[{}]", func_id)), "gateway"),
       end2end_delay_stat(stat::StatisticsCollector<int32_t>::StandardReportCallback(
-          fmt::format("end2end_delay[{}]", func_id))) {}
+          fmt::format("end2end_delay[{}]", func_id)), "gateway") {}
 
 void Server::TickNewFuncCall(uint16_t func_id, int64_t current_timestamp) {
     if (!per_func_stats_.contains(func_id)) {

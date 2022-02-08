@@ -98,7 +98,7 @@ NodeManager::Node::Node(uint16_t node_id)
     : node_id(node_id),
       inflight_requests(0),
       dispatched_requests_stat(stat::Counter::StandardReportCallback(
-          fmt::format("dispatched_requests[{}]", node_id))) {}
+          fmt::format("dispatched_requests[{}]", node_id)), "gateway") {}
 
 }  // namespace gateway
 }  // namespace faas

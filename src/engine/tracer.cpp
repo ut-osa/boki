@@ -15,10 +15,10 @@ using protocol::FuncCallHelper;
 
 Tracer::Tracer(Engine* engine)
     : engine_(engine),
-      dispatch_delay_stat_(
-          stat::StatisticsCollector<int32_t>::StandardReportCallback("dispatch_delay")),
-      dispatch_overhead_stat_(
-          stat::StatisticsCollector<int32_t>::StandardReportCallback("dispatch_overhead")) {
+      dispatch_delay_stat_(stat::StatisticsCollector<int32_t>::StandardReportCallback(
+          "dispatch_delay"), "tracer"),
+      dispatch_overhead_stat_(stat::StatisticsCollector<int32_t>::StandardReportCallback(
+          "dispatch_overhead"), "tracer") {
     for (int i = 0; i < protocol::kMaxFuncId; i++) {
         per_func_stats_[i] = nullptr;
     }
@@ -296,21 +296,21 @@ Tracer::PerFuncStatistics::PerFuncStatistics(uint16_t func_id)
       inflight_requests(0),
       last_request_timestamp(-1),
       incoming_requests_stat(stat::Counter::StandardReportCallback(
-          fmt::format("incoming_requests[{}]", func_id))),
+          fmt::format("incoming_requests[{}]", func_id)), "tracer"),
       failed_requests_stat(stat::Counter::StandardReportCallback(
-          fmt::format("failed_requests[{}]", func_id))),
+          fmt::format("failed_requests[{}]", func_id)), "tracer"),
       instant_rps_stat(stat::StatisticsCollector<float>::StandardReportCallback(
-          fmt::format("instant_rps[{}]", func_id))),
+          fmt::format("instant_rps[{}]", func_id)), "tracer"),
       input_size_stat(stat::StatisticsCollector<uint32_t>::StandardReportCallback(
-          fmt::format("input_size[{}]", func_id))),
+          fmt::format("input_size[{}]", func_id)), "tracer"),
       output_size_stat(stat::StatisticsCollector<uint32_t>::StandardReportCallback(
-          fmt::format("output_size[{}]", func_id))),
+          fmt::format("output_size[{}]", func_id)), "tracer"),
       queueing_delay_stat(stat::StatisticsCollector<int32_t>::StandardReportCallback(
-          fmt::format("queueing_delay[{}]", func_id))),
+          fmt::format("queueing_delay[{}]", func_id)), "tracer"),
       running_delay_stat(stat::StatisticsCollector<int32_t>::StandardReportCallback(
-          fmt::format("running_delay[{}]", func_id))),
+          fmt::format("running_delay[{}]", func_id)), "tracer"),
       inflight_requests_stat(stat::StatisticsCollector<uint16_t>::StandardReportCallback(
-          fmt::format("inflight_requests[{}]", func_id))),
+          fmt::format("inflight_requests[{}]", func_id)), "tracer"),
       instant_rps_ema(absl::GetFlag(FLAGS_instant_rps_ema_tau_ms),
                       absl::GetFlag(FLAGS_instant_rps_ema_alpha),
                       absl::GetFlag(FLAGS_instant_rps_p_norm)),

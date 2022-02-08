@@ -13,9 +13,9 @@ DBWorkers::DBWorkers(StorageBase* storage, size_t num_threads)
       worker_threads_(num_threads),
       idle_threads_(0),
       flush_queue_length_stat_(stat::StatisticsCollector<int>::StandardReportCallback(
-          "db_flush_queue_length")),
+          "db_flush_queue_length"), "storage"),
       batch_size_stat_(stat::StatisticsCollector<int>::StandardReportCallback(
-          "db_workers_batch_size")) {
+          "db_workers_batch_size"), "storage") {
     for (size_t i = 0; i < num_threads; i++) {
         worker_threads_[i].emplace(
             fmt::format("BG/{}", i),

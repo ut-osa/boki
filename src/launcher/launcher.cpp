@@ -25,8 +25,8 @@ Launcher::Launcher()
       buffer_pool_("Launcher", kBufferSize),
       func_worker_use_engine_socket_(false),
       engine_connection_(this),
-      engine_message_delay_stat_(
-          stat::StatisticsCollector<int32_t>::StandardReportCallback("engine_message_delay")) {
+      engine_message_delay_stat_(stat::StatisticsCollector<int32_t>::StandardReportCallback(
+          "engine_message_delay"), "launcher") {
     UV_DCHECK_OK(uv_loop_init(&uv_loop_));
     uv_loop_.data = &event_loop_thread_;
     UV_DCHECK_OK(uv_async_init(&uv_loop_, &stop_event_, &Launcher::StopCallback));

@@ -33,9 +33,9 @@ IOWorker::IOWorker(std::string_view worker_name)
       next_journal_file_id_(0),
       current_journal_file_(nullptr),
       journal_record_size_stat_(stat::StatisticsCollector<uint32_t>::StandardReportCallback(
-          fmt::format("journal_record_size[{}]", worker_name))),
+          fmt::format("journal_record_size[{}]", worker_name)), "journal"),
       journal_append_latency_stat_(stat::StatisticsCollector<int32_t>::StandardReportCallback(
-          fmt::format("journal_append_latency[{}]", worker_name))) {}
+          fmt::format("journal_append_latency[{}]", worker_name)), "journal") {}
 
 IOWorker::~IOWorker() {
     State state = state_.load();

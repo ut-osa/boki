@@ -11,8 +11,6 @@ ABSL_FLAG(uint32_t, io_uring_sq_thread_idle_ms, 1, "");
 ABSL_FLAG(uint32_t, io_uring_cq_nr_wait, 1, "");
 ABSL_FLAG(uint32_t, io_uring_cq_wait_timeout_us, 0, "");
 
-ABSL_FLAG(bool, enable_statgroup_iouring, false, "");
-
 #define ERRNO_LOGSTR(errno) fmt::format("{} [{}]", strerror(errno), errno)
 
 #define LOG_HEADER log_header_

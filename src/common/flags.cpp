@@ -26,3 +26,12 @@ ABSL_FLAG(size_t, journal_file_max_size_mb, 256,
 ABSL_FLAG(bool, journal_disable_checksum, false, "Disable checksum for journal records");
 
 ABSL_FLAG(bool, enable_all_stat, false, "Enable all statistics collectors");
+ABSL_FLAG(bool, enable_statgroup_iouring, false, "Enable iouring statgroup");
+ABSL_FLAG(bool, enable_statgroup_journal, false, "Enable journal statgroup");
+ABSL_FLAG(bool, enable_statgroup_gateway, false, "Enable gateway statgroup");
+ABSL_FLAG(bool, enable_statgroup_launcher, false, "Enable launcher statgroup");
+ABSL_FLAG(bool, enable_statgroup_engine, false, "Enable engine statgroup");
+ABSL_FLAG(bool, enable_statgroup_dispatcher, false, "Enable dispatcher statgroup");
+ABSL_FLAG(bool, enable_statgroup_tracer, false, "Enable tracer statgroup");
+ABSL_FLAG(bool, enable_statgroup_sharedlog, false, "Enable sharedlog statgroup");
+ABSL_FLAG(bool, enable_statgroup_storage, false, "Enable storage statgroup");

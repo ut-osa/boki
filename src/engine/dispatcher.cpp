@@ -21,15 +21,15 @@ Dispatcher::Dispatcher(Engine* engine, uint16_t func_id)
       log_header_(fmt::format("Dispatcher[{}]: ", func_id)),
       last_request_worker_timestamp_(-1),
       idle_workers_stat_(stat::StatisticsCollector<uint16_t>::StandardReportCallback(
-          fmt::format("idle_workers[{}]", func_id))),
+          fmt::format("idle_workers[{}]", func_id)), "dispatcher"),
       running_workers_stat_(stat::StatisticsCollector<uint16_t>::StandardReportCallback(
-          fmt::format("running_workers[{}]", func_id))),
+          fmt::format("running_workers[{}]", func_id)), "dispatcher"),
       max_concurrency_stat_(stat::StatisticsCollector<uint32_t>::StandardReportCallback(
-          fmt::format("max_concurrency[{}]", func_id))),
+          fmt::format("max_concurrency[{}]", func_id)), "dispatcher"),
       estimated_rps_stat_(stat::StatisticsCollector<float>::StandardReportCallback(
-          fmt::format("estimated_rps[{}]", func_id))),
+          fmt::format("estimated_rps[{}]", func_id)), "dispatcher"),
       estimated_concurrency_stat_(stat::StatisticsCollector<float>::StandardReportCallback(
-          fmt::format("estimated_concurrency[{}]", func_id))) {
+          fmt::format("estimated_concurrency[{}]", func_id)), "dispatcher") {
     const FuncConfig::Entry* func_entry = engine_->func_config()->find_by_func_id(func_id);
     DCHECK(func_entry != nullptr);
     func_config_entry_ = func_entry;

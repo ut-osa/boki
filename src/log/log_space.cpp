@@ -12,7 +12,7 @@ MetaLogPrimary::MetaLogPrimary(const View* view, uint16_t sequencer_id)
       persisted_metalog_position_(0),
       replicated_metalog_position_(0),
       cut_delta_stat_(stat::StatisticsCollector<uint32_t>::StandardReportCallback(
-          fmt::format("log_space[{}-{}]: cut_delta", view->id(), sequencer_id))) {
+          fmt::format("log_space[{}-{}]: cut_delta", view->id(), sequencer_id)), "sharedlog") {
     log_header_ = fmt::format("MetaLogPrimary[{}]: ", view->id());
     for (uint16_t engine_id : view_->GetEngineNodes()) {
         const View::Engine* engine_node = view_->GetEngineNode(engine_id);
@@ -265,7 +265,8 @@ LogStorage::LogStorage(uint16_t storage_id, const View* view, uint16_t sequencer
       max_live_entries_(absl::GetFlag(FLAGS_slog_storage_max_live_entries)),
       target_live_entries_(absl::GetFlag(FLAGS_slog_storage_target_live_entries)),
       live_entries_stat_(stat::StatisticsCollector<int>::StandardReportCallback(
-          fmt::format("log_space[{}-{}]: live_entries", view->id(), sequencer_id))) {
+          fmt::format("log_space[{}-{}]: live_entries", view->id(), sequencer_id)),
+          "storage") {
     for (uint16_t engine_id : storage_node_->GetSourceEngineNodes()) {
         shard_progrsses_[engine_id] = 0;
     }

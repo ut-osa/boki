@@ -44,19 +44,20 @@ Engine::Engine(uint16_t node_id)
       tracer_(this),
       inflight_external_requests_(0),
       last_external_request_timestamp_(-1),
-      incoming_external_requests_stat_(
-          stat::Counter::StandardReportCallback("incoming_external_requests")),
-      incoming_internal_requests_stat_(
-          stat::Counter::StandardReportCallback("incoming_internal_requests")),
-      external_requests_instant_rps_stat_(
-          stat::StatisticsCollector<float>::StandardReportCallback("external_requests_instant_rps")),
-      inflight_external_requests_stat_(
-          stat::StatisticsCollector<uint16_t>::StandardReportCallback("inflight_external_requests")),
-      message_delay_stat_(
-          stat::StatisticsCollector<int32_t>::StandardReportCallback("message_delay")),
-      input_use_shm_stat_(stat::Counter::StandardReportCallback("input_use_shm")),
-      output_use_shm_stat_(stat::Counter::StandardReportCallback("output_use_shm")),
-      discarded_func_call_stat_(stat::Counter::StandardReportCallback("discarded_func_call")) {}
+      incoming_external_requests_stat_(stat::Counter::StandardReportCallback(
+          "incoming_external_requests"), "engine"),
+      incoming_internal_requests_stat_(stat::Counter::StandardReportCallback(
+          "incoming_internal_requests"), "engine"),
+      external_requests_instant_rps_stat_(stat::StatisticsCollector<float>::StandardReportCallback(
+          "external_requests_instant_rps"), "engine"),
+      inflight_external_requests_stat_(stat::StatisticsCollector<uint16_t>::StandardReportCallback(
+          "inflight_external_requests"), "engine"),
+      message_delay_stat_(stat::StatisticsCollector<int32_t>::StandardReportCallback(
+          "message_delay"), "engine"),
+      input_use_shm_stat_(stat::Counter::StandardReportCallback("input_use_shm"), "engine"),
+      output_use_shm_stat_(stat::Counter::StandardReportCallback("output_use_shm"), "engine"),
+      discarded_func_call_stat_(stat::Counter::StandardReportCallback(
+          "discarded_func_call"), "engine") {}
 
 Engine::~Engine() {}
 
