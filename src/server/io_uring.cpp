@@ -11,6 +11,8 @@ ABSL_FLAG(uint32_t, io_uring_sq_thread_idle_ms, 1, "");
 ABSL_FLAG(uint32_t, io_uring_cq_nr_wait, 1, "");
 ABSL_FLAG(uint32_t, io_uring_cq_wait_timeout_us, 0, "");
 
+ABSL_FLAG(bool, enable_statgroup_iouring, false, "");
+
 #define ERRNO_LOGSTR(errno) fmt::format("{} [{}]", strerror(errno), errno)
 
 #define LOG_HEADER log_header_
@@ -24,20 +26,20 @@ IOUring::IOUring()
     : uring_id_(next_uring_id_.fetch_add(1, std::memory_order_relaxed)),
       log_header_(fmt::format("io_uring[{}]: ", uring_id_)),
       next_op_id_(1),
-      ev_loop_counter_(stat::Counter::VerboseLogReportCallback<2>(
-          fmt::format("io_uring[{}] ev_loop", uring_id_))),
-      wait_timeout_counter_(stat::Counter::VerboseLogReportCallback<2>(
-          fmt::format("io_uring[{}] wait_timeout", uring_id_))),
-      completed_ops_counter_(stat::Counter::VerboseLogReportCallback<2>(
-          fmt::format("io_uring[{}] completed_ops", uring_id_))),
-      io_uring_enter_time_stat_(stat::StatisticsCollector<int>::VerboseLogReportCallback<2>(
-          fmt::format("io_uring[{}] io_uring_enter_time", uring_id_))),
-      completed_ops_stat_(stat::StatisticsCollector<int>::VerboseLogReportCallback<2>(
-          fmt::format("io_uring[{}] completed_ops", uring_id_))),
-      ev_loop_time_stat_(stat::StatisticsCollector<int>::VerboseLogReportCallback<2>(
-          fmt::format("io_uring[{}] ev_loop_time", uring_id_))),
-      average_op_time_stat_(stat::StatisticsCollector<int>::VerboseLogReportCallback<2>(
-          fmt::format("io_uring[{}] average_op_time", uring_id_))) {
+      ev_loop_counter_(stat::Counter::StandardReportCallback(
+          fmt::format("io_uring[{}] ev_loop", uring_id_)), "iouring"),
+      wait_timeout_counter_(stat::Counter::StandardReportCallback(
+          fmt::format("io_uring[{}] wait_timeout", uring_id_)), "iouring"),
+      completed_ops_counter_(stat::Counter::StandardReportCallback(
+          fmt::format("io_uring[{}] completed_ops", uring_id_)), "iouring"),
+      io_uring_enter_time_stat_(stat::StatisticsCollector<int>::StandardReportCallback(
+          fmt::format("io_uring[{}] io_uring_enter_time", uring_id_)), "iouring"),
+      completed_ops_stat_(stat::StatisticsCollector<int>::StandardReportCallback(
+          fmt::format("io_uring[{}] completed_ops", uring_id_)), "iouring"),
+      ev_loop_time_stat_(stat::StatisticsCollector<int>::StandardReportCallback(
+          fmt::format("io_uring[{}] ev_loop_time", uring_id_)), "iouring"),
+      average_op_time_stat_(stat::StatisticsCollector<int>::StandardReportCallback(
+          fmt::format("io_uring[{}] average_op_time", uring_id_)), "iouring") {
     op_pool_.SetObjectInitFn([] (Op* op) {
         memset(op, 0, sizeof(Op));
         op->fd = -1;

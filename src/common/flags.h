@@ -29,3 +29,5 @@ ABSL_DECLARE_FLAG(std::string, journal_save_path);
 ABSL_DECLARE_FLAG(size_t, journal_file_max_records);
 ABSL_DECLARE_FLAG(size_t, journal_file_max_size_mb);
 ABSL_DECLARE_FLAG(bool, journal_disable_checksum);
+
+ABSL_DECLARE_FLAG(bool, enable_all_stat);

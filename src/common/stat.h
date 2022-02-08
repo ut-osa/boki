@@ -58,6 +58,14 @@ private:
     DISALLOW_COPY_AND_ASSIGN(ReportTimer);
 };
 
+#ifdef __FAAS_SRC
+bool StatEnabled(std::string_view statgroup_name);
+#else
+inline bool StatEnabled(std::string_view statgroup_name) {
+    return true;
+}
+#endif  // defined(__FAAS_SRC)
+
 template<class T>
 class StatisticsCollector {
 public:
@@ -80,21 +88,11 @@ public:
         };
     }
 
-    template<int L>
-    static ReportCallback VerboseLogReportCallback(std::string_view stat_name) {
-        return [name = std::string(stat_name)] (int duration_ms, size_t n_samples,
-                                                const Report& report) {
-            VLOG_F(L, "{} statistics ({} samples): "
-                      "p30={}, p50={}, p70={}, p90={}, p99={}",
-                   name, n_samples,
-                   report.p30, report.p50, report.p70, report.p90, report.p99);
-        };
-    }
-
-    explicit StatisticsCollector(ReportCallback report_callback)
-        : min_report_samples_(kDefaultMinReportSamples),
-          report_callback_(report_callback),
-          force_enabled_(false) {
+    explicit StatisticsCollector(ReportCallback report_callback,
+                                 std::string_view statgroup_name = "")
+        : enabled_(StatEnabled(statgroup_name)),
+          min_report_samples_(kDefaultMinReportSamples),
+          report_callback_(report_callback) {
         samples_.reserve(min_report_samples_);
     }
 
@@ -107,16 +105,11 @@ public:
         min_report_samples_ = value;
         samples_.reserve(min_report_samples_);
     }
-    void set_force_enabled(bool value) {
-        force_enabled_ = value;
-    }
 
     void AddSample(T sample) {
-#ifdef __FAAS_DISABLE_STAT
-        if (!force_enabled_) {
+        if (!enabled_) {
             return;
         }
-#endif
         samples_.push_back(sample);
         if (samples_.size() >= min_report_samples_ && report_timer_.Check()) {
             int duration_ms;
@@ -129,10 +122,11 @@ public:
     }
 
 private:
+    const bool enabled_;
+
     size_t min_report_samples_;
     ReportCallback report_callback_;
 
-    bool force_enabled_;
     ReportTimer report_timer_;
     std::vector<T> samples_;
 
@@ -174,19 +168,12 @@ public:
         };
     }
 
-    template<int L>
-    static ReportCallback VerboseLogReportCallback(std::string_view counter_name) {
-        return [name = std::string(counter_name)] (int duration_ms,
-                                                   int64_t new_value, int64_t old_value) {
-            float rate = 1000.0f * float_utils::GetRatio<float>(
-                new_value - old_value, duration_ms);
-            VLOG_F(L, "{} counter: value={}, rate={} per second", name, new_value, rate);
-        };
-    }
-
-    explicit Counter(ReportCallback report_callback)
-        : report_callback_(report_callback),
-          value_(0), last_report_value_(0) {}
+    explicit Counter(ReportCallback report_callback,
+                     std::string_view statgroup_name = "")
+        : enabled_(StatEnabled(statgroup_name)),
+          report_callback_(report_callback),
+          value_(0),
+          last_report_value_(0) {}
     
     ~Counter() = default;
 
@@ -195,7 +182,9 @@ public:
     }
 
     void Tick(int delta = 1) {
-#ifndef __FAAS_DISABLE_STAT
+        if (!enabled_) {
+            return;
+        }
         DCHECK_GT(delta, 0);
         value_ += delta;
         if (value_ > last_report_value_ && report_timer_.Check()) {
@@ -204,10 +193,11 @@ public:
             report_callback_(duration_ms, value_, last_report_value_);
             last_report_value_ = value_;
         }
-#endif
     }
 
 private:
+    const bool enabled_;
+
     ReportCallback report_callback_;
 
     ReportTimer report_timer_;
@@ -244,14 +234,18 @@ public:
         };
     }
 
-    explicit CategoryCounter(ReportCallback report_callback)
-        : report_callback_(report_callback),
+    explicit CategoryCounter(ReportCallback report_callback,
+                             std::string_view statgroup_name = "")
+        : enabled_(StatEnabled(statgroup_name)),
+          report_callback_(report_callback),
           sum_(0) {}
-    
+
     ~CategoryCounter() = default;
 
     void Tick(int category, int delta = 1) {
-#ifndef __FAAS_DISABLE_STAT
+        if (!enabled_) {
+            return;
+        }
         DCHECK_GT(delta, 0);
         values_[category] += delta;
         sum_ += delta;
@@ -264,10 +258,11 @@ public:
             }
             sum_ = 0;
         }
-#endif
     }
 
 private:
+    const bool enabled_;
+
     ReportCallback report_callback_;
 
     ReportTimer report_timer_;
