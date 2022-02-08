@@ -2,6 +2,7 @@
 
 #include "log/common.h"
 #include "log/log_space.h"
+#include "common/stat.h"
 
 namespace faas {
 namespace log {
@@ -61,7 +62,9 @@ private:
         DISALLOW_COPY_AND_ASSIGN(CompletionQueue);
     };
 
-    static constexpr size_t kBatchSize = 128;
+    // static constexpr size_t kBatchSize = 128;
+
+    const size_t max_batch_size_;
 
     StorageBase* storage_;
     absl::FixedArray<std::optional<base::Thread>> worker_threads_;
@@ -74,6 +77,9 @@ private:
     SubmissionQueue</* seqnum */ uint64_t>    trim_sq_      ABSL_GUARDED_BY(mu_);
 
     CompletionQueue<const LogStorage::Entry*> flush_cq_;
+
+    stat::StatisticsCollector<int> flush_queue_length_stat_ ABSL_GUARDED_BY(mu_);
+    stat::StatisticsCollector<int> batch_size_stat_         ABSL_GUARDED_BY(mu_);
 
     void WorkerThreadMain(int thread_index);
 
@@ -117,7 +123,7 @@ void DBWorkers::CompletionQueue<T>::Push(std::span<const T> entries, uint64_t st
         iter = finished_entries_.erase(iter);
         committed_id_position_++;
     }
-    if (commit_fn_) {
+    if (!buffer_.empty() && commit_fn_) {
         commit_fn_(VECTOR_AS_SPAN(buffer_));
     }
 }

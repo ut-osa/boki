@@ -39,6 +39,8 @@ private:
 
     std::optional<uint32_t> previous_cut_seqnum_;
 
+    stat::StatisticsCollector<uint32_t> cut_delta_stat_;
+
     uint32_t GetShardReplicatedPosition(uint16_t engine_id) const;
     void UpdateMetaLogReplicatedPosition();
 
@@ -143,6 +145,9 @@ private:
 
     uint64_t persisted_seqnum_position_;
     std::set<uint64_t> persisted_seqnums_;
+
+    const size_t max_live_entries_;
+    const size_t target_live_entries_;
 
     std::deque<uint64_t> live_seqnums_;
     absl::flat_hash_map</* seqnum */ uint64_t, const Entry*> live_log_entries_;

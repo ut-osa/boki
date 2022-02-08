@@ -10,7 +10,9 @@ namespace log {
 MetaLogPrimary::MetaLogPrimary(const View* view, uint16_t sequencer_id)
     : LogSpaceBase(LogSpaceBase::kFullMode, view, sequencer_id),
       persisted_metalog_position_(0),
-      replicated_metalog_position_(0) {
+      replicated_metalog_position_(0),
+      cut_delta_stat_(stat::StatisticsCollector<uint32_t>::StandardReportCallback(
+          fmt::format("log_space[{}-{}]: cut_delta", view->id(), sequencer_id))) {
     log_header_ = fmt::format("MetaLogPrimary[{}]: ", view->id());
     for (uint16_t engine_id : view_->GetEngineNodes()) {
         const View::Engine* engine_node = view_->GetEngineNode(engine_id);
@@ -137,6 +139,7 @@ std::optional<MetaLogProto> MetaLogPrimary::MarkNextCut() {
     }
     DCHECK_EQ(new_logs_proto->start_seqnum() + total_delta,
               bits::LowHalf64(seqnum_position()));
+    cut_delta_stat_.AddSample(total_delta);
     previous_cut_seqnum_ = meta_log_proto.metalog_seqnum();
     return meta_log_proto;
 }
@@ -259,6 +262,8 @@ LogStorage::LogStorage(uint16_t storage_id, const View* view, uint16_t sequencer
       storage_node_(view_->GetStorageNode(storage_id)),
       shard_progrss_dirty_(false),
       persisted_seqnum_position_(bits::JoinTwo32(identifier(), 0)),
+      max_live_entries_(absl::GetFlag(FLAGS_slog_storage_max_live_entries)),
+      target_live_entries_(absl::GetFlag(FLAGS_slog_storage_target_live_entries)),
       live_entries_stat_(stat::StatisticsCollector<int>::StandardReportCallback(
           fmt::format("log_space[{}-{}]: live_entries", view->id(), sequencer_id))) {
     for (uint16_t engine_id : storage_node_->GetSourceEngineNodes()) {
@@ -388,11 +393,7 @@ std::optional<std::vector<uint32_t>> LogStorage::GrabShardProgressForSending() {
     if (!shard_progrss_dirty_) {
         return std::nullopt;
     }
-    size_t max_size = absl::GetFlag(FLAGS_slog_storage_max_live_entries);
-    if (live_seqnums_.size() > max_size * 2) {
-        HLOG_F(WARNING, "There are too many live seqnums ({} in total), "
-                        "refuse to produce new shard progres",
-               live_seqnums_.size());
+    if (live_seqnums_.size() > max_live_entries_) {
         return std::nullopt;
     }
     std::vector<uint32_t> progress;
@@ -509,8 +510,7 @@ void LogStorage::AdvanceShardProgress(uint16_t engine_id) {
 }
 
 void LogStorage::ShrinkLiveEntriesIfNeeded() {
-    size_t max_size = absl::GetFlag(FLAGS_slog_storage_max_live_entries);
-    while (live_seqnums_.size() > max_size) {
+    while (live_seqnums_.size() > target_live_entries_) {
         uint64_t seqnum = live_seqnums_.front();
         if (seqnum >= persisted_seqnum_position_) {
             break;
