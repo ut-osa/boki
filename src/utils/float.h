@@ -25,5 +25,5 @@ FloatT GetRatio(LIntT lhs, RIntT rhs) {
     return static_cast<FloatT>(lhs) / static_cast<FloatT>(rhs);
 }
 
-}  // namespace utils
+}  // namespace float_utils
 }  // namespace faas
