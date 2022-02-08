@@ -34,11 +34,11 @@ void StorageBase::StartInternal() {
     log_cache_.emplace(absl::GetFlag(FLAGS_slog_storage_cache_cap_mb));
     if (db_enabled()) {
         SetupDB();
-        db_workers_.emplace(this, absl::GetFlag(FLAGS_slog_storage_flusher_threads));
     } else {
         DCHECK(journal_for_storage_ && journal_enabled());
         HLOG(INFO) << "Use journal for storage";
     }
+    db_workers_.emplace(this, absl::GetFlag(FLAGS_slog_storage_flusher_threads));
     indexer_.emplace(db_path_, journal_for_storage_);
     SetupTimers();
     SetupZKWatchers();

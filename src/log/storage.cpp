@@ -263,7 +263,7 @@ void Storage::OnRecvNewMetaLogs(const SharedLogMessage& message,
         SendIndexData(DCHECK_NOTNULL(view), *index_data);
     }
     if (!new_log_entires.empty()) {
-        ScheduleStoreLogEntires(std::move(new_log_entires));
+        db_workers()->SubmitLogEntriesForFlush(VECTOR_AS_SPAN(new_log_entires));
     }
 }
 
@@ -476,19 +476,6 @@ void Storage::SendShardProgressIfNeeded() {
     }
 }
 
-void Storage::ScheduleStoreLogEntires(LogStorage::LogEntryVec entries) {
-    DCHECK(!entries.empty());
-    if (db_enabled()) {
-        db_workers()->SubmitLogEntriesForFlush(VECTOR_AS_SPAN(entries));
-    } else {
-        CurrentIOWorkerChecked()->ScheduleIdleFunction(
-            nullptr, [this, entries = std::move(entries)] {
-                CommitLogEntries(entries);
-            }
-        );
-    }
-}
-
 void Storage::CollectLogTrimOps() {
     absl::flat_hash_map</* logspace_id */ uint32_t, LogStorage::TrimOpVec> all_trim_ops;
     {
@@ -551,7 +538,10 @@ void Storage::CollectLogTrimOps() {
 }
 
 void Storage::DBFlushLogEntries(std::span<const LogStorage::Entry* const> entries) {
-    DCHECK(db_enabled());
+    if (!db_enabled()) {
+        // Journal is used for storage, nothing to do here
+        return;
+    }
     HVLOG_F(1, "Going to flush {} entries to DB", entries.size());
     absl::flat_hash_set<uint32_t> logspace_ids;
     for (const LogStorage::Entry* entry : entries) {

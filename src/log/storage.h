@@ -52,7 +52,6 @@ private:
 
     void SendShardProgressIfNeeded() override;
     void CollectLogTrimOps() override;
-    void ScheduleStoreLogEntires(LogStorage::LogEntryVec entries);
     void DBFlushLogEntries(std::span<const LogStorage::Entry* const> entries) override;
     void CommitLogEntries(std::span<const LogStorage::Entry* const> entries) override;
 
