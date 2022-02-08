@@ -159,7 +159,6 @@ private:
     absl::flat_hash_map</* user_logspace */ uint32_t,
                         /* trim_seqnum */ uint64_t> trim_seqnums_;
 
-    stat::StatisticsCollector<int> journal_delay_stat_;
     stat::StatisticsCollector<int> live_entries_stat_;
 
     void OnNewLogs(uint32_t metalog_seqnum,

@@ -25,9 +25,6 @@ JournalFile::JournalFile(IOWorker* owner, int file_id)
       appended_bytes_(0),
       flushed_bytes_(0),
       flush_fn_scheduled_(false) {
-    if (!checksum_enabled_) {
-        LOG(WARNING) << "Checksum disabled for journal records";
-    }
     Create(file_id);
 }
 

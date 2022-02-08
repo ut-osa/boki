@@ -259,8 +259,6 @@ LogStorage::LogStorage(uint16_t storage_id, const View* view, uint16_t sequencer
       storage_node_(view_->GetStorageNode(storage_id)),
       shard_progrss_dirty_(false),
       persisted_seqnum_position_(bits::JoinTwo32(identifier(), 0)),
-      journal_delay_stat_(stat::StatisticsCollector<int>::StandardReportCallback(
-          fmt::format("log_space[{}-{}]: journal_delay", view->id(), sequencer_id))),
       live_entries_stat_(stat::StatisticsCollector<int>::StandardReportCallback(
           fmt::format("log_space[{}-{}]: live_entries", view->id(), sequencer_id))) {
     for (uint16_t engine_id : storage_node_->GetSourceEngineNodes()) {
@@ -285,8 +283,6 @@ bool LogStorage::Store(Entry new_entry) {
     *entry = std::move(new_entry);
     pending_log_entries_[localid] = entry;
     AdvanceShardProgress(engine_id);
-    journal_delay_stat_.AddSample(gsl::narrow_cast<int>(
-        GetMonotonicMicroTimestamp() - entry->recv_timestamp));
     return true;
 }
 

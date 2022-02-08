@@ -36,6 +36,9 @@ ServerBase::ServerBase(std::string_view node_name, bool enable_journal)
     PCHECK(stat_timerfd_ >= 0) << "Failed to create timerfd";
     if (enable_journal_) {
         HLOG(INFO) << "Journal enabled";
+        if (absl::GetFlag(FLAGS_journal_disable_checksum)) {
+            HLOG(WARNING) << "Checksum disabled for journal records";
+        }
     }
 }
 
