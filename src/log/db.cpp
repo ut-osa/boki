@@ -234,6 +234,8 @@ void TkrzwDBMBackend::Delete(uint32_t logspace_id, std::span<const uint32_t> key
         }
         TKRZW_CHECK_OK(status, Remove);
     }
+    auto status = dbm->Synchronize(/* hard= */ false);
+    TKRZW_CHECK_OK(status, Synchronize);
 }
 
 void TkrzwDBMBackend::StagingPut(std::string_view key, std::span<const char> data) {
