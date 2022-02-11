@@ -111,12 +111,15 @@ private:
     std::optional<DBWorkers>      db_workers_;
     std::optional<StorageIndexer> indexer_;
 
+    size_t prev_db_num_keys_;
+
     void SetupDB();
     void SetupZKWatchers();
     void SetupTimers();
 
     void StartInternal() override;
     void StopInternal() override;
+    void PrintStatInternal() override;
     void OnConnectionClose(server::ConnectionBase* connection) override;
     void OnRemoteMessageConn(const protocol::HandshakeMessage& handshake,
                              int sockfd) override;
@@ -136,6 +139,8 @@ private:
     server::EgressHub* CreateEgressHub(protocol::ConnType conn_type,
                                        uint16_t dst_node_id,
                                        server::IOWorker* io_worker);
+
+    void PrintDBStat();
 
     DISALLOW_COPY_AND_ASSIGN(StorageBase);
 };

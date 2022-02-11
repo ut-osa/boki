@@ -155,6 +155,14 @@ void RocksDBBackend::StagingDelete(std::string_view key) {
     ROCKSDB_CHECK_OK(status, Delete);
 }
 
+void RocksDBBackend::GetStat(size_t* num_keys, size_t* byte_size) {
+    uint64_t value;
+    CHECK(db_->GetIntProperty(rocksdb::DB::Properties::kEstimateNumKeys, &value));
+    *num_keys = value;
+    CHECK(db_->GetIntProperty(rocksdb::DB::Properties::kEstimateLiveDataSize, &value));
+    *byte_size = value;
+}
+
 rocksdb::ColumnFamilyHandle* RocksDBBackend::GetCFHandle(uint32_t logspace_id) {
     absl::ReaderMutexLock lk(&mu_);
     if (!column_families_.contains(logspace_id)) {
@@ -246,6 +254,24 @@ void TkrzwDBMBackend::StagingPut(std::string_view key, std::span<const char> dat
 void TkrzwDBMBackend::StagingDelete(std::string_view key) {
     auto status = staging_db_->Remove(key);
     TKRZW_CHECK_OK(status, Set);
+}
+
+void TkrzwDBMBackend::GetStat(size_t* num_keys, size_t* byte_size) {
+    *num_keys = 0;
+    *byte_size = 0;
+    tkrzw::Status status;
+    absl::ReaderMutexLock lk(&mu_);
+    for (const auto& [_, dbm]: dbs_) {
+        int64_t value;
+        status = dbm->Count(&value);
+        TKRZW_CHECK_OK(status, Count);
+        DCHECK_GE(value, 0);
+        *num_keys += static_cast<size_t>(value);
+        status = dbm->GetFileSize(&value);
+        TKRZW_CHECK_OK(status, GetFileSize);
+        DCHECK_GE(value, 0);
+        *byte_size += static_cast<size_t>(value);
+    }
 }
 
 std::unique_ptr<tkrzw::DBM> TkrzwDBMBackend::CreateDBM(std::string_view name) {

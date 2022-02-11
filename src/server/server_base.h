@@ -52,6 +52,7 @@ protected:
     // Supposed to be implemented by sub-class
     virtual void StartInternal() = 0;
     virtual void StopInternal() = 0;
+    virtual void PrintStatInternal() {}
     virtual void OnConnectionClose(ConnectionBase* connection) = 0;
     virtual void OnRemoteMessageConn(const protocol::HandshakeMessage& handshake,
                                      int sockfd) = 0;

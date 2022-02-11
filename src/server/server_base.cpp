@@ -295,6 +295,7 @@ void ServerBase::DoPrintStat() {
     if (journal_enabled()) {
         PrintJournalStat();
     }
+    PrintStatInternal();
 }
 
 void ServerBase::DoReadClosedConnection(int pipefd) {

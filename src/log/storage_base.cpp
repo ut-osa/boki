@@ -4,6 +4,7 @@
 #include "server/constants.h"
 #include "server/io_worker.h"
 #include "utils/fs.h"
+#include "utils/format.h"
 
 #define LOG_HEADER "StorageBase: "
 
@@ -25,7 +26,8 @@ StorageBase::StorageBase(uint16_t node_id)
                  absl::GetFlag(FLAGS_slog_storage_enable_journal)),
       node_id_(node_id),
       journal_for_storage_(absl::GetFlag(FLAGS_slog_storage_backend) == "journal"),
-      db_(nullptr) {
+      db_(nullptr),
+      prev_db_num_keys_(0) {
     if (journal_for_storage_ && !journal_enabled()) {
         HLOG(FATAL) << "Storage backend is journal, but journal not enabled!";
     }
@@ -52,6 +54,12 @@ void StorageBase::StopInternal() {
     }
 }
 
+void StorageBase::PrintStatInternal() {
+    if (db_enabled()) {
+        PrintDBStat();
+    }
+}
+
 void StorageBase::SetupDB() {
     std::string db_backend = absl::GetFlag(FLAGS_slog_storage_backend);
     if (db_backend == "rocksdb") {
@@ -67,6 +75,20 @@ void StorageBase::SetupDB() {
     }
     HLOG_F(INFO, "Use {} storage backend {} journal",
            db_backend, journal_enabled() ? "with" : "without");
+}
+
+void StorageBase::PrintDBStat() {
+    DCHECK(db_enabled());
+    size_t db_num_keys;
+    size_t db_byte_size;
+    db_->GetStat(&db_num_keys, &db_byte_size);
+    if (prev_db_num_keys_ == db_num_keys) {
+        return;
+    }
+    prev_db_num_keys_ = db_num_keys;
+    LOG(INFO) << "[STAT] DB: "
+              << "num_keys="    << utils::FormatNumber(db_num_keys) << ", "
+              << "total_bytes=" << utils::FormatBytes(db_byte_size);
 }
 
 void StorageBase::SetupZKWatchers() {

@@ -28,6 +28,8 @@ public:
 
     virtual void StagingPut(std::string_view key, std::span<const char> data) = 0;
     virtual void StagingDelete(std::string_view key) = 0;
+
+    virtual void GetStat(size_t* num_keys, size_t* byte_size) = 0;
 };
 
 class RocksDBBackend final : public DBInterface {
@@ -41,6 +43,7 @@ public:
     void Delete(uint32_t logspace_id, std::span<const uint32_t> keys) override;
     void StagingPut(std::string_view key, std::span<const char> data) override;
     void StagingDelete(std::string_view key) override;
+    void GetStat(size_t* num_keys, size_t* byte_size) override;
 
 private:
     std::unique_ptr<rocksdb::DB> db_;
@@ -66,6 +69,7 @@ public:
     void Delete(uint32_t logspace_id, std::span<const uint32_t> keys) override;
     void StagingPut(std::string_view key, std::span<const char> data) override;
     void StagingDelete(std::string_view key) override;
+    void GetStat(size_t* num_keys, size_t* byte_size) override;
 
 private:
     Type type_;
