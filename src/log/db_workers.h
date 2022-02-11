@@ -62,8 +62,6 @@ private:
         DISALLOW_COPY_AND_ASSIGN(CompletionQueue);
     };
 
-    // static constexpr size_t kBatchSize = 128;
-
     const size_t max_batch_size_;
 
     StorageBase* storage_;
