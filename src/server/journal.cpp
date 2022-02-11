@@ -44,9 +44,9 @@ bool JournalFile::ReachLimit() const {
     return false;
 }
 
-void JournalFile::AppendRecord(uint16_t type,
-                               std::initializer_list<std::span<const char>> payload_vec,
-                               AppendCallback cb) {
+size_t JournalFile::AppendRecord(uint16_t type,
+                                 std::initializer_list<std::span<const char>> payload_vec,
+                                 AppendCallback cb) {
     DCHECK(owner_->WithinMyEventLoopThread());
     DCHECK(current_state() == kActive);
     size_t payload_size = 0;
@@ -76,6 +76,7 @@ void JournalFile::AppendRecord(uint16_t type,
     num_records_++;
     appended_bytes_ += record_size;
     ScheduleFlush();
+    return record_size;
 }
 
 namespace {

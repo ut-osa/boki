@@ -3,47 +3,14 @@
 #include "base/common.h"
 #include "base/thread.h"
 #include "common/stat.h"
+#include "common/protocol.h"
 #include "utils/buffer_pool.h"
 #include "utils/round_robin_set.h"
+#include "server/types.h"
 #include "server/io_uring.h"
-#include "server/journal.h"
 
 namespace faas {
 namespace server {
-
-class IOWorker;
-class ServerBase;
-
-class ConnectionBase : public std::enable_shared_from_this<ConnectionBase> {
-public:
-    explicit ConnectionBase(int type = -1) : type_(type), id_(-1) {}
-    virtual ~ConnectionBase() = default;
-
-    int type() const { return type_; }
-    int id() const { return id_; }
-
-    template<class T>
-    T* as_ptr() { return static_cast<T*>(this); }
-    std::shared_ptr<ConnectionBase> ref_self() { return shared_from_this(); }
-
-    virtual void Start(IOWorker* io_worker) = 0;
-    virtual void ScheduleClose() = 0;
-
-    // Only used for transferring connection from Server to IOWorker
-    void set_id(int id) { id_ = id; }
-    char* pipe_write_buf_for_transfer() { return pipe_write_buf_for_transfer_; }
-
-protected:
-    int type_;
-    int id_;
-
-    static IOUring* current_io_uring();
-
-private:
-    char pipe_write_buf_for_transfer_[__FAAS_PTR_SIZE];
-
-    DISALLOW_COPY_AND_ASSIGN(ConnectionBase);
-};
 
 class IOWorker final {
 public:
@@ -93,7 +60,6 @@ public:
     // Idle functions will be invoked at the end of each event loop iteration.
     void ScheduleIdleFunction(ConnectionBase* owner, std::function<void()> fn);
 
-    using JournalAppendCallback = JournalFile::AppendCallback;
     void JournalAppend(uint16_t type,
                        std::initializer_list<std::span<const char>> payload_vec,
                        JournalAppendCallback cb);
@@ -102,6 +68,8 @@ public:
     void OnJournalFileClosed(JournalFile* file);
     void OnJournalFileRemoved(JournalFile* file);
     void OnJournalRecordAppended(const protocol::JournalRecordHeader& hdr);
+
+    void AggregateJournalStat(JournalStat* stat);
 
 private:
     enum State { kCreated, kRunning, kStopping, kStopped };
@@ -137,6 +105,11 @@ private:
     int next_journal_file_id_;
     absl::flat_hash_map</* file_id */ int, std::unique_ptr<JournalFile>> journal_files_;
     JournalFile* current_journal_file_; 
+
+    std::atomic<int> num_created_files_;
+    std::atomic<int> num_closed_files_;
+    std::atomic<size_t> total_bytes_;
+    std::atomic<size_t> total_records_;
 
     stat::StatisticsCollector<uint32_t> journal_record_size_stat_;
     stat::StatisticsCollector<int32_t> journal_append_latency_stat_;

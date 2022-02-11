@@ -3,6 +3,7 @@
 #include "utils/io.h"
 #include "utils/timerfd.h"
 #include "server/constants.h"
+#include "server/io_worker.h"
 
 namespace faas {
 namespace server {

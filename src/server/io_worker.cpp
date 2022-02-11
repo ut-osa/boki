@@ -1,9 +1,10 @@
 #include "server/io_worker.h"
 
 #include "common/flags.h"
+#include "utils/fs.h"
 #include "server/constants.h"
 #include "server/server_base.h"
-#include "utils/fs.h"
+#include "server/journal.h"
 
 #include <sys/eventfd.h>
 
@@ -32,6 +33,10 @@ IOWorker::IOWorker(std::string_view worker_name)
       connections_on_closing_(0),
       next_journal_file_id_(0),
       current_journal_file_(nullptr),
+      num_created_files_(0),
+      num_closed_files_(0),
+      total_bytes_(0),
+      total_records_(0),
       journal_record_size_stat_(stat::StatisticsCollector<uint32_t>::StandardReportCallback(
           fmt::format("journal_record_size[{}]", worker_name)), "journal"),
       journal_append_latency_stat_(stat::StatisticsCollector<int32_t>::StandardReportCallback(
@@ -306,7 +311,9 @@ void IOWorker::JournalAppend(uint16_t type,
     if (current_journal_file_ == nullptr) {
         HLOG(FATAL) << "Journal not enabled!";
     }
-    current_journal_file_->AppendRecord(type, payload_vec, std::move(cb));
+    size_t record_size = current_journal_file_->AppendRecord(type, payload_vec, std::move(cb));
+    total_bytes_.fetch_add(record_size, std::memory_order_relaxed);
+    total_records_.fetch_add(1, std::memory_order_relaxed);
 }
 
 void IOWorker::JournalMonitorCallback() {
@@ -326,10 +333,12 @@ JournalFile* IOWorker::CreateNewJournalFile() {
     JournalFile* journal_file = new JournalFile(this, file_id);
     journal_files_[file_id] = absl::WrapUnique(journal_file);
     server_->OnJournalFileCreated(journal_file);
+    num_created_files_.fetch_add(1, std::memory_order_relaxed);
     return journal_file;
 }
 
 void IOWorker::OnJournalFileClosed(JournalFile* file) {
+    num_closed_files_.fetch_add(1, std::memory_order_relaxed);
     server_->OnJournalFileClosed(file);
 }
 
@@ -343,6 +352,13 @@ void IOWorker::OnJournalRecordAppended(const protocol::JournalRecordHeader& hdr)
     journal_record_size_stat_.AddSample(hdr.record_size);
     journal_append_latency_stat_.AddSample(
         gsl::narrow_cast<int32_t>((GetRealtimeNanoTimestamp() - hdr.timestamp) / 1000));
+}
+
+void IOWorker::AggregateJournalStat(JournalStat* stat) {
+    stat->num_created_files += num_created_files_.load(std::memory_order_relaxed);
+    stat->num_closed_files  += num_closed_files_.load(std::memory_order_relaxed);
+    stat->total_bytes       += total_bytes_.load(std::memory_order_relaxed);
+    stat->total_records     += total_records_.load(std::memory_order_relaxed);
 }
 
 }  // namespace server

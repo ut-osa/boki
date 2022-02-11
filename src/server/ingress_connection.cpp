@@ -1,8 +1,9 @@
 #include "server/ingress_connection.h"
 
 #include "common/flags.h"
-#include "server/constants.h"
 #include "utils/socket.h"
+#include "server/constants.h"
+#include "server/io_worker.h"
 
 #define LOG_HEADER log_header_
 

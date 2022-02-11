@@ -2,6 +2,7 @@
 
 #include "log/flags.h"
 #include "server/constants.h"
+#include "server/io_worker.h"
 #include "utils/bits.h"
 
 #define LOG_HEADER "SequencerBase: "

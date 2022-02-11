@@ -2,6 +2,7 @@
 
 #include "common/flags.h"
 #include "server/constants.h"
+#include "server/io_worker.h"
 
 #define LOG_HEADER log_header_
 

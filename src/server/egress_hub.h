@@ -4,7 +4,7 @@
 #include "utils/socket.h"
 #include "utils/appendable_buffer.h"
 #include "utils/round_robin_set.h"
-#include "server/io_worker.h"
+#include "server/types.h"
 
 namespace faas {
 namespace server {

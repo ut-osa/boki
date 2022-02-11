@@ -6,7 +6,11 @@
 #include "utils/socket.h"
 #include "utils/timerfd.h"
 #include "utils/malloc.h"
+#include "utils/format.h"
 #include "server/constants.h"
+#include "server/io_worker.h"
+#include "server/timer.h"
+#include "server/journal.h"
 
 #include <sys/types.h>
 #include <sys/eventfd.h>
@@ -31,7 +35,8 @@ ServerBase::ServerBase(std::string_view node_name, bool enable_journal)
                   absl::GetFlag(FLAGS_zookeeper_root_path)),
       next_io_worker_for_pick_(0),
       next_connection_id_(0),
-      next_journal_file_id_(0) {
+      next_journal_file_id_(0),
+      prev_journal_total_records_(0) {
     PCHECK(stop_eventfd_ >= 0) << "Failed to create eventfd";
     PCHECK(stat_timerfd_ >= 0) << "Failed to create timerfd";
     if (enable_journal_) {
@@ -45,10 +50,6 @@ ServerBase::ServerBase(std::string_view node_name, bool enable_journal)
 ServerBase::~ServerBase() {
     PCHECK(close(stop_eventfd_) == 0) << "Failed to close eventfd";
     PCHECK(close(stat_timerfd_) == 0) << "Failed to close eventfd";
-}
-
-bool ServerBase::journal_enabled() {
-    return enable_journal_;
 }
 
 void ServerBase::Start() {
@@ -107,6 +108,14 @@ IOWorker* ServerBase::PickIOWorkerForConnType(int conn_type) {
 IOWorker* ServerBase::SomeIOWorker() const {
     size_t idx = next_io_worker_for_pick_.fetch_add(1, std::memory_order_relaxed);
     return io_workers_.at(idx % io_workers_.size()).get();
+}
+
+IOWorker* ServerBase::CurrentIOWorker() {
+    return IOWorker::current();
+}
+
+IOWorker* ServerBase::CurrentIOWorkerChecked() {
+    return DCHECK_NOTNULL(IOWorker::current());
 }
 
 void ServerBase::OnRemoteMessageConn(const protocol::HandshakeMessage& handshake, int sockfd) {
@@ -283,6 +292,9 @@ void ServerBase::DoStop() {
 
 void ServerBase::DoPrintStat() {
     utils::PrintMallocStat();
+    if (journal_enabled()) {
+        PrintJournalStat();
+    }
 }
 
 void ServerBase::DoReadClosedConnection(int pipefd) {
@@ -348,6 +360,28 @@ void ServerBase::CreatePeriodicTimer(int timer_type, absl::Duration interval,
 int ServerBase::NextJournalFileID() {
     DCHECK(enable_journal_);
     return next_journal_file_id_.fetch_add(1, std::memory_order_relaxed);
+}
+
+void ServerBase::PrintJournalStat() {
+    DCHECK(enable_journal_);
+    JournalStat stat = {
+        .num_created_files = 0,
+        .num_closed_files = 0,
+        .total_bytes = 0,
+        .total_records = 0,
+    };
+    ForEachIOWorker([&stat] (IOWorker* io_worker) {
+        io_worker->AggregateJournalStat(&stat);
+    });
+    if (prev_journal_total_records_ == stat.total_records) {
+        return;
+    }
+    prev_journal_total_records_ = stat.total_records;
+    LOG(INFO) << "[STAT] journal: "
+              << "created_files=" << stat.num_created_files                   << ", "
+              << "closed_files="  << stat.num_closed_files                    << ", "
+              << "total_bytes="   << utils::FormatBytes(stat.total_bytes)     << ", "
+              << "total_records=" << utils::FormatNumber(stat.total_records);
 }
 
 namespace {

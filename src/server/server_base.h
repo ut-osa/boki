@@ -4,14 +4,11 @@
 #include "common/zk.h"
 #include "common/protocol.h"
 #include "utils/appendable_buffer.h"
-#include "server/io_worker.h"
+#include "server/types.h"
 #include "server/node_watcher.h"
-#include "server/timer.h"
 
 namespace faas {
 namespace server {
-
-class JournalFile;
 
 class ServerBase {
 public:
@@ -26,7 +23,7 @@ protected:
     enum State { kCreated, kBootstrapping, kRunning, kStopping, kStopped };
     std::atomic<State> state_;
 
-    bool journal_enabled();
+    bool journal_enabled() { return enable_journal_; }
 
     zk::ZKSession* zk_session() { return &zk_session_; }
     NodeWatcher* node_watcher() { return &node_watcher_; }
@@ -37,16 +34,16 @@ protected:
     IOWorker* PickIOWorkerForConnType(int conn_type);
     IOWorker* SomeIOWorker() const;
 
-    static IOWorker* CurrentIOWorker() { return IOWorker::current(); }
-    static IOWorker* CurrentIOWorkerChecked() { return DCHECK_NOTNULL(IOWorker::current()); }
+    static IOWorker* CurrentIOWorker();
+    static IOWorker* CurrentIOWorkerChecked();
 
     void RegisterConnection(IOWorker* io_worker, ConnectionBase* connection);
 
     using ConnectionCallback = std::function<void(int /* client_sockfd */)>;
     void ListenForNewConnections(int server_sockfd, ConnectionCallback cb);
 
-    Timer* CreateTimer(int timer_type, IOWorker* io_worker, Timer::Callback cb);
-    void CreatePeriodicTimer(int timer_type, absl::Duration interval, Timer::Callback cb);
+    Timer* CreateTimer(int timer_type, IOWorker* io_worker, TimerCallback cb);
+    void CreatePeriodicTimer(int timer_type, absl::Duration interval, TimerCallback cb);
 
     int NextJournalFileID();
     virtual void OnJournalFileCreated(JournalFile* file) {}
@@ -85,6 +82,7 @@ private:
     absl::flat_hash_set<std::unique_ptr<Timer>> timers_;
 
     std::atomic<int> next_journal_file_id_;
+    size_t prev_journal_total_records_;
 
     void SetupIOWorkers();
     void SetupMessageServer();
@@ -96,6 +94,8 @@ private:
     void DoPrintStat();
     void DoReadClosedConnection(int pipefd);
     void DoAcceptConnection(int server_sockfd);
+
+    void PrintJournalStat();
 
     DISALLOW_COPY_AND_ASSIGN(ServerBase);
 };

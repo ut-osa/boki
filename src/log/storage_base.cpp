@@ -2,6 +2,7 @@
 
 #include "log/flags.h"
 #include "server/constants.h"
+#include "server/io_worker.h"
 #include "utils/fs.h"
 
 #define LOG_HEADER "StorageBase: "

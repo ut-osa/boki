@@ -1,6 +1,7 @@
 #include "log/sequencer.h"
 
 #include "server/constants.h"
+#include "server/io_worker.h"
 #include "log/flags.h"
 #include "utils/bits.h"
 

@@ -5,11 +5,10 @@
 #include "utils/appendable_buffer.h"
 #include "utils/object_pool.h"
 #include "utils/ref_count.h"
+#include "server/types.h"
 
 namespace faas {
 namespace server {
-
-class IOWorker;
 
 class JournalFile : public RefCountedBase<JournalFile> {
 public:
@@ -28,10 +27,10 @@ public:
 
     bool ReachLimit() const;
 
-    using AppendCallback = std::function<void(JournalFile* /* file */, size_t /* offset */)>;
-    void AppendRecord(uint16_t type,
-                      std::initializer_list<std::span<const char>> payload_vec,
-                      AppendCallback cb);
+    using AppendCallback = JournalAppendCallback;
+    size_t AppendRecord(uint16_t type,
+                        std::initializer_list<std::span<const char>> payload_vec,
+                        AppendCallback cb);
 
     size_t ReadRecord(size_t offset, uint16_t* type, utils::AppendableBuffer* buffer);
 

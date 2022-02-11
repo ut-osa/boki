@@ -1,14 +1,14 @@
 #pragma once
 
 #include "base/common.h"
-#include "server/io_worker.h"
+#include "server/types.h"
 
 namespace faas {
 namespace server {
 
 class Timer final : public server::ConnectionBase {
 public:
-    using Callback = std::function<void()>;
+    using Callback = TimerCallback;
     Timer(int timer_type, Callback cb);
     ~Timer();
 
