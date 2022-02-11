@@ -3,7 +3,7 @@
 #include "base/common.h"
 #include "common/http_status.h"
 #include "utils/appendable_buffer.h"
-#include "server/io_worker.h"
+#include "server/types.h"
 #include "gateway/func_call_context.h"
 
 #include <http_parser.h>

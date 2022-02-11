@@ -3,7 +3,7 @@
 #include "base/common.h"
 #include "utils/appendable_buffer.h"
 #include "utils/object_pool.h"
-#include "server/io_worker.h"
+#include "server/types.h"
 #include "gateway/func_call_context.h"
 
 __BEGIN_THIRD_PARTY_HEADERS

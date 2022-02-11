@@ -5,7 +5,7 @@
 #include "common/stat.h"
 #include "utils/appendable_buffer.h"
 #include "utils/object_pool.h"
-#include "server/io_worker.h"
+#include "server/types.h"
 
 namespace faas {
 namespace engine {

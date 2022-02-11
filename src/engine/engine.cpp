@@ -10,6 +10,7 @@
 #include "utils/float.h"
 #include "worker/worker_lib.h"
 #include "server/constants.h"
+#include "server/io_worker.h"
 #include "log/engine.h"
 #include "engine/flags.h"
 

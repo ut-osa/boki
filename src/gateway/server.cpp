@@ -6,6 +6,7 @@
 #include "utils/base64.h"
 #include "utils/socket.h"
 #include "server/constants.h"
+#include "server/io_worker.h"
 #include "gateway/flags.h"
 
 #include <fcntl.h>

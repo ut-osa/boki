@@ -6,7 +6,7 @@
 #include "log/view_watcher.h"
 #include "log/index.h"
 #include "log/cache.h"
-#include "server/io_worker.h"
+#include "server/types.h"
 #include "utils/object_pool.h"
 #include "utils/appendable_buffer.h"
 

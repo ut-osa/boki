@@ -3,6 +3,7 @@
 #include "common/time.h"
 #include "common/http_status.h"
 #include "server/constants.h"
+#include "server/io_worker.h"
 #include "gateway/server.h"
 
 #include <arpa/inet.h>

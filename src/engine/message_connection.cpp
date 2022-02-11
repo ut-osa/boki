@@ -6,6 +6,7 @@
 #include "utils/io.h"
 #include "engine/flags.h"
 #include "server/constants.h"
+#include "server/io_worker.h"
 #include "engine/engine.h"
 
 #define LOG_HEADER log_header_

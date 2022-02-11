@@ -2,6 +2,7 @@
 
 #include "engine/engine.h"
 #include "log/flags.h"
+#include "server/io_worker.h"
 #include "utils/bits.h"
 #include "utils/random.h"
 

@@ -2,6 +2,7 @@
 
 #include "common/time.h"
 #include "server/constants.h"
+#include "server/io_worker.h"
 #include "gateway/server.h"
 
 #include <nlohmann/json.hpp>
