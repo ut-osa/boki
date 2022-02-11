@@ -157,9 +157,9 @@ void RocksDBBackend::StagingDelete(std::string_view key) {
 
 void RocksDBBackend::GetStat(size_t* num_keys, size_t* byte_size) {
     uint64_t value;
-    CHECK(db_->GetIntProperty(rocksdb::DB::Properties::kEstimateNumKeys, &value));
+    CHECK(db_->GetAggregatedIntProperty(rocksdb::DB::Properties::kEstimateNumKeys, &value));
     *num_keys = value;
-    CHECK(db_->GetIntProperty(rocksdb::DB::Properties::kEstimateLiveDataSize, &value));
+    CHECK(db_->GetAggregatedIntProperty(rocksdb::DB::Properties::kEstimateLiveDataSize, &value));
     *byte_size = value;
 }
 
