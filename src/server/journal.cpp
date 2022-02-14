@@ -29,7 +29,10 @@ JournalFile::JournalFile(IOWorker* owner, int file_id)
 }
 
 JournalFile::~JournalFile() {
-    DCHECK(current_state() == kClosed || current_state() == kRemoved);
+#if DCHECK_IS_ON()
+    auto state = current_state();
+#endif
+    DCHECK(state == kFinalized || state == kClosed || state == kRemoved);
 }
 
 bool JournalFile::ReachLimit() const {

@@ -281,6 +281,9 @@ void IOWorker::StopInternal() {
     }
     HLOG(INFO) << "Start stopping process";
     state_.store(kStopping);
+    if (current_journal_file_ != nullptr) {
+        current_journal_file_->Finalize();
+    }
     if (connections_.empty() && connections_on_closing_ == 0) {
         CloseWorkerFds();
     } else {
