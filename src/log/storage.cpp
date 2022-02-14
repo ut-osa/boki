@@ -521,21 +521,7 @@ void Storage::CollectLogTrimOps() {
     if (trimmed_seqnums.empty()) {
         return;
     }
-    if (db_enabled()) {
-        HVLOG_F(1, "Going to trim {} seqnums from DB", trimmed_seqnums.size());
-        db_workers()->SubmitSeqnumsForTrim(VECTOR_AS_SPAN(trimmed_seqnums));
-    } else {
-        HVLOG_F(1, "Trim {} seqnums from journal", trimmed_seqnums.size());
-        for (uint64_t seqnum : trimmed_seqnums) {
-            JournalRecord record;
-            if (FindJournalRecord(seqnum, &record)) {
-                record.file->Unref();
-            } else {
-                HLOG_F(ERROR, "Failed to found entry (seqnum={}) from journal",
-                       bits::HexStr0x(seqnum));
-            }
-        }
-    }
+    db_workers()->SubmitSeqnumsForTrim(VECTOR_AS_SPAN(trimmed_seqnums));
 }
 
 void Storage::DBFlushLogEntries(std::span<const LogStorage::Entry* const> entries) {

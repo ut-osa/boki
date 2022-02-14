@@ -12,6 +12,7 @@ DBWorkers::DBWorkers(StorageBase* storage, size_t num_threads)
       storage_(storage),
       worker_threads_(num_threads),
       idle_threads_(0),
+      gc_scheduled_(false),
       flush_queue_length_stat_(stat::StatisticsCollector<int>::StandardReportCallback(
           "db_flush_queue_length"), "storage"),
       batch_size_stat_(stat::StatisticsCollector<int>::StandardReportCallback(
@@ -25,6 +26,16 @@ DBWorkers::DBWorkers(StorageBase* storage, size_t num_threads)
     flush_cq_.SetCommitFn([storage] (std::span<const LogStorage::Entry* const> entries) {
         storage->CommitLogEntries(entries);
     });
+}
+
+void DBWorkers::ScheduleGC() {
+    absl::MutexLock lk(&mu_);
+    if (!gc_scheduled_) {
+        gc_scheduled_ = true;
+        if (idle_threads_ > 0) {
+            cv_.Signal();
+        }
+    }
 }
 
 void DBWorkers::SubmitLogEntriesForFlush(std::span<const LogStorage::Entry* const> entries) {
@@ -57,13 +68,13 @@ void DBWorkers::JoinAllThreads() {
 void DBWorkers::WorkerThreadMain(int thread_index) {
     std::vector<const LogStorage::Entry*> log_entries;
     std::vector<uint64_t> seqnums;
+    bool run_gc = false;
     uint64_t starting_id;
 
     while (storage_->running()) {
         mu_.Lock();
-        while (flush_sq_.empty() && trim_sq_.empty()) {
+        while (!gc_scheduled_ && flush_sq_.empty() && trim_sq_.empty()) {
             idle_threads_++;
-            VLOG(1) << "Nothing to do, will sleep to wait";
             cv_.Wait(&mu_);
             if (!storage_->running()) {
                 mu_.Unlock();
@@ -72,7 +83,10 @@ void DBWorkers::WorkerThreadMain(int thread_index) {
             idle_threads_--;
             DCHECK_GE(idle_threads_, 0);
         }
-        if (!flush_sq_.empty()) {
+        if (gc_scheduled_) {
+            gc_scheduled_ = false;
+            run_gc = true;
+        } else if (!flush_sq_.empty()) {
             flush_sq_.Pull(max_batch_size_, &log_entries, &starting_id);
             batch_size_stat_.AddSample(gsl::narrow_cast<int>(log_entries.size()));
         } else if (!trim_sq_.empty()) {
@@ -81,7 +95,10 @@ void DBWorkers::WorkerThreadMain(int thread_index) {
             UNREACHABLE();
         }
         mu_.Unlock();
-        if (!log_entries.empty()) {
+        if (run_gc) {
+            storage_->CollectLogTrimOps();
+            run_gc = false;
+        } else if (!log_entries.empty()) {
             storage_->DBFlushLogEntries(VECTOR_AS_SPAN(log_entries));
             flush_cq_.Push(VECTOR_AS_SPAN(log_entries), starting_id);
             log_entries.clear();

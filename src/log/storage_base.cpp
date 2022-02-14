@@ -122,7 +122,7 @@ void StorageBase::SetupTimers() {
     CreatePeriodicTimer(
         kLogTrimCollectorTimerId,
         absl::Milliseconds(absl::GetFlag(FLAGS_slog_storage_trim_gc_internval_ms)),
-        [this] () { this->CollectLogTrimOps(); }
+        [this] () { db_workers_->ScheduleGC(); }
     );
 }
 
@@ -160,14 +160,27 @@ std::optional<LogEntryProto> StorageBase::GetLogEntryFromDB(uint64_t seqnum) {
 }
 
 void StorageBase::TrimLogEntries(std::span<const uint64_t> seqnums) {
-    DCHECK(db_enabled());
-    absl::flat_hash_map</* logspace_id */ uint32_t, std::vector<uint32_t>> grouped;
-    for (uint64_t seqnum : seqnums) {
-        uint32_t logspace_id = bits::HighHalf64(seqnum);
-        grouped[logspace_id].push_back(bits::LowHalf64(seqnum));
-    }
-    for (const auto& [logspace_id, keys] : grouped) {
-        db_->Delete(logspace_id, VECTOR_AS_SPAN(keys));
+    if (db_enabled()) {
+        HVLOG_F(1, "Going to trim {} seqnums from DB", seqnums.size());
+        absl::flat_hash_map</* logspace_id */ uint32_t, std::vector<uint32_t>> grouped;
+        for (uint64_t seqnum : seqnums) {
+            uint32_t logspace_id = bits::HighHalf64(seqnum);
+            grouped[logspace_id].push_back(bits::LowHalf64(seqnum));
+        }
+        for (const auto& [logspace_id, keys] : grouped) {
+            db_->Delete(logspace_id, VECTOR_AS_SPAN(keys));
+        }
+    } else {
+        HVLOG_F(1, "Trim {} seqnums from journal", seqnums.size());
+        for (uint64_t seqnum : seqnums) {
+            JournalRecord record;
+            if (FindJournalRecord(seqnum, &record)) {
+                record.file->Unref();
+            } else {
+                HLOG_F(ERROR, "Failed to found entry (seqnum={}) from journal",
+                       bits::HexStr0x(seqnum));
+            }
+        }
     }
 }
 

@@ -14,6 +14,7 @@ public:
     DBWorkers(StorageBase* storage, size_t num_worker_threads);
     ~DBWorkers() = default;
 
+    void ScheduleGC();
     void SubmitLogEntriesForFlush(std::span<const LogStorage::Entry* const> entries);
     void SubmitSeqnumsForTrim(std::span<const uint64_t> seqnums);
 
@@ -70,7 +71,9 @@ private:
     absl::Mutex mu_;
     absl::CondVar cv_;
 
-    int                                       idle_threads_ ABSL_GUARDED_BY(mu_);
+    int  idle_threads_  ABSL_GUARDED_BY(mu_);
+    bool gc_scheduled_  ABSL_GUARDED_BY(mu_);
+
     SubmissionQueue<const LogStorage::Entry*> flush_sq_     ABSL_GUARDED_BY(mu_);
     SubmissionQueue</* seqnum */ uint64_t>    trim_sq_      ABSL_GUARDED_BY(mu_);
 
