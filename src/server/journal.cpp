@@ -29,9 +29,7 @@ JournalFile::JournalFile(IOWorker* owner, int file_id)
 }
 
 JournalFile::~JournalFile() {
-#if DCHECK_IS_ON()
-    auto state = current_state();
-#endif
+    State state = current_state();
     DCHECK(state == kFinalized || state == kClosed || state == kRemoved);
 }
 
