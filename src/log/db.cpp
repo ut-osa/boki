@@ -144,6 +144,8 @@ void RocksDBBackend::Delete(uint32_t logspace_id, std::span<const uint32_t> keys
     }
     auto status = db_->Write(rocksdb::WriteOptions(), &write_batch);
     ROCKSDB_CHECK_OK(status, Write);
+    status = db_->Flush(rocksdb::FlushOptions(), cf_handle);
+    ROCKSDB_CHECK_OK(status, Flush);
 }
 
 void RocksDBBackend::StagingPut(std::string_view key, std::span<const char> data) {
