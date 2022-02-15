@@ -47,7 +47,6 @@ public:
 
 private:
     int uring_id_;
-    static std::atomic<int> next_uring_id_;
     struct io_uring ring_;
     struct __kernel_timespec cqe_wait_timeout_;
 

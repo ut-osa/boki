@@ -18,10 +18,14 @@ ABSL_FLAG(uint32_t, io_uring_cq_wait_timeout_us, 0, "");
 namespace faas {
 namespace server {
 
-std::atomic<int> IOUring::next_uring_id_{0};
+namespace {
+static std::atomic<int>    next_uring_id{0};
+static std::atomic<int>    first_uring_fd{0};
+static absl::Notification  first_uring_created;
+}  // namespace
 
 IOUring::IOUring()
-    : uring_id_(next_uring_id_.fetch_add(1, std::memory_order_relaxed)),
+    : uring_id_(next_uring_id.fetch_add(1, std::memory_order_relaxed)),
       log_header_(fmt::format("io_uring[{}]: ", uring_id_)),
       next_op_id_(1),
       ev_loop_counter_(stat::Counter::StandardReportCallback(
@@ -62,6 +66,12 @@ void IOUring::SetupUring() {
         params.flags |= IORING_SETUP_SQPOLL;
         params.sq_thread_idle = absl::GetFlag(FLAGS_io_uring_sq_thread_idle_ms);
     }
+    if (uring_id_ > 0) {
+        first_uring_created.WaitForNotification();
+        params.flags |= IORING_SETUP_ATTACH_WQ;
+        int wq_fd = first_uring_fd.load();
+        params.wq_fd = gsl::narrow_cast<uint32_t>(wq_fd);
+    }
     int ret = io_uring_queue_init_params(
         gsl::narrow_cast<uint32_t>(absl::GetFlag(FLAGS_io_uring_entries)),
         &ring_, &params);
@@ -70,6 +80,10 @@ void IOUring::SetupUring() {
     }
     CHECK((params.features & IORING_FEAT_FAST_POLL) != 0)
         << "IORING_FEAT_FAST_POLL not supported";
+    if (uring_id_ == 0) {
+        first_uring_fd.store(ring_.ring_fd);
+        first_uring_created.Notify();
+    }
     memset(&cqe_wait_timeout_, 0, sizeof(cqe_wait_timeout_));
     uint32_t wait_timeout_us = absl::GetFlag(FLAGS_io_uring_cq_wait_timeout_us);
     if (wait_timeout_us != 0) {
