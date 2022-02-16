@@ -19,9 +19,7 @@ namespace faas {
 namespace server {
 
 namespace {
-static std::atomic<int>    next_uring_id{0};
-static std::atomic<int>    first_uring_fd{0};
-static absl::Notification  first_uring_created;
+static std::atomic<int> next_uring_id{0};
 }  // namespace
 
 IOUring::IOUring()
@@ -66,12 +64,6 @@ void IOUring::SetupUring() {
         params.flags |= IORING_SETUP_SQPOLL;
         params.sq_thread_idle = absl::GetFlag(FLAGS_io_uring_sq_thread_idle_ms);
     }
-    if (uring_id_ > 0) {
-        first_uring_created.WaitForNotification();
-        params.flags |= IORING_SETUP_ATTACH_WQ;
-        int wq_fd = first_uring_fd.load();
-        params.wq_fd = gsl::narrow_cast<uint32_t>(wq_fd);
-    }
     int ret = io_uring_queue_init_params(
         gsl::narrow_cast<uint32_t>(absl::GetFlag(FLAGS_io_uring_entries)),
         &ring_, &params);
@@ -80,10 +72,6 @@ void IOUring::SetupUring() {
     }
     CHECK((params.features & IORING_FEAT_FAST_POLL) != 0)
         << "IORING_FEAT_FAST_POLL not supported";
-    if (uring_id_ == 0) {
-        first_uring_fd.store(ring_.ring_fd);
-        first_uring_created.Notify();
-    }
     memset(&cqe_wait_timeout_, 0, sizeof(cqe_wait_timeout_));
     uint32_t wait_timeout_us = absl::GetFlag(FLAGS_io_uring_cq_wait_timeout_us);
     if (wait_timeout_us != 0) {
@@ -479,16 +467,17 @@ void IOUring::EnqueueOp(Op* op) {
     switch (op_type(op)) {
     case kConnect:
         io_uring_prep_connect(sqe, op_fd_idx(op), op->addr, op->addrlen);
-        io_uring_sqe_set_flags(sqe, IOSQE_FIXED_FILE | IOSQE_ASYNC);
+        io_uring_sqe_set_flags(sqe, IOSQE_FIXED_FILE);
         break;
     case kRead:
         DCHECK_NOTNULL(op->desc)->active_read_op = op;
         if (op->flags & kOpFlagUseRecv) {
             io_uring_prep_recv(sqe, op_fd_idx(op), op->buf, op->buf_len, 0);
+            io_uring_sqe_set_flags(sqe, IOSQE_FIXED_FILE);
         } else {
             io_uring_prep_read(sqe, op_fd_idx(op), op->buf, op->buf_len, 0);
+            io_uring_sqe_set_flags(sqe, IOSQE_FIXED_FILE | IOSQE_ASYNC);
         }
-        io_uring_sqe_set_flags(sqe, IOSQE_FIXED_FILE | IOSQE_ASYNC);
         break;
     case kWrite:
         io_uring_prep_write(sqe, op_fd_idx(op), op->data, op->data_len, 0);
