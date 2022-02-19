@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
+	"strconv"
 	"time"
 
 	"cs.utexas.edu/zjia/faas/slib/common"
@@ -13,6 +15,21 @@ import (
 	"cs.utexas.edu/zjia/faas/protocol"
 	"cs.utexas.edu/zjia/faas/types"
 )
+
+var FLAGS_GCMarkerDuration time.Duration
+
+func init() {
+	if val, exists := os.LookupEnv("GC_MARKER_DURATION_MS"); exists {
+		durationMs, err := strconv.Atoi(val)
+		if err != nil {
+			panic(err)
+		}
+		FLAGS_GCMarkerDuration = time.Duration(durationMs) * time.Millisecond
+	} else {
+		FLAGS_GCMarkerDuration = 1 * time.Second
+	}
+	log.Printf("[INFO] GC marker duration set to %s", FLAGS_GCMarkerDuration)
+}
 
 type Queue struct {
 	ctx context.Context
@@ -24,20 +41,9 @@ type Queue struct {
 	consumed   uint64
 	tail       uint64
 	nextSeqNum uint64
-}
 
-type QueueAuxData struct {
-	Consumed uint64 `json:"h"`
-	Tail     uint64 `json:"t"`
-}
-
-type QueueLogEntry struct {
-	seqNum  uint64
-	auxData *QueueAuxData
-
-	QueueName string `json:"n"`
-	IsPush    bool   `json:"t"`
-	Payload   string `json:"p,omitempty"`
+	lastGCMarkerTime time.Time
+	lastGCTrimPos    uint64
 }
 
 func queueLogTag(nameHash uint64) uint64 {
@@ -48,35 +54,22 @@ func queuePushLogTag(nameHash uint64) uint64 {
 	return (nameHash << common.LogTagReserveBits) + common.QueuePushLogTagLowBits
 }
 
-func decodeQueueLogEntry(logEntry *types.LogEntry) *QueueLogEntry {
-	queueLog := &QueueLogEntry{}
-	err := json.Unmarshal(logEntry.Data, queueLog)
-	if err != nil {
-		panic(err)
-	}
-	if len(logEntry.AuxData) > 0 {
-		auxData := &QueueAuxData{}
-		err := json.Unmarshal(logEntry.AuxData, auxData)
-		if err != nil {
-			panic(err)
-		}
-		queueLog.auxData = auxData
-	}
-	queueLog.seqNum = logEntry.SeqNum
-	return queueLog
-}
-
 func NewQueue(ctx context.Context, env types.Environment, name string) (*Queue, error) {
 	q := &Queue{
-		ctx:        ctx,
-		env:        env,
-		name:       name,
-		nameHash:   common.NameHash(name),
-		consumed:   0,
-		tail:       0,
-		nextSeqNum: 0,
+		ctx:              ctx,
+		env:              env,
+		name:             name,
+		nameHash:         common.NameHash(name),
+		consumed:         0,
+		tail:             0,
+		nextSeqNum:       0,
+		lastGCMarkerTime: time.Unix(0, 0),
+		lastGCTrimPos:    0,
 	}
-	if err := q.syncToBackward(protocol.MaxLogSeqnum); err != nil {
+	if err := gcNewQueue(ctx, env, name); err != nil {
+		return nil, err
+	}
+	if err := q.syncTo(protocol.MaxLogSeqnum); err != nil {
 		return nil, err
 	}
 	return q, nil
@@ -86,17 +79,10 @@ func (q *Queue) Push(payload string) error {
 	if len(payload) == 0 {
 		return fmt.Errorf("Payload cannot be empty")
 	}
-	logEntry := &QueueLogEntry{
-		QueueName: q.name,
-		IsPush:    true,
-		Payload:   payload,
-	}
-	encoded, err := json.Marshal(logEntry)
-	if err != nil {
-		panic(err)
-	}
-	tags := []uint64{queueLogTag(q.nameHash), queuePushLogTag(q.nameHash)}
-	_, err = q.env.SharedLogAppend(q.ctx, tags, encoded)
+	_, err := q.appendQueueLog(&QueueLogEntry{
+		LogType: LOG_Push,
+		Payload: payload,
+	}, queueLogTag(q.nameHash), queuePushLogTag(q.nameHash))
 	return err
 }
 
@@ -104,7 +90,7 @@ func (q *Queue) isEmpty() bool {
 	return q.consumed >= q.tail
 }
 
-func (q *Queue) findNext(minSeqNum, maxSeqNum uint64) (*QueueLogEntry, error) {
+func (q *Queue) findNextPush(minSeqNum, maxSeqNum uint64) (*QueueLogEntry, error) {
 	tag := queuePushLogTag(q.nameHash)
 	seqNum := minSeqNum
 	for seqNum < maxSeqNum {
@@ -115,8 +101,11 @@ func (q *Queue) findNext(minSeqNum, maxSeqNum uint64) (*QueueLogEntry, error) {
 		if logEntry == nil || logEntry.SeqNum >= maxSeqNum {
 			return nil, nil
 		}
-		queueLog := decodeQueueLogEntry(logEntry)
-		if queueLog.IsPush && queueLog.QueueName == q.name {
+		queueLog := &QueueLogEntry{}
+		if err := queueLog.decodeFrom(logEntry); err != nil {
+			panic(err)
+		}
+		if queueLog.isPush() && queueLog.QueueName == q.name {
 			return queueLog, nil
 		}
 		seqNum = logEntry.SeqNum + 1
@@ -128,10 +117,10 @@ func (q *Queue) applyLog(queueLog *QueueLogEntry) error {
 	if queueLog.seqNum < q.nextSeqNum {
 		log.Fatalf("[FATAL] LogSeqNum=%#016x, NextSeqNum=%#016x", queueLog.seqNum, q.nextSeqNum)
 	}
-	if queueLog.IsPush {
+	if queueLog.isPush() {
 		q.tail = queueLog.seqNum + 1
-	} else {
-		nextLog, err := q.findNext(q.consumed, q.tail)
+	} else if queueLog.isPop() {
+		nextLog, err := q.findNextPush(q.consumed, q.tail)
 		if err != nil {
 			return err
 		}
@@ -145,7 +134,38 @@ func (q *Queue) applyLog(queueLog *QueueLogEntry) error {
 	return nil
 }
 
+func (q *Queue) gcMarker() error {
+	// log.Printf("[DEBUG] duration since last GC marker: %s", time.Since(q.lastGCMarkerTime))
+	// log.Printf("[DEBUG] last GC trim position: %#016x", q.lastGCTrimPos)
+	// log.Printf("[DEBUG] current consumed: %#016x", q.consumed)
+	if time.Since(q.lastGCMarkerTime) <= FLAGS_GCMarkerDuration || q.consumed <= q.lastGCTrimPos {
+		return nil
+	}
+
+	auxData := &QueueAuxData{
+		NextSeqNum: q.nextSeqNum,
+		Consumed:   q.consumed,
+		Tail:       q.tail,
+	}
+	_, err := q.appendQueueLog(&QueueLogEntry{
+		LogType: LOG_Aux,
+		AuxData: auxData,
+	}, queueLogTag(q.nameHash))
+	if err != nil {
+		return err
+	}
+	if err := gcNewMarker(q.ctx, q.env, q.name, auxData); err != nil {
+		return err
+	}
+	q.lastGCMarkerTime = time.Now()
+	q.lastGCTrimPos = q.consumed
+	return nil
+}
+
 func (q *Queue) setAuxData(seqNum uint64, auxData *QueueAuxData) error {
+	if auxData.NextSeqNum != seqNum+1 {
+		return fmt.Errorf("Seqnum stored in auxdata not match with log entry")
+	}
 	encoded, err := json.Marshal(auxData)
 	if err != nil {
 		panic(err)
@@ -153,41 +173,53 @@ func (q *Queue) setAuxData(seqNum uint64, auxData *QueueAuxData) error {
 	return q.env.SharedLogSetAuxData(q.ctx, seqNum, encoded)
 }
 
-func (q *Queue) syncToBackward(tailSeqNum uint64) error {
+func (q *Queue) syncTo(tailSeqNum uint64) error {
 	if tailSeqNum < q.nextSeqNum {
 		log.Fatalf("[FATAL] Current seqNum=%#016x, cannot sync to %#016x", q.nextSeqNum, tailSeqNum)
-	}
-	if tailSeqNum == q.nextSeqNum {
-		return nil
 	}
 
 	tag := queueLogTag(q.nameHash)
 	queueLogs := make([]*QueueLogEntry, 0, 4)
 
-	seqNum := tailSeqNum
-	for seqNum > q.nextSeqNum {
-		if seqNum != protocol.MaxLogSeqnum {
-			seqNum -= 1
+	seqNumPos := tailSeqNum
+	for seqNumPos > q.nextSeqNum {
+		if seqNumPos != protocol.MaxLogSeqnum {
+			seqNumPos -= 1
 		}
-		logEntry, err := q.env.SharedLogReadPrev(q.ctx, tag, seqNum)
+		logEntry, err := q.env.SharedLogReadPrev(q.ctx, tag, seqNumPos)
 		if err != nil {
 			return err
 		}
 		if logEntry == nil || logEntry.SeqNum < q.nextSeqNum {
 			break
 		}
-		seqNum = logEntry.SeqNum
-		queueLog := decodeQueueLogEntry(logEntry)
+		seqNumPos = logEntry.SeqNum
+
+		// Decode log entry into QueueLogEntry
+		queueLog := &QueueLogEntry{}
+		if err := queueLog.decodeFrom(logEntry); err != nil {
+			panic(err)
+		}
 		if queueLog.QueueName != q.name {
 			continue
 		}
-		if queueLog.auxData != nil {
-			q.nextSeqNum = queueLog.seqNum + 1
-			q.consumed = queueLog.auxData.Consumed
-			q.tail = queueLog.auxData.Tail
-			break
-		} else {
-			queueLogs = append(queueLogs, queueLog)
+		q.updateGCInfoFromLogEntry(queueLog)
+
+		// Check for auxdata
+		if queueLog.isAuxBackup() || queueLog.hasAuxData() {
+			auxData := queueLog.AuxData
+			if auxData.NextSeqNum > q.nextSeqNum {
+				q.nextSeqNum = auxData.NextSeqNum
+				q.consumed = auxData.Consumed
+				q.tail = auxData.Tail
+			}
+		}
+
+		// Store log entries for apply
+		if queueLog.seqNum >= q.nextSeqNum {
+			if queueLog.isPush() || queueLog.isPop() {
+				queueLogs = append(queueLogs, queueLog)
+			}
 		}
 	}
 
@@ -195,67 +227,28 @@ func (q *Queue) syncToBackward(tailSeqNum uint64) error {
 		queueLog := queueLogs[i]
 		q.applyLog(queueLog)
 		auxData := &QueueAuxData{
-			Consumed: q.consumed,
-			Tail:     q.tail,
+			NextSeqNum: q.nextSeqNum,
+			Consumed:   q.consumed,
+			Tail:       q.tail,
 		}
 		if err := q.setAuxData(queueLog.seqNum, auxData); err != nil {
 			return err
 		}
 	}
-	return nil
-}
 
-func (q *Queue) syncToForward(tailSeqNum uint64) error {
-	if tailSeqNum < q.nextSeqNum {
-		log.Fatalf("[FATAL] Current seqNum=%#016x, cannot sync to %#016x", q.nextSeqNum, tailSeqNum)
+	if err := q.gcMarker(); err != nil {
+		return err
 	}
-	tag := queueLogTag(q.nameHash)
-	seqNum := q.nextSeqNum
-	for seqNum < tailSeqNum {
-		logEntry, err := q.env.SharedLogReadNext(q.ctx, tag, seqNum)
-		if err != nil {
-			return err
-		}
-		if logEntry == nil || logEntry.SeqNum >= tailSeqNum {
-			break
-		}
-		seqNum = logEntry.SeqNum + 1
-		queueLog := decodeQueueLogEntry(logEntry)
-		if queueLog.QueueName == q.name {
-			q.applyLog(queueLog)
-			if queueLog.auxData == nil {
-				auxData := &QueueAuxData{
-					Consumed: q.consumed,
-					Tail:     q.tail,
-				}
-				if err := q.setAuxData(queueLog.seqNum, auxData); err != nil {
-					return err
-				}
-			}
-		}
-	}
-	return nil
-}
 
-func (q *Queue) syncTo(tailSeqNum uint64) error {
-	return q.syncToBackward(tailSeqNum)
+	return nil
 }
 
 func (q *Queue) appendPopLogAndSync() error {
-	logEntry := &QueueLogEntry{
-		QueueName: q.name,
-		IsPush:    false,
-	}
-	encoded, err := json.Marshal(logEntry)
+	seqNum, err := q.appendQueueLog(&QueueLogEntry{LogType: LOG_Pop}, queueLogTag(q.nameHash))
 	if err != nil {
-		panic(err)
-	}
-	tags := []uint64{queueLogTag(q.nameHash)}
-	if seqNum, err := q.env.SharedLogAppend(q.ctx, tags, encoded); err != nil {
 		return err
-	} else {
-		return q.syncTo(seqNum)
 	}
+	return q.syncTo(seqNum)
 }
 
 var kQueueEmptyError = errors.New("Queue empty")
@@ -281,7 +274,7 @@ func (q *Queue) Pop() (string /* payload */, error) {
 	if err := q.appendPopLogAndSync(); err != nil {
 		return "", err
 	}
-	if nextLog, err := q.findNext(q.consumed, q.tail); err != nil {
+	if nextLog, err := q.findNextPush(q.consumed, q.tail); err != nil {
 		return "", err
 	} else if nextLog != nil {
 		return nextLog.Payload, nil
@@ -311,8 +304,11 @@ func (q *Queue) PopBlocking() (string /* payload */, error) {
 					return "", err
 				}
 				if logEntry != nil {
-					queueLog := decodeQueueLogEntry(logEntry)
-					if queueLog.IsPush && queueLog.QueueName == q.name {
+					queueLog := &QueueLogEntry{}
+					if err := queueLog.decodeFrom(logEntry); err != nil {
+						panic(err)
+					}
+					if queueLog.isPush() && queueLog.QueueName == q.name {
 						break
 					}
 					seqNum = logEntry.SeqNum + 1
@@ -324,7 +320,7 @@ func (q *Queue) PopBlocking() (string /* payload */, error) {
 		if err := q.appendPopLogAndSync(); err != nil {
 			return "", err
 		}
-		if nextLog, err := q.findNext(q.consumed, q.tail); err != nil {
+		if nextLog, err := q.findNextPush(q.consumed, q.tail); err != nil {
 			return "", err
 		} else if nextLog != nil {
 			return nextLog.Payload, nil
