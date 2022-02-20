@@ -94,7 +94,9 @@ public:
         : enabled_(StatEnabled(statgroup_name)),
           min_report_samples_(kDefaultMinReportSamples),
           report_callback_(report_callback) {
+#if !defined(__FAAS_DISABLE_STAT)
         samples_.reserve(min_report_samples_);
+#endif  // !defined(__FAAS_DISABLE_STAT)
     }
 
     ~StatisticsCollector() = default;
@@ -108,6 +110,7 @@ public:
     }
 
     void AddSample(T sample) {
+#if !defined(__FAAS_DISABLE_STAT)
         if (!enabled_) {
             return;
         }
@@ -120,6 +123,7 @@ public:
             report_timer_.MarkReport(&duration_ms);
             report_callback_(duration_ms, n_samples, report);
         }
+#endif  // !defined(__FAAS_DISABLE_STAT)
     }
 
 private:
@@ -185,6 +189,7 @@ public:
     }
 
     void Tick(int delta = 1) {
+#if !defined(__FAAS_DISABLE_STAT)
         if (!enabled_) {
             return;
         }
@@ -196,6 +201,7 @@ public:
             report_callback_(duration_ms, value_, last_report_value_);
             last_report_value_ = value_;
         }
+#endif  // !defined(__FAAS_DISABLE_STAT)
     }
 
 private:
@@ -246,6 +252,7 @@ public:
     ~CategoryCounter() = default;
 
     void Tick(int category, int delta = 1) {
+#if !defined(__FAAS_DISABLE_STAT)
         if (!enabled_) {
             return;
         }
@@ -261,6 +268,7 @@ public:
             }
             sum_ = 0;
         }
+#endif  // !defined(__FAAS_DISABLE_STAT)
     }
 
 private:

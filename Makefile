@@ -49,6 +49,7 @@ DLINK_FLAGS =
 #### END PROJECT SETTINGS ####
 
 # These options can be overridden in config.mk
+DISABLE_STAT ?= 0
 DEBUG_BUILD ?= 0
 BUILD_BENCH ?= 0
 FORCE_DCHECK ?= 0
@@ -57,6 +58,10 @@ ifneq (,$(findstring clang,$(CXX)))
 COMPILE_FLAGS += -Wthread-safety \
 	-Wno-unused-private-field \
 	-Wno-invalid-offsetof
+endif
+
+ifeq ($(DISABLE_STAT),1)
+COMPILE_FLAGS += -D__FAAS_DISABLE_STAT
 endif
 
 ifeq ($(FORCE_DCHECK),1)

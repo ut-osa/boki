@@ -127,6 +127,7 @@ void EngineBase::OnFuncCallCompleted(const FuncCall& func_call) {
 }
 
 void EngineBase::TickCounter(SharedLogOpType op_type) {
+#if !defined(__FAAS_DISABLE_STAT)
     absl::MutexLock lk(&stat_mu_);
     switch (op_type) {
     case SharedLogOpType::APPEND:
@@ -146,9 +147,11 @@ void EngineBase::TickCounter(SharedLogOpType op_type) {
     default:
         UNREACHABLE();
     }
+#endif  // !defined(__FAAS_DISABLE_STAT)
 }
 
 void EngineBase::RecordOpDelay(protocol::SharedLogOpType op_type, int32_t delay) {
+#if !defined(__FAAS_DISABLE_STAT)
     absl::MutexLock lk(&stat_mu_);
     switch (op_type) {
     case SharedLogOpType::APPEND:
@@ -168,6 +171,7 @@ void EngineBase::RecordOpDelay(protocol::SharedLogOpType op_type, int32_t delay)
     default:
         UNREACHABLE();
     }
+#endif  // !defined(__FAAS_DISABLE_STAT)
 }
 
 void EngineBase::LocalOpHandler(LocalOp* op) {

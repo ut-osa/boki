@@ -26,6 +26,10 @@ ABSL_FLAG(bool, alsologtostderr, false,
           "If set, will log to stderr in addition to log_path");
 ABSL_FLAG(std::string, profile, "", "A profile file used for setting flags");
 
+
+// From common/flags.h
+ABSL_DECLARE_FLAG(bool, enable_all_stat);
+
 #define RAW_CHECK(EXPR, MSG)             \
     do {                                 \
         if (!(EXPR)) {                   \
@@ -91,6 +95,23 @@ static bool SetFlag(std::string_view flag_line) {
         return false;
     }
     return true;
+}
+
+static bool CheckAnyStatEnabled() {
+    if (absl::GetFlag(FLAGS_enable_all_stat)) {
+        return true;
+    }
+    auto all_flags = absl::GetAllFlags();
+    for (const auto& [flag_name, flag] : all_flags) {
+        if (absl::StartsWith(flag_name, "enable_statgroup_")) {
+            if (auto enabled = flag->TryGet<bool>(); enabled.has_value()) {
+                if (enabled.value()) {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
 }
 
 static void PrintAllFlags() {
@@ -177,6 +198,12 @@ void InitMain(int argc, char* argv[],
             }
         }
     }
+
+#if defined(__FAAS_DISABLE_STAT)
+    if (CheckAnyStatEnabled()) {
+        LOG(FATAL) << "Stat disabled at compile time, cannot set any related flag";
+    }
+#endif  // defined(__FAAS_DISABLE_STAT)
 
     PrintAllFlags();
     PrintAllFaaSEnvs();
