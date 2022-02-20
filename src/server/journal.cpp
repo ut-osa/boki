@@ -32,7 +32,13 @@ JournalFile::JournalFile(IOWorker* owner, int file_id)
       flush_fn_scheduled_(false) {
     append_op_pool_.SetObjectInitFn([] (OngoingAppend* op) {
         op->offset = std::numeric_limits<size_t>::max();
-        memset(&op->header, 0, sizeof(JournalRecordHeader));
+        op->header = JournalRecordHeader {
+            .type = 0,
+            .payload_size = 0,
+            .record_size = 0,
+            .timestamp = 0,
+            .checksum = 0,
+        };
         op->data.Reset();
         op->cb = nullptr;
         op->next = nullptr;
