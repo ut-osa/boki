@@ -72,7 +72,7 @@ public:
     static constexpr size_t kDefaultMinReportSamples = 200;
 
     struct Report {
-        T p30; T p50; T p70; T p90; T p99;
+        T p30; T p50; T p70; T p90; T p99; T p99_9; T max;
     };
 
     using ReportCallback =
@@ -82,9 +82,10 @@ public:
         return [name = std::string(stat_name)] (int duration_ms, size_t n_samples,
                                                 const Report& report) {
             LOG_F(INFO, "{} statistics ({} samples): "
-                        "p30={}, p50={}, p70={}, p90={}, p99={}",
+                        "p30={}, p50={}, p70={}, p90={}, p99={}, p99.9={}, max={}",
                   name, n_samples,
-                  report.p30, report.p50, report.p70, report.p90, report.p99);
+                  report.p30, report.p50, report.p70, report.p90,
+                  report.p99, report.p99_9, report.max);
         };
     }
 
@@ -137,7 +138,9 @@ private:
             .p50 = percentile(0.5f),
             .p70 = percentile(0.7f),
             .p90 = percentile(0.9f),
-            .p99 = percentile(0.99f)
+            .p99 = percentile(0.99f),
+            .p99_9 = percentile(0.999f),
+            .max = samples_.back(),
         };
     }
 
