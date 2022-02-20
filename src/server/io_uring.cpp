@@ -464,28 +464,32 @@ void IOUring::EnqueueOp(Op* op) {
     VLOG_F(2, "EnqueueOp: id={}, type={}, fd={}",
            (op->id >> 8), kOpTypeStr[op_type(op)], op_fd(op));
     struct io_uring_sqe* sqe = io_uring_get_sqe(&ring_);
+    unsigned flags = 0;
     switch (op_type(op)) {
     case kConnect:
         io_uring_prep_connect(sqe, op_fd_idx(op), op->addr, op->addrlen);
-        io_uring_sqe_set_flags(sqe, IOSQE_FIXED_FILE);
+        flags = IOSQE_FIXED_FILE;
         break;
     case kRead:
         DCHECK_NOTNULL(op->desc)->active_read_op = op;
+        flags = IOSQE_FIXED_FILE;
         if (op->flags & kOpFlagUseRecv) {
             io_uring_prep_recv(sqe, op_fd_idx(op), op->buf, op->buf_len, 0);
-            io_uring_sqe_set_flags(sqe, IOSQE_FIXED_FILE);
         } else {
             io_uring_prep_read(sqe, op_fd_idx(op), op->buf, op->buf_len, 0);
-            io_uring_sqe_set_flags(sqe, IOSQE_FIXED_FILE | IOSQE_ASYNC);
+            // A weird hack
+            if (op->desc->fd_type == FileDescriptorType::kFifo) {
+                flags |= IOSQE_ASYNC;
+            }
         }
         break;
     case kWrite:
         io_uring_prep_write(sqe, op_fd_idx(op), op->data, op->data_len, 0);
-        io_uring_sqe_set_flags(sqe, IOSQE_FIXED_FILE);
+        flags = IOSQE_FIXED_FILE;
         break;
     case kSendAll:
         io_uring_prep_send(sqe, op_fd_idx(op), op->data, op->data_len, 0);
-        io_uring_sqe_set_flags(sqe, IOSQE_FIXED_FILE);
+        flags = IOSQE_FIXED_FILE;
         break;
     case kClose:
         io_uring_prep_close(sqe, op->fd);
@@ -497,6 +501,9 @@ void IOUring::EnqueueOp(Op* op) {
         break;
     default:
         UNREACHABLE();
+    }
+    if (flags != 0) {
+        io_uring_sqe_set_flags(sqe, flags);
     }
     io_uring_sqe_set_data(sqe, reinterpret_cast<void*>(op->id));
 }
