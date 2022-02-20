@@ -9,6 +9,8 @@
 #include <fcntl.h>
 
 ABSL_FLAG(bool, journal_file_openflag_dsync, false, "");
+ABSL_FLAG(size_t, journal_file_max_records_per_flush, 4, "");
+ABSL_FLAG(size_t, journal_file_cutoff_bytes_per_flush, 4096, "");
 
 namespace faas {
 namespace server {
@@ -24,7 +26,17 @@ JournalFile::JournalFile(IOWorker* owner, int file_id)
       num_records_(0),
       appended_bytes_(0),
       flushed_bytes_(0),
+      pending_head_(nullptr),
+      scheduled_head_(nullptr),
+      pending_tail_(nullptr),
       flush_fn_scheduled_(false) {
+    append_op_pool_.SetObjectInitFn([] (OngoingAppend* op) {
+        op->offset = std::numeric_limits<size_t>::max();
+        memset(&op->header, 0, sizeof(JournalRecordHeader));
+        op->data.Reset();
+        op->cb = nullptr;
+        op->next = nullptr;
+    });
     Create(file_id);
 }
 
@@ -69,11 +81,20 @@ size_t JournalFile::AppendRecord(uint16_t type,
     append_op->offset = appended_bytes_;
     append_op->header = hdr;
     append_op->cb = std::move(cb);
-    ongoing_appends_[append_op->offset] = append_op;
-    write_buffer_.AppendData(reinterpret_cast<const char*>(&hdr), sizeof(hdr));
     for (const auto& payload : payload_vec) {
-        write_buffer_.AppendData(payload);
+        append_op->data.AppendData(payload);
     }
+    if (pending_tail_ != nullptr) {
+        pending_tail_->next = append_op;
+    }
+    pending_tail_ = append_op;
+    if (pending_head_ == nullptr) {
+        pending_head_ = append_op;
+    }
+    if (scheduled_head_ == nullptr) {
+        scheduled_head_ = append_op;
+    }
+    VLOG_F(1, "Record with offset {} added to pending list", append_op->offset);
     num_records_++;
     appended_bytes_ += record_size;
     ScheduleFlush();
@@ -106,7 +127,7 @@ size_t JournalFile::ReadRecord(size_t offset, uint16_t* type,
     if (state == kClosing || state == kClosed || state == kRemoved) {
         LOG_F(FATAL, "Journal file {} has closed, cannot read from it", file_path_);
     }
-    protocol::JournalRecordHeader hdr;
+    JournalRecordHeader hdr;
     ReadBytes(fd_, offset, sizeof(hdr), reinterpret_cast<char*>(&hdr));
     buffer->AppendUninitializedData(hdr.payload_size);
     char* buf_ptr = buffer->data() + (buffer->length() - hdr.payload_size);
@@ -185,7 +206,7 @@ void JournalFile::CloseFd() {
 
 void JournalFile::ScheduleFlush() {
     DCHECK(owner_->WithinMyEventLoopThread());
-    DCHECK(!write_buffer_.empty());
+    DCHECK(scheduled_head_ != nullptr);
     if (!flush_fn_scheduled_) {
         owner_->ScheduleIdleFunction(
             nullptr, absl::bind_front(&JournalFile::FlushRecords, this));
@@ -200,7 +221,8 @@ void JournalFile::FlushRecords() {
     if (!flush_buffer_.empty()) {
         return;
     }
-    flush_buffer_.Swap(write_buffer_);
+    FillFlushBuffer();
+    DCHECK(!flush_buffer_.empty());
     owner_->RecordFlushBufferSize(flush_buffer_.length());
     URING_DCHECK_OK(owner_->io_uring()->Write(
         fd_, flush_buffer_.to_span(),
@@ -213,7 +235,7 @@ void JournalFile::FlushRecords() {
             }
             DataFlushed(flush_buffer_.length());
             flush_buffer_.Reset();
-            if (!write_buffer_.empty()) {
+            if (scheduled_head_ != nullptr) {
                 ScheduleFlush();
             } else if (flushed_bytes_ == appended_bytes_ && current_state() == kFinalizing) {
                 transit_state(kFinalized);
@@ -223,22 +245,51 @@ void JournalFile::FlushRecords() {
     ));
 }
 
+void JournalFile::FillFlushBuffer() {
+    DCHECK(owner_->WithinMyEventLoopThread());
+    DCHECK(flush_buffer_.empty());
+    if (scheduled_head_ == nullptr) {
+        return;
+    }
+    const size_t kMaxRecords = absl::GetFlag(FLAGS_journal_file_max_records_per_flush);
+    const size_t kCutoffBytes = absl::GetFlag(FLAGS_journal_file_cutoff_bytes_per_flush);
+    size_t num_records = 0;
+    while (num_records < kMaxRecords && scheduled_head_ != nullptr) {
+        OngoingAppend* append_op = scheduled_head_;
+        size_t new_size = flush_buffer_.length() + append_op->header.record_size;
+        if (num_records > 0 && new_size > kCutoffBytes) {
+            break;
+        }
+        flush_buffer_.AppendData(VAR_AS_CHAR_SPAN(append_op->header, JournalRecordHeader));
+        flush_buffer_.AppendData(append_op->data.to_span());
+        DCHECK_EQ(flush_buffer_.length(), new_size);
+        VLOG_F(1, "Will flush record with offset {}", append_op->offset);
+        num_records++;
+        scheduled_head_ = append_op->next;
+    }
+    VLOG_F(1, "Fill flush buffer with {} records, total bytes {}",
+           num_records, flush_buffer_.length());
+}
+
 void JournalFile::DataFlushed(size_t delta_bytes) {
     DCHECK(owner_->WithinMyEventLoopThread());
     size_t offset = flushed_bytes_;
     while (delta_bytes > 0) {
-        DCHECK(ongoing_appends_.contains(offset));
-        OngoingAppend* append_op = ongoing_appends_.at(offset);
-        ongoing_appends_.erase(offset);
+        OngoingAppend* append_op = DCHECK_NOTNULL(pending_head_);
         DCHECK_EQ(append_op->offset, offset);
         append_op->cb(this, offset);
+        VLOG_F(1, "Record with offset {} flushed", append_op->offset);
         owner_->OnJournalRecordAppended(append_op->header);
         size_t record_size = append_op->header.record_size;
         offset += record_size;
         delta_bytes -= record_size;
+        pending_head_ = append_op->next;
         append_op_pool_.Return(append_op);
     }
     flushed_bytes_ = offset;
+    if (pending_head_ == nullptr) {
+        pending_tail_ = nullptr;
+    }
     DCHECK_LE(flushed_bytes_, appended_bytes_);
 }
 

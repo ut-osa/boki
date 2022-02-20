@@ -58,12 +58,16 @@ private:
     struct OngoingAppend {
         size_t offset;
         protocol::JournalRecordHeader header;
+        utils::AppendableBuffer data;
         AppendCallback cb;
+        OngoingAppend* next;
     };
     utils::SimpleObjectPool<OngoingAppend> append_op_pool_;
-    absl::flat_hash_map</* offset */ size_t, OngoingAppend*> ongoing_appends_;
 
-    utils::AppendableBuffer write_buffer_;
+    OngoingAppend* pending_head_;
+    OngoingAppend* scheduled_head_;
+    OngoingAppend* pending_tail_;
+
     utils::AppendableBuffer flush_buffer_;
     bool flush_fn_scheduled_;
 
@@ -81,6 +85,7 @@ private:
         state_.store(new_state, std::memory_order_release);
     }
 
+    void FillFlushBuffer();
     void RefBecomesZero() override;
 
     DISALLOW_COPY_AND_ASSIGN(JournalFile);
