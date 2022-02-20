@@ -70,6 +70,7 @@ public:
     void OnJournalRecordAppended(const protocol::JournalRecordHeader& hdr);
 
     void AggregateJournalStat(JournalStat* stat);
+    void RecordFlushBufferSize(size_t size);
 
 private:
     enum State { kCreated, kRunning, kStopping, kStopped };
@@ -114,7 +115,8 @@ private:
     std::atomic<size_t> appended_records_;
 
     stat::StatisticsCollector<uint32_t> journal_record_size_stat_;
-    stat::StatisticsCollector<int32_t> journal_append_latency_stat_;
+    stat::StatisticsCollector<int32_t>  journal_append_latency_stat_;
+    stat::StatisticsCollector<uint32_t> flush_buffer_size_stat_;
 
     void EventLoopThreadMain();
     void RunScheduledFunctions();

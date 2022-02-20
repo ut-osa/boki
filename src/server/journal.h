@@ -1,6 +1,7 @@
 #pragma once
 
 #include "base/common.h"
+#include "common/stat.h"
 #include "common/protocol.h"
 #include "utils/appendable_buffer.h"
 #include "utils/object_pool.h"

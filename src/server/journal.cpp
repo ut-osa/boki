@@ -201,6 +201,7 @@ void JournalFile::FlushRecords() {
         return;
     }
     flush_buffer_.Swap(write_buffer_);
+    owner_->RecordFlushBufferSize(flush_buffer_.length());
     URING_DCHECK_OK(owner_->io_uring()->Write(
         fd_, flush_buffer_.to_span(),
         [this] (int status, size_t nwrite) {

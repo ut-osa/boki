@@ -40,7 +40,9 @@ IOWorker::IOWorker(std::string_view worker_name)
       journal_record_size_stat_(stat::StatisticsCollector<uint32_t>::StandardReportCallback(
           fmt::format("journal_record_size[{}]", worker_name)), "journal"),
       journal_append_latency_stat_(stat::StatisticsCollector<int32_t>::StandardReportCallback(
-          fmt::format("journal_append_latency[{}]", worker_name)), "journal") {}
+          fmt::format("journal_append_latency[{}]", worker_name)), "journal"),
+      flush_buffer_size_stat_(stat::StatisticsCollector<uint32_t>::StandardReportCallback(
+          fmt::format("flush_buffer_size[{}]", worker_name)), "journal") {}
 
 IOWorker::~IOWorker() {
     State state = state_.load();
@@ -368,6 +370,11 @@ void IOWorker::AggregateJournalStat(JournalStat* stat) {
     stat->total_records     += total_records_.load(std::memory_order_relaxed);
     stat->appended_bytes    += appended_bytes_.load(std::memory_order_relaxed);
     stat->appended_records  += appended_records_.load(std::memory_order_relaxed);
+}
+
+void IOWorker::RecordFlushBufferSize(size_t size) {
+    DCHECK(WithinMyEventLoopThread());
+    flush_buffer_size_stat_.AddSample(gsl::narrow_cast<uint32_t>(size));
 }
 
 }  // namespace server
