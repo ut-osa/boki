@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common/zk.h"
+#include "common/stat.h"
 #include "log/common.h"
 #include "log/view.h"
 #include "log/view_watcher.h"
@@ -140,9 +141,23 @@ private:
 
     std::optional<LRUCache> log_cache_;
 
+    absl::Mutex stat_mu_;
+
+    stat::Counter append_counter_ ABSL_GUARDED_BY(stat_mu_);
+    stat::Counter read_counter_   ABSL_GUARDED_BY(stat_mu_);
+    stat::Counter trim_counter_   ABSL_GUARDED_BY(stat_mu_);
+    stat::Counter setaux_counter_ ABSL_GUARDED_BY(stat_mu_);
+
+    stat::StatisticsCollector<int32_t> append_delay_stat_ ABSL_GUARDED_BY(stat_mu_);
+    stat::StatisticsCollector<int32_t> read_delay_stat_   ABSL_GUARDED_BY(stat_mu_);
+    stat::StatisticsCollector<int32_t> trim_delay_stat_   ABSL_GUARDED_BY(stat_mu_);
+    stat::StatisticsCollector<int32_t> setaux_delay_stat_ ABSL_GUARDED_BY(stat_mu_);
+
     void SetupZKWatchers();
 
     void PopulateLogTagsAndData(const protocol::Message& message, LocalOp* op);
+    void TickCounter(protocol::SharedLogOpType op_type);
+    void RecordOpDelay(protocol::SharedLogOpType op_type, int32_t delay);
 
     DISALLOW_COPY_AND_ASSIGN(EngineBase);
 };

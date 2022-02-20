@@ -24,7 +24,19 @@ using protocol::SharedLogResultType;
 EngineBase::EngineBase(engine::Engine* engine)
     : node_id_(engine->node_id_),
       engine_(engine),
-      next_local_op_id_(0) {}
+      next_local_op_id_(0),
+      append_counter_(stat::Counter::StandardReportCallback("log_append"), "sharedlog"),
+      read_counter_(stat::Counter::StandardReportCallback("log_read"), "sharedlog"),
+      trim_counter_(stat::Counter::StandardReportCallback("log_trim"), "sharedlog"),
+      setaux_counter_(stat::Counter::StandardReportCallback("log_set_auxdata"), "sharedlog"),
+      append_delay_stat_(stat::StatisticsCollector<int32_t>::StandardReportCallback(
+          "log_append_delay"), "sharedlog"),
+      read_delay_stat_(stat::StatisticsCollector<int32_t>::StandardReportCallback(
+          "log_read_delay"), "sharedlog"),
+      trim_delay_stat_(stat::StatisticsCollector<int32_t>::StandardReportCallback(
+          "log_trim_delay"), "sharedlog"),
+      setaux_delay_stat_(stat::StatisticsCollector<int32_t>::StandardReportCallback(
+          "log_set_auxdata_delay"), "sharedlog") {}
 
 EngineBase::~EngineBase() {}
 
@@ -112,6 +124,50 @@ void EngineBase::OnFuncCallCompleted(const FuncCall& func_call) {
                     << FuncCallHelper::DebugString(func_call);
     }
     fn_call_ctx_.erase(func_call.full_call_id);
+}
+
+void EngineBase::TickCounter(SharedLogOpType op_type) {
+    absl::MutexLock lk(&stat_mu_);
+    switch (op_type) {
+    case SharedLogOpType::APPEND:
+        append_counter_.Tick();
+        break;
+    case SharedLogOpType::READ_NEXT:
+    case SharedLogOpType::READ_PREV:
+    case SharedLogOpType::READ_NEXT_B:
+        read_counter_.Tick();
+        break;
+    case SharedLogOpType::TRIM:
+        trim_counter_.Tick();
+        break;
+    case SharedLogOpType::SET_AUXDATA:
+        setaux_counter_.Tick();
+        break;
+    default:
+        UNREACHABLE();
+    }
+}
+
+void EngineBase::RecordOpDelay(protocol::SharedLogOpType op_type, int32_t delay) {
+    absl::MutexLock lk(&stat_mu_);
+    switch (op_type) {
+    case SharedLogOpType::APPEND:
+        append_delay_stat_.AddSample(delay);
+        break;
+    case SharedLogOpType::READ_NEXT:
+    case SharedLogOpType::READ_PREV:
+    case SharedLogOpType::READ_NEXT_B:
+        read_delay_stat_.AddSample(delay);
+        break;
+    case SharedLogOpType::TRIM:
+        trim_delay_stat_.AddSample(delay);
+        break;
+    case SharedLogOpType::SET_AUXDATA:
+        setaux_delay_stat_.AddSample(delay);
+        break;
+    default:
+        UNREACHABLE();
+    }
 }
 
 void EngineBase::LocalOpHandler(LocalOp* op) {
@@ -238,6 +294,7 @@ void EngineBase::OnMessageFromFuncWorker(const Message& message) {
         HLOG(FATAL) << "Unknown shared log op type: " << message.log_op;
     }
 
+    TickCounter(op->type);
     LocalOpHandler(op);
 }
 
@@ -306,6 +363,9 @@ void EngineBase::FinishLocalOpWithResponse(LocalOp* op, Message* response,
     }
     response->log_client_data = op->client_data;
     engine_->SendFuncWorkerMessage(op->client_id, response);
+    int32_t op_delay = gsl::narrow_cast<int32_t>(
+        GetMonotonicMicroTimestamp() - op->start_timestamp);
+    RecordOpDelay(op->type, op_delay);
     log_op_pool_.Return(op);
 }
 
