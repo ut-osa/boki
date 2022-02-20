@@ -83,7 +83,7 @@ private:
     absl::flat_hash_set<std::unique_ptr<Timer>> timers_;
 
     std::atomic<int> next_journal_file_id_;
-    size_t prev_journal_total_records_;
+    std::optional<JournalStat> prev_journal_stat_;
 
     void SetupIOWorkers();
     void SetupMessageServer();

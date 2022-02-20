@@ -7,6 +7,7 @@
 #include "utils/timerfd.h"
 #include "utils/malloc.h"
 #include "utils/format.h"
+#include "utils/float.h"
 #include "server/constants.h"
 #include "server/io_worker.h"
 #include "server/timer.h"
@@ -35,8 +36,7 @@ ServerBase::ServerBase(std::string_view node_name, bool enable_journal)
                   absl::GetFlag(FLAGS_zookeeper_root_path)),
       next_io_worker_for_pick_(0),
       next_connection_id_(0),
-      next_journal_file_id_(0),
-      prev_journal_total_records_(0) {
+      next_journal_file_id_(0) {
     PCHECK(stop_eventfd_ >= 0) << "Failed to create eventfd";
     PCHECK(stat_timerfd_ >= 0) << "Failed to create timerfd";
     if (enable_journal_) {
@@ -366,23 +366,39 @@ int ServerBase::NextJournalFileID() {
 void ServerBase::PrintJournalStat() {
     DCHECK(enable_journal_);
     JournalStat stat = {
+        .timestamp = GetMonotonicMicroTimestamp(),
         .num_created_files = 0,
         .num_closed_files = 0,
         .total_bytes = 0,
         .total_records = 0,
+        .appended_bytes = 0,
+        .appended_records = 0,
     };
     ForEachIOWorker([&stat] (IOWorker* io_worker) {
         io_worker->AggregateJournalStat(&stat);
     });
-    if (prev_journal_total_records_ == stat.total_records) {
+    if (prev_journal_stat_.has_value()
+           && prev_journal_stat_->appended_records == stat.appended_records) {
         return;
     }
-    prev_journal_total_records_ = stat.total_records;
     LOG(INFO) << "[STAT] journal: "
-              << "created_files=" << stat.num_created_files                   << ", "
-              << "closed_files="  << stat.num_closed_files                    << ", "
-              << "total_bytes="   << utils::FormatBytes(stat.total_bytes)     << ", "
-              << "total_records=" << utils::FormatNumber(stat.total_records);
+              << "created_files="    << stat.num_created_files                     << ", "
+              << "closed_files="     << stat.num_closed_files                      << ", "
+              << "total_bytes="      << utils::FormatBytes(stat.total_bytes)       << ", "
+              << "total_records="    << utils::FormatNumber(stat.total_records)    << ", "
+              << "appended_bytes="   << utils::FormatBytes(stat.appended_bytes)    << ", "
+              << "appended_records=" << utils::FormatNumber(stat.appended_records);
+    if (prev_journal_stat_.has_value()) {
+        DCHECK_LT(prev_journal_stat_->appended_bytes, stat.appended_bytes);
+        size_t bytes_delta = stat.appended_bytes - prev_journal_stat_->appended_bytes;
+        DCHECK_LT(prev_journal_stat_->appended_records, stat.appended_records);
+        size_t record_delta = stat.appended_records - prev_journal_stat_->appended_records;
+        int64_t time_delta = stat.timestamp - prev_journal_stat_->timestamp;
+        LOG_F(INFO, "[STAT] journal: {} bytes per sec, {} records per sec",
+              float_utils::GetRatio<double>(record_delta, time_delta) * 1e6,
+              float_utils::GetRatio<double>(bytes_delta, time_delta) * 1e6);
+    }
+    prev_journal_stat_ = stat;
 }
 
 namespace {

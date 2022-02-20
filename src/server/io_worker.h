@@ -110,6 +110,8 @@ private:
     std::atomic<int> num_closed_files_;
     std::atomic<size_t> total_bytes_;
     std::atomic<size_t> total_records_;
+    std::atomic<size_t> appended_bytes_;
+    std::atomic<size_t> appended_records_;
 
     stat::StatisticsCollector<uint32_t> journal_record_size_stat_;
     stat::StatisticsCollector<int32_t> journal_append_latency_stat_;

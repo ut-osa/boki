@@ -51,10 +51,13 @@ using JournalAppendCallback = std::function<void(JournalFile* /* file */,
 
 // Others
 struct JournalStat {
-    int    num_created_files;
-    int    num_closed_files;
-    size_t total_bytes;
-    size_t total_records;
+    int64_t timestamp;
+    int     num_created_files;
+    int     num_closed_files;
+    size_t  total_bytes;
+    size_t  total_records;
+    size_t  appended_bytes;
+    size_t  appended_records;
 };
 
 }  // namespace server

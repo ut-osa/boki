@@ -317,6 +317,8 @@ void IOWorker::JournalAppend(uint16_t type,
     size_t record_size = current_journal_file_->AppendRecord(type, payload_vec, std::move(cb));
     total_bytes_.fetch_add(record_size, std::memory_order_relaxed);
     total_records_.fetch_add(1, std::memory_order_relaxed);
+    appended_bytes_.fetch_add(record_size, std::memory_order_relaxed);
+    appended_records_.fetch_add(1, std::memory_order_relaxed);
 }
 
 void IOWorker::JournalMonitorCallback() {
@@ -342,6 +344,8 @@ JournalFile* IOWorker::CreateNewJournalFile() {
 
 void IOWorker::OnJournalFileClosed(JournalFile* file) {
     num_closed_files_.fetch_add(1, std::memory_order_relaxed);
+    total_bytes_.fetch_sub(file->appended_bytes(), std::memory_order_relaxed);
+    total_records_.fetch_sub(file->num_records(), std::memory_order_relaxed);
     server_->OnJournalFileClosed(file);
 }
 
@@ -362,6 +366,8 @@ void IOWorker::AggregateJournalStat(JournalStat* stat) {
     stat->num_closed_files  += num_closed_files_.load(std::memory_order_relaxed);
     stat->total_bytes       += total_bytes_.load(std::memory_order_relaxed);
     stat->total_records     += total_records_.load(std::memory_order_relaxed);
+    stat->appended_bytes    += appended_bytes_.load(std::memory_order_relaxed);
+    stat->appended_records  += appended_records_.load(std::memory_order_relaxed);
 }
 
 }  // namespace server
