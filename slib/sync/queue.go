@@ -16,19 +16,23 @@ import (
 	"cs.utexas.edu/zjia/faas/types"
 )
 
-var FLAGS_GCMarkerDuration time.Duration
+var FLAGS_GCEnabled bool = false
+var FLAGS_GCMarkerDuration time.Duration = 1 * time.Second
 
 func init() {
+	if val, exists := os.LookupEnv("GC_ENABLED"); exists && val == "1" {
+		FLAGS_GCEnabled = true
+	}
 	if val, exists := os.LookupEnv("GC_MARKER_DURATION_MS"); exists {
 		durationMs, err := strconv.Atoi(val)
 		if err != nil {
 			panic(err)
 		}
 		FLAGS_GCMarkerDuration = time.Duration(durationMs) * time.Millisecond
-	} else {
-		FLAGS_GCMarkerDuration = 1 * time.Second
 	}
-	log.Printf("[INFO] GC marker duration set to %s", FLAGS_GCMarkerDuration)
+	if FLAGS_GCEnabled {
+		log.Printf("[INFO] GC marker duration set to %s", FLAGS_GCMarkerDuration)
+	}
 }
 
 type Queue struct {
@@ -135,6 +139,10 @@ func (q *Queue) applyLog(queueLog *QueueLogEntry) error {
 }
 
 func (q *Queue) gcMarker() error {
+	if !FLAGS_GCEnabled {
+		return nil
+	}
+
 	// log.Printf("[DEBUG] duration since last GC marker: %s", time.Since(q.lastGCMarkerTime))
 	// log.Printf("[DEBUG] last GC trim position: %#016x", q.lastGCTrimPos)
 	// log.Printf("[DEBUG] current consumed: %#016x", q.consumed)
