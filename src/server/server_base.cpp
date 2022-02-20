@@ -394,9 +394,9 @@ void ServerBase::PrintJournalStat() {
         DCHECK_LT(prev_journal_stat_->appended_records, stat.appended_records);
         size_t record_delta = stat.appended_records - prev_journal_stat_->appended_records;
         int64_t time_delta = stat.timestamp - prev_journal_stat_->timestamp;
-        LOG_F(INFO, "[STAT] journal: {} bytes per sec, {} records per sec",
-              float_utils::GetRatio<double>(record_delta, time_delta) * 1e6,
-              float_utils::GetRatio<double>(bytes_delta, time_delta) * 1e6);
+        LOG_F(INFO, "[STAT] journal: {} MB per sec, {} records per sec",
+              float_utils::GetRatio<double>(bytes_delta, time_delta) * 1e6 / 1024.0 / 1024.0,
+              float_utils::GetRatio<double>(record_delta, time_delta) * 1e6);
     }
     prev_journal_stat_ = stat;
 }
