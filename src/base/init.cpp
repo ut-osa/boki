@@ -97,6 +97,7 @@ static bool SetFlag(std::string_view flag_line) {
     return true;
 }
 
+#if defined(__FAAS_DISABLE_STAT)
 static bool CheckAnyStatEnabled() {
     if (absl::GetFlag(FLAGS_enable_all_stat)) {
         return true;
@@ -113,6 +114,7 @@ static bool CheckAnyStatEnabled() {
     }
     return false;
 }
+#endif  // defined(__FAAS_DISABLE_STAT)
 
 static void PrintAllFlags() {
     auto all_flags = absl::GetAllFlags();
