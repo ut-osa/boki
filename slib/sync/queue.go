@@ -70,11 +70,13 @@ func NewQueue(ctx context.Context, env types.Environment, name string) (*Queue, 
 		lastGCMarkerTime: time.Unix(0, 0),
 		lastGCTrimPos:    0,
 	}
-	if err := gcNewQueue(ctx, env, name); err != nil {
-		return nil, err
-	}
 	if err := q.syncTo(protocol.MaxLogSeqnum); err != nil {
 		return nil, err
+	}
+	if FLAGS_GCEnabled {
+		if err := gcNewQueue(ctx, env, name); err != nil {
+			return nil, err
+		}
 	}
 	return q, nil
 }
