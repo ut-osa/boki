@@ -9,6 +9,8 @@ __BEGIN_THIRD_PARTY_HEADERS
 #include <tkrzw_dbm_hash.h>
 #include <tkrzw_dbm_tree.h>
 #include <tkrzw_dbm_skip.h>
+#include <tkrzw_file_mmap.h>
+#include <tkrzw_file_pos.h>
 __END_THIRD_PARTY_HEADERS
 
 // RocksDB tunables
@@ -21,6 +23,9 @@ ABSL_FLAG(size_t, rocksdb_mbytes_per_sync, 1, "");
 ABSL_FLAG(size_t, rocksdb_max_total_wal_size_mb, 16, "");
 ABSL_FLAG(size_t, rocksdb_rate_mbytes_per_sec, 0, "");
 ABSL_FLAG(bool, rocksdb_use_direct_io, false, "");
+
+// Tkrzw tunables
+ABSL_FLAG(std::string, tkrzw_file_type, "mmap-para", "");
 
 #define ROCKSDB_CHECK_OK(STATUS_VAR, OP_NAME)               \
     do {                                                    \
@@ -279,9 +284,18 @@ void TkrzwDBMBackend::GetStat(size_t* num_keys, size_t* byte_size) {
 }
 
 std::unique_ptr<tkrzw::DBM> TkrzwDBMBackend::CreateDBM(std::string_view name) {
+    std::unique_ptr<tkrzw::File> file;
+    std::string file_type = absl::GetFlag(FLAGS_tkrzw_file_type);
+    if (file_type == "mmap-para") {
+        file = std::make_unique<tkrzw::MemoryMapParallelFile>();
+    } if (file_type == "pos-para") {
+        file = std::make_unique<tkrzw::PositionalParallelFile>();
+    } else {
+        LOG(FATAL) << "Unknown Tkrzw file type: " << file_type;
+    }
     tkrzw::DBM* db_ptr = nullptr;
     if (type_ == kHashDBM) {
-        tkrzw::HashDBM* db = new tkrzw::HashDBM();
+        tkrzw::HashDBM* db = new tkrzw::HashDBM(std::move(file));
         auto status = db->OpenAdvanced(
             /* path= */ fs_utils::JoinPath(db_path_, fmt::format("{}.tkh", name)),
             /* writable= */ true,
@@ -290,7 +304,7 @@ std::unique_ptr<tkrzw::DBM> TkrzwDBMBackend::CreateDBM(std::string_view name) {
         TKRZW_CHECK_OK(status, Open);
         db_ptr = db;
     } else if (type_ == kTreeDBM) {
-        tkrzw::TreeDBM* db = new tkrzw::TreeDBM();
+        tkrzw::TreeDBM* db = new tkrzw::TreeDBM(std::move(file));
         auto status = db->OpenAdvanced(
             /* path= */ fs_utils::JoinPath(db_path_, fmt::format("{}.tkt", name)),
             /* writable= */ true,
@@ -299,7 +313,7 @@ std::unique_ptr<tkrzw::DBM> TkrzwDBMBackend::CreateDBM(std::string_view name) {
         TKRZW_CHECK_OK(status, Open);
         db_ptr = db;
     } else if (type_ == kSkipDBM) {
-        tkrzw::SkipDBM* db = new tkrzw::SkipDBM();
+        tkrzw::SkipDBM* db = new tkrzw::SkipDBM(std::move(file));
         auto status = db->OpenAdvanced(
             /* path= */ fs_utils::JoinPath(db_path_, fmt::format("{}.tks", name)),
             /* writable= */ true,
