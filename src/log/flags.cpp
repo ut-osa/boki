@@ -22,3 +22,4 @@ ABSL_FLAG(size_t, slog_storage_flusher_threads, 1, "");
 ABSL_FLAG(size_t, slog_storage_max_live_entries, 10000, "");
 ABSL_FLAG(size_t, slog_storage_target_live_entries, 1000, "");
 ABSL_FLAG(int, slog_storage_trim_gc_internval_ms, 100, "");
+ABSL_FLAG(int, slog_storage_indexer_flush_internval_ms, 0, "");

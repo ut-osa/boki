@@ -23,6 +23,7 @@ constexpr int kSendShardProgressTimerId     = kTimerTypeId + 3;
 constexpr int kMetaLogCutTimerId            = kTimerTypeId + 4;
 constexpr int kJournalMonitorTimerId        = kTimerTypeId + 5;
 constexpr int kLogTrimCollectorTimerId      = kTimerTypeId + 6;
+constexpr int kStorageIndexerFlushTimerId   = kTimerTypeId + 7;
 
 // Used by Gateway
 constexpr int kHttpConnectionTypeId         = 0x20 << 16;

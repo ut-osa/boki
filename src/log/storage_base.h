@@ -82,6 +82,8 @@ protected:
         return &indexer_.value();
     }
 
+    inline bool indexer_instant_flush() const { return indexer_instant_flush_; }
+
     void IndexerInsert(const LogStorage::Entry* log_entry);
     bool FindJournalRecord(uint64_t seqnum, JournalRecord* record);
 
@@ -90,6 +92,7 @@ private:
 
     const uint16_t node_id_;
     const bool journal_for_storage_;
+    const bool indexer_instant_flush_;
 
     ViewWatcher view_watcher_;
 

@@ -23,3 +23,4 @@ ABSL_DECLARE_FLAG(size_t, slog_storage_flusher_threads);
 ABSL_DECLARE_FLAG(size_t, slog_storage_max_live_entries);
 ABSL_DECLARE_FLAG(size_t, slog_storage_target_live_entries);
 ABSL_DECLARE_FLAG(int, slog_storage_trim_gc_internval_ms);
+ABSL_DECLARE_FLAG(int, slog_storage_indexer_flush_internval_ms);

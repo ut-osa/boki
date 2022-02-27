@@ -26,6 +26,7 @@ StorageBase::StorageBase(uint16_t node_id)
                  absl::GetFlag(FLAGS_slog_storage_enable_journal)),
       node_id_(node_id),
       journal_for_storage_(absl::GetFlag(FLAGS_slog_storage_backend) == "journal"),
+      indexer_instant_flush_(absl::GetFlag(FLAGS_slog_storage_indexer_flush_internval_ms) == 0),
       db_(nullptr),
       prev_db_num_keys_(0) {
     if (journal_for_storage_ && !journal_enabled()) {
@@ -124,6 +125,13 @@ void StorageBase::SetupTimers() {
         absl::Milliseconds(absl::GetFlag(FLAGS_slog_storage_trim_gc_internval_ms)),
         [this] () { db_workers_->ScheduleGC(); }
     );
+    if (!indexer_instant_flush_) {
+        CreatePeriodicTimer(
+            kStorageIndexerFlushTimerId,
+            absl::Milliseconds(absl::GetFlag(FLAGS_slog_storage_indexer_flush_internval_ms)),
+            [this] () { indexer_->Flush(); }
+        );
+    }
 }
 
 void StorageBase::MessageHandler(const SharedLogMessage& message,
