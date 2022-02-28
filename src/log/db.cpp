@@ -288,7 +288,7 @@ std::unique_ptr<tkrzw::DBM> TkrzwDBMBackend::CreateDBM(std::string_view name) {
     std::string file_type = absl::GetFlag(FLAGS_tkrzw_file_type);
     if (file_type == "mmap-para") {
         file = std::make_unique<tkrzw::MemoryMapParallelFile>();
-    } if (file_type == "pos-para") {
+    } else if (file_type == "pos-para") {
         file = std::make_unique<tkrzw::PositionalParallelFile>();
     } else {
         LOG(FATAL) << "Unknown Tkrzw file type: " << file_type;
