@@ -401,6 +401,44 @@ void ServerBase::PrintJournalStat() {
     prev_journal_stat_ = stat;
 }
 
+void ServerBase::PrintThreadStat() {
+    static constexpr double kReportThreshold = 0.03;
+
+    double ticks_to_nsec = 1e9 / float_utils::AsDouble(
+        procfs_utils::GetClockTicksPerSecond());
+    double total_user = 0;
+    double total_sys = 0;
+    std::stringstream stream;
+
+    std::vector<base::Thread*> threads = base::Thread::GetAllThreads();
+    for (base::Thread* thread : threads) {
+        int tid = thread->tid();
+        procfs_utils::ThreadStat stat;
+        if (!procfs_utils::ReadThreadStat(tid, &stat)) {
+            LOG(FATAL) << "Failed to read thread stat for tid " << tid;
+        }
+        if (prev_thread_stats_.contains(tid)) {
+            procfs_utils::ThreadStat prev_stat = prev_thread_stats_.at(tid);
+            double user = ticks_to_nsec * float_utils::GetRatio<double>(
+                stat.cpu_stat_user - prev_stat.cpu_stat_user,
+                stat.timestamp - prev_stat.timestamp);
+            double sys = ticks_to_nsec * float_utils::GetRatio<double>(
+                stat.cpu_stat_sys - prev_stat.cpu_stat_sys,
+                stat.timestamp - prev_stat.timestamp);
+            stream << fmt::format("{} (user) = {}, {} (sys) = {}, ",
+                                  thread->name(), user, thread->name(), sys);
+            total_user += user;
+            total_sys += sys;
+        }
+        prev_thread_stats_[tid] = stat;
+    }
+
+    if (total_user + total_sys >= kReportThreshold) {
+        stream << fmt::format("total_user = {}, total_sys = {}", total_user, total_sys);
+        LOG(INFO) << "[STAT] thread: " << stream.str();
+    }
+}
+
 namespace {
 using protocol::ConnType;
 typedef std::pair<int, int> ConnTypeIdPair;

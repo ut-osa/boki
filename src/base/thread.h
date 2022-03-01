@@ -28,6 +28,7 @@ public:
     static Thread* current() { return DCHECK_NOTNULL(current_); }
 
     static void RegisterMainThread();
+    static std::vector<Thread*> GetAllThreads();
 
 private:
     enum State { kCreated, kStarting, kRunning, kFinished };

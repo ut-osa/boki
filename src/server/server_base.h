@@ -4,6 +4,7 @@
 #include "common/zk.h"
 #include "common/protocol.h"
 #include "utils/appendable_buffer.h"
+#include "utils/procfs.h"
 #include "server/types.h"
 #include "server/node_watcher.h"
 
@@ -85,6 +86,9 @@ private:
     std::atomic<int> next_journal_file_id_;
     std::optional<JournalStat> prev_journal_stat_;
 
+    absl::flat_hash_map</* tid */ int,
+                        procfs_utils::ThreadStat> prev_thread_stats_;
+
     void SetupIOWorkers();
     void SetupMessageServer();
     void SetupJournalMonitorTimers();
@@ -97,6 +101,7 @@ private:
     void DoAcceptConnection(int server_sockfd);
 
     void PrintJournalStat();
+    void PrintThreadStat();
 
     DISALLOW_COPY_AND_ASSIGN(ServerBase);
 };

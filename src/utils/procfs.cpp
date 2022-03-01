@@ -74,5 +74,15 @@ std::string ReadHostname() {
     return hostname;
 }
 
+int GetClockTicksPerSecond() {
+    static absl::once_flag once;
+    static int clk_tck = -1;
+    absl::call_once(once, [] () {
+        clk_tck = gsl::narrow_cast<int>(sysconf(_SC_CLK_TCK));
+    });
+    DCHECK(clk_tck != -1);
+    return clk_tck;
+}
+
 }  // namespace procfs_utils
 }  // namespace faas

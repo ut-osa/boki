@@ -10,9 +10,24 @@ namespace faas {
 namespace base {
 
 namespace {
+
 static int __gettid() {
     return gsl::narrow_cast<int>(syscall(SYS_gettid));
 }
+
+static constexpr size_t     kNumThreadSlots = 64;
+static std::atomic<Thread*> thd_slots[kNumThreadSlots] = { nullptr };
+static std::atomic<size_t>  next_thd_slot{0};
+
+static void AddNewThread(Thread* thread) {
+    size_t idx = next_thd_slot.fetch_add(1);
+    if (idx >= kNumThreadSlots) {
+        LOG(FATAL) << "Not enough statically allocated tid slots, "
+                      "consider enlarge kNumThreadSlots";
+    }
+    thd_slots[idx].store(thread);
+}
+
 }  // namespace
 
 thread_local Thread* Thread::current_{nullptr};
@@ -58,6 +73,7 @@ void Thread::Join() {
 void Thread::Run() {
     tid_ = __gettid();
     state_.store(kRunning);
+    AddNewThread(this);
     started_.Notify();
     LOG_F(INFO, "Start thread: {} (tid={})", name_, tid_);
     fn_();
@@ -122,8 +138,21 @@ void Thread::RegisterMainThread() {
     thread->state_.store(kRunning);
     thread->tid_ = __gettid();
     thread->pthread_ = pthread_self();
+    AddNewThread(thread);
     current_ = thread;
     LOG_F(INFO, "Register main thread: tid={}", thread->tid_);
+}
+
+std::vector<Thread*> Thread::GetAllThreads() {
+    size_t n = next_thd_slot.load();
+    std::vector<Thread*> threads;
+    for (size_t i = 0; i < n; i++) {
+        Thread* thread = thd_slots[i].load();
+        if (thread != nullptr) {
+            threads.push_back(thread);
+        }
+    }
+    return threads;
 }
 
 }  // namespace base
