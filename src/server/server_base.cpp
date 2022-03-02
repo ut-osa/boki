@@ -295,6 +295,7 @@ void ServerBase::DoPrintStat() {
     if (journal_enabled()) {
         PrintJournalStat();
     }
+    PrintThreadStat();
     PrintStatInternal();
 }
 
@@ -402,7 +403,8 @@ void ServerBase::PrintJournalStat() {
 }
 
 void ServerBase::PrintThreadStat() {
-    static constexpr double kReportThreshold = 0.03;
+    static constexpr double kReportThreshold = 0.1;
+    static constexpr double kPerThreadReportThreshold = 0.01;
 
     double ticks_to_nsec = 1e9 / float_utils::AsDouble(
         procfs_utils::GetClockTicksPerSecond());
@@ -425,8 +427,10 @@ void ServerBase::PrintThreadStat() {
             double sys = ticks_to_nsec * float_utils::GetRatio<double>(
                 stat.cpu_stat_sys - prev_stat.cpu_stat_sys,
                 stat.timestamp - prev_stat.timestamp);
-            stream << fmt::format("{} (user) = {}, {} (sys) = {}, ",
-                                  thread->name(), user, thread->name(), sys);
+            if (user + sys >= kPerThreadReportThreshold) {
+                stream << fmt::format("{} (user) = {:.4f}, {} (sys) = {:.4f}, ",
+                                      thread->name(), user, thread->name(), sys);
+            }
             total_user += user;
             total_sys += sys;
         }
@@ -434,7 +438,8 @@ void ServerBase::PrintThreadStat() {
     }
 
     if (total_user + total_sys >= kReportThreshold) {
-        stream << fmt::format("total_user = {}, total_sys = {}", total_user, total_sys);
+        stream << fmt::format("total_user = {:.4f}, total_sys = {:.4f}",
+                              total_user, total_sys);
         LOG(INFO) << "[STAT] thread: " << stream.str();
     }
 }
