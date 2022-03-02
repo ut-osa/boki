@@ -478,10 +478,16 @@ void Storage::SendShardProgressIfNeeded() {
 }
 
 void Storage::CollectLogTrimOps() {
+    if (!gc_mu_.TryLock()) {
+        LOG(INFO) << "CollectLogTrimOps is already running";
+        return;
+    }
+
     absl::flat_hash_map</* logspace_id */ uint32_t, LogStorage::TrimOpVec> all_trim_ops;
     {
         absl::ReaderMutexLock view_lk(&view_mu_);
         if (current_view_ == nullptr || view_finalized_) {
+            gc_mu_.Unlock();
             return;
         }
         storage_collection_.ForEachActiveLogSpace(
@@ -506,9 +512,6 @@ void Storage::CollectLogTrimOps() {
             trimmed_seqnums.insert(trimmed_seqnums.end(), seqnums.begin(), seqnums.end());
         }
     }
-    if (indexer_instant_flush()) {
-        indexer()->Flush();
-    }
 
     {
         absl::ReaderMutexLock view_lk(&view_mu_);
@@ -519,7 +522,11 @@ void Storage::CollectLogTrimOps() {
             }
         }
     }
+    gc_mu_.Unlock();
 
+    if (indexer_instant_flush()) {
+        indexer()->Flush();
+    }
     if (trimmed_seqnums.empty()) {
         return;
     }

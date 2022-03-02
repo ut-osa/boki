@@ -22,6 +22,8 @@ private:
 
     log_utils::FutureRequests future_requests_;
 
+    absl::Mutex gc_mu_;
+
     void OnViewCreated(const View* view) override;
     void OnViewFinalized(const FinalizedView* finalized_view) override;
 
