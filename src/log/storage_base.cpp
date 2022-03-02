@@ -87,7 +87,7 @@ void StorageBase::PrintDBStat() {
         return;
     }
     prev_db_num_keys_ = db_num_keys;
-    LOG(INFO) << "[STAT] DB: "
+    LOG(INFO) << FormatStatHeader("DB")
               << "num_keys="    << utils::FormatNumber(db_num_keys) << ", "
               << "total_bytes=" << utils::FormatBytes(db_byte_size);
 }

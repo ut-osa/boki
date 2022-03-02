@@ -54,7 +54,7 @@ std::string GetMallocStats(const char* opts) {
 std::atomic<size_t> prev_allocated{0};
 }  // namespace
 
-void PrintMallocStat() {
+void PrintMallocStat(std::string header) {
     if (!UpdateEpoch()) {
         LOG(WARNING) << "Failed to update epoch for jemalloc, will not print stat";
         return;
@@ -87,7 +87,11 @@ void PrintMallocStat() {
     CTL_GET("stats.metadata", &metadata, size_t);
     CTL_GET("stats.retained", &retained, size_t);
 
-    LOG(INFO) << "[STAT] jemalloc: "
+    if (header.empty()) {
+        header = "[STAT] jemalloc: ";
+    }
+
+    LOG(INFO) << header
               << "allocated=" << FormatBytes(allocated) << ", "
               << "resident="  << FormatBytes(resident)  << ", "
               << "mapped="    << FormatBytes(mapped)    << ", "
@@ -113,7 +117,7 @@ size_t GoodMallocSize(size_t min_size) {
 
 #else  // __FAAS_USE_JEMALLOC
 
-void PrintMallocStat() {}
+void PrintMallocStat(std::string header) {}
 
 size_t GoodMallocSize(size_t min_size) {
     return min_size;

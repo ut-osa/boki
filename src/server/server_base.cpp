@@ -137,6 +137,7 @@ void ServerBase::EventLoopThreadMain() {
     for (const auto& item : connection_cbs_) {
         pollfds.push_back({ .fd = item.first, .events = POLLIN, .revents = 0 });
     }
+    start_timestamp_ = GetMonotonicMicroTimestamp();
     HLOG(INFO) << "Event loop starts";
     bool stopped = false;
     while (!stopped) {
@@ -291,7 +292,7 @@ void ServerBase::DoStop() {
 }
 
 void ServerBase::DoPrintStat() {
-    utils::PrintMallocStat();
+    utils::PrintMallocStat(FormatStatHeader("malloc"));
     if (journal_enabled()) {
         PrintJournalStat();
     }
@@ -382,23 +383,24 @@ void ServerBase::PrintJournalStat() {
            && prev_journal_stat_->appended_records == stat.appended_records) {
         return;
     }
-    LOG(INFO) << "[STAT] journal: "
-              << "created_files="    << stat.num_created_files                     << ", "
-              << "closed_files="     << stat.num_closed_files                      << ", "
-              << "total_bytes="      << utils::FormatBytes(stat.total_bytes)       << ", "
-              << "total_records="    << utils::FormatNumber(stat.total_records)    << ", "
-              << "appended_bytes="   << utils::FormatBytes(stat.appended_bytes)    << ", "
-              << "appended_records=" << utils::FormatNumber(stat.appended_records);
+    std::stringstream stream;
+    stream << "created_files="    << stat.num_created_files                     << ", "
+           << "closed_files="     << stat.num_closed_files                      << ", "
+           << "total_bytes="      << utils::FormatBytes(stat.total_bytes)       << ", "
+           << "total_records="    << utils::FormatNumber(stat.total_records)    << ", "
+           << "appended_bytes="   << utils::FormatBytes(stat.appended_bytes)    << ", "
+           << "appended_records=" << utils::FormatNumber(stat.appended_records);
     if (prev_journal_stat_.has_value()) {
         DCHECK_LT(prev_journal_stat_->appended_bytes, stat.appended_bytes);
         size_t bytes_delta = stat.appended_bytes - prev_journal_stat_->appended_bytes;
         DCHECK_LT(prev_journal_stat_->appended_records, stat.appended_records);
         size_t record_delta = stat.appended_records - prev_journal_stat_->appended_records;
         int64_t time_delta = stat.timestamp - prev_journal_stat_->timestamp;
-        LOG_F(INFO, "[STAT] journal: {} MB per sec, {} records per sec",
-              float_utils::GetRatio<double>(bytes_delta, time_delta) * 1e6 / 1024.0 / 1024.0,
-              float_utils::GetRatio<double>(record_delta, time_delta) * 1e6);
+        stream << fmt::format(", {:.2f} KB per sec, {:.2f} records per sec",
+            float_utils::GetRatio<double>(bytes_delta, time_delta) * 1e6 / 1024.0,
+            float_utils::GetRatio<double>(record_delta, time_delta) * 1e6);
     }
+    LOG(INFO) << FormatStatHeader("journal") << stream.str();
     prev_journal_stat_ = stat;
 }
 
@@ -440,8 +442,13 @@ void ServerBase::PrintThreadStat() {
     if (total_user + total_sys >= kReportThreshold) {
         stream << fmt::format("total_user = {:.4f}, total_sys = {:.4f}",
                               total_user, total_sys);
-        LOG(INFO) << "[STAT] thread: " << stream.str();
+        LOG(INFO) << FormatStatHeader("thread") << stream.str();
     }
+}
+
+std::string ServerBase::FormatStatHeader(std::string_view stat_name) {
+    int64_t ts = (GetMonotonicMicroTimestamp() - start_timestamp_) / 1000;
+    return fmt::format("[STAT (ts {})] {}: ", ts, stat_name);
 }
 
 namespace {

@@ -61,6 +61,8 @@ protected:
     static int GetIngressConnTypeId(protocol::ConnType conn_type, uint16_t node_id);
     static int GetEgressHubTypeId(protocol::ConnType conn_type, uint16_t node_id);
 
+    std::string FormatStatHeader(std::string_view stat_name);
+
 private:
     friend class IOWorker;
 
@@ -73,6 +75,8 @@ private:
     base::Thread event_loop_thread_;
     zk::ZKSession zk_session_;
     NodeWatcher node_watcher_;
+
+    int64_t start_timestamp_;
 
     mutable std::atomic<size_t> next_io_worker_for_pick_;
 

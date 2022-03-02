@@ -5,7 +5,7 @@
 namespace faas {
 namespace utils {
 
-void PrintMallocStat();
+void PrintMallocStat(std::string header);
 
 size_t GoodMallocSize(size_t min_size);
 
