@@ -14,6 +14,7 @@ type txnContext struct {
 	readonly bool
 	id       uint64 // TxnId is the seqnum of TxnBegin log
 	ops      []*WriteOp
+	writeSet []*ObjectRef
 }
 
 func CreateTxnEnv(ctx context.Context, faasEnv types.Environment) (Env, error) {
@@ -68,7 +69,7 @@ func (env *envImpl) TxnAbort() error {
 	if err != nil {
 		panic(err)
 	}
-	tags := []uint64{common.TxnMetaLogTag, txnHistoryLogTag(ctx.id)}
+	tags := []uint64{common.TxnMetaLogTag, common.GCMetaLogTag, txnHistoryLogTag(ctx.id)}
 	if _, err := env.faasEnv.SharedLogAppend(env.faasCtx, tags, common.CompressData(encoded)); err == nil {
 		return nil
 	} else {
@@ -84,6 +85,11 @@ func (env *envImpl) TxnCommit() (bool /* committed */, error) {
 		panic("Read-only transaction")
 	}
 	ctx := env.txnCtx
+	for _, o := range ctx.writeSet {
+		if err := o.clearNewBit(); err != nil {
+			return false, err
+		}
+	}
 	env.txnCtx = nil
 	ctx.active = false
 	// Append commit log
@@ -96,7 +102,7 @@ func (env *envImpl) TxnCommit() (bool /* committed */, error) {
 	if err != nil {
 		panic(err)
 	}
-	tags := []uint64{common.TxnMetaLogTag, txnHistoryLogTag(ctx.id)}
+	tags := []uint64{common.TxnMetaLogTag, common.GCMetaLogTag, txnHistoryLogTag(ctx.id)}
 	for _, op := range ctx.ops {
 		tags = append(tags, objectLogTag(common.NameHash(op.ObjName)))
 	}
@@ -115,6 +121,16 @@ func (env *envImpl) TxnCommit() (bool /* committed */, error) {
 	}
 }
 
-func (ctx *txnContext) appendOp(op *WriteOp) {
+func (ctx *txnContext) appendOp(obj *ObjectRef, op *WriteOp) {
 	ctx.ops = append(ctx.ops, op)
+	exists := false
+	for _, o := range ctx.writeSet {
+		if o.name == obj.name {
+			exists = true
+			break
+		}
+	}
+	if !exists {
+		ctx.writeSet = append(ctx.writeSet, obj)
+	}
 }

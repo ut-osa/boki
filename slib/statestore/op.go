@@ -138,7 +138,7 @@ func (obj *ObjectRef) doWriteOp(op *WriteOp) *WriteResult {
 		if obj.txnCtx.readonly {
 			panic("Cannot do modifications within read-only transaction!")
 		}
-		obj.txnCtx.appendOp(op)
+		obj.txnCtx.appendOp(obj, op)
 		result.successWithValue(NullValue())
 		return result
 	}

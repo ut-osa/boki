@@ -21,6 +21,7 @@ type ObjectRef struct {
 	view     *ObjectView
 	multiCtx *multiContext
 	txnCtx   *txnContext
+	isNew    bool
 }
 
 func (env *envImpl) Object(name string) *ObjectRef {
@@ -37,9 +38,18 @@ func (env *envImpl) Object(name string) *ObjectRef {
 			view:     nil,
 			multiCtx: nil,
 			txnCtx:   env.txnCtx,
+			isNew:    true,
 		}
 		env.objs[name] = obj
 		return obj
+	}
+}
+
+func newEmptyObjectView(objName string) *ObjectView {
+	return &ObjectView{
+		name:       objName,
+		nextSeqNum: 0,
+		contents:   gabs.New(),
 	}
 }
 

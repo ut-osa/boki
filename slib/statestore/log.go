@@ -42,7 +42,8 @@ const (
 	LOG_TxnBegin
 	LOG_TxnAbort
 	LOG_TxnCommit
-	LOG_TxnHistory
+	LOG_NewObject
+	LOG_Materialize
 )
 
 type ObjectLogEntry struct {
@@ -53,6 +54,11 @@ type ObjectLogEntry struct {
 	LogType int        `json:"t"`
 	Ops     []*WriteOp `json:"o,omitempty"`
 	TxnId   uint64     `json:"x"`
+
+	ObjName string `json:"n,omitempty"`
+
+	ObjData    interface{} `json:"d,omitempty"`
+	AssoSeqNum uint64      `json:"s"`
 }
 
 func objectLogTag(objNameHash uint64) uint64 {
@@ -306,11 +312,12 @@ func (obj *ObjectRef) syncToBackward(tailSeqNum uint64) error {
 	var view *ObjectView
 	seqNum := tailSeqNum
 	currentSeqNum := uint64(0)
-	if obj.view != nil {
-		currentSeqNum = obj.view.nextSeqNum
-		if tailSeqNum < currentSeqNum {
-			log.Fatalf("[FATAL] Current seqNum=%#016x, cannot sync to %#016x", currentSeqNum, tailSeqNum)
-		}
+	if obj.view == nil {
+		obj.view = newEmptyObjectView(obj.name)
+	}
+	currentSeqNum = obj.view.nextSeqNum
+	if tailSeqNum < currentSeqNum {
+		log.Fatalf("[FATAL] Current seqNum=%#016x, cannot sync to %#016x", currentSeqNum, tailSeqNum)
 	}
 	if tailSeqNum == currentSeqNum {
 		return nil
@@ -340,6 +347,9 @@ func (obj *ObjectRef) syncToBackward(tailSeqNum uint64) error {
 				continue
 			}
 		}
+		if obj.isNew {
+			obj.isNew = false
+		}
 		view = objectLog.loadCachedObjectView(obj.name)
 		if view == nil {
 			objectLogs = append(objectLogs, objectLog)
@@ -350,15 +360,10 @@ func (obj *ObjectRef) syncToBackward(tailSeqNum uint64) error {
 	}
 
 	if view == nil {
-		if obj.view != nil {
-			view = obj.view
-		} else {
-			view = &ObjectView{
-				name:       obj.name,
-				nextSeqNum: 0,
-				contents:   gabs.New(),
-			}
+		if obj.view == nil {
+			panic("View of this object is nil")
 		}
+		view = obj.view
 	}
 	for i := len(objectLogs) - 1; i >= 0; i-- {
 		objectLog := objectLogs[i]
@@ -377,9 +382,45 @@ func (obj *ObjectRef) syncToBackward(tailSeqNum uint64) error {
 	return nil
 }
 
+func (obj *ObjectRef) appendCreateLogIfNeeded() error {
+	if err := obj.ensureView(); err != nil {
+		return err
+	}
+	if obj.view.nextSeqNum > 0 {
+		return nil
+	}
+	logEntry := &ObjectLogEntry{
+		LogType: LOG_NewObject,
+		ObjName: obj.name,
+	}
+	encoded, err := json.Marshal(logEntry)
+	if err != nil {
+		panic(err)
+	}
+	tags := []uint64{common.GCMetaLogTag}
+	_, err = obj.env.faasEnv.SharedLogAppend(obj.env.faasCtx, tags, common.CompressData(encoded))
+	if err != nil {
+		return newRuntimeError(err.Error())
+	}
+	return nil
+}
+
+func (obj *ObjectRef) clearNewBit() error {
+	if obj.isNew {
+		if err := obj.appendCreateLogIfNeeded(); err != nil {
+			return err
+		}
+		obj.isNew = false
+	}
+	return nil
+}
+
 func (obj *ObjectRef) appendNormalOpLog(ops []*WriteOp) (uint64 /* seqNum */, error) {
 	if len(ops) == 0 {
 		panic("Empty Ops for NormalOp log")
+	}
+	if err := obj.clearNewBit(); err != nil {
+		return 0, err
 	}
 	logEntry := &ObjectLogEntry{
 		LogType: LOG_NormalOp,
@@ -408,7 +449,7 @@ func (env *envImpl) appendTxnBeginLog() (uint64 /* seqNum */, error) {
 	if err != nil {
 		panic(err)
 	}
-	tags := []uint64{common.TxnMetaLogTag}
+	tags := []uint64{common.TxnMetaLogTag, common.GCMetaLogTag}
 	seqNum, err := env.faasEnv.SharedLogAppend(env.faasCtx, tags, common.CompressData(encoded))
 	if err != nil {
 		return 0, newRuntimeError(err.Error())
