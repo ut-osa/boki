@@ -45,6 +45,19 @@ func (env *envImpl) Object(name string) *ObjectRef {
 	}
 }
 
+func (env *envImpl) DeleteObject(name string) error {
+	if env.txnCtx != nil {
+		panic("Cannot delete object within a transaction context")
+	}
+	if err := env.appendDeleteLog(name); err != nil {
+		return err
+	}
+	if _, exists := env.objs[name]; exists {
+		delete(env.objs, name)
+	}
+	return nil
+}
+
 func newEmptyObjectView(objName string) *ObjectView {
 	return &ObjectView{
 		name:       objName,

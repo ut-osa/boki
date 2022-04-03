@@ -43,7 +43,9 @@ const (
 	LOG_TxnAbort
 	LOG_TxnCommit
 	LOG_NewObject
+	LOG_DeleteObject
 	LOG_Materialize
+	LOG_GCMeta
 )
 
 type ObjectLogEntry struct {
@@ -58,7 +60,10 @@ type ObjectLogEntry struct {
 	ObjName string `json:"n,omitempty"`
 
 	ObjData    interface{} `json:"d,omitempty"`
-	AssoSeqNum uint64      `json:"s"`
+	NextSeqNum uint64      `json:"n"`
+
+	GCShardId     int    `json:"s"`
+	GCSafeTrimPos uint64 `json:"p"`
 }
 
 func objectLogTag(objNameHash uint64) uint64 {
@@ -67,6 +72,14 @@ func objectLogTag(objNameHash uint64) uint64 {
 
 func txnHistoryLogTag(txnId uint64) uint64 {
 	return (txnId << common.LogTagReserveBits) + common.TxnHistoryLogTagLowBits
+}
+
+func (env *envImpl) gcWorkerLogTag(objNameHash uint64) uint64 {
+	if !env.gcEnabled {
+		log.Fatal("[FATAL] GC is not enabled")
+	}
+	shard := objNameHash % uint64(env.gcNumShards)
+	return (shard << common.LogTagReserveBits) + common.ObjectLogTagLowBits
 }
 
 func (l *ObjectLogEntry) fillWriteSet() {
@@ -383,6 +396,9 @@ func (obj *ObjectRef) syncToBackward(tailSeqNum uint64) error {
 }
 
 func (obj *ObjectRef) appendCreateLogIfNeeded() error {
+	if !obj.env.gcEnabled {
+		return nil
+	}
 	if err := obj.ensureView(); err != nil {
 		return err
 	}
@@ -397,8 +413,28 @@ func (obj *ObjectRef) appendCreateLogIfNeeded() error {
 	if err != nil {
 		panic(err)
 	}
-	tags := []uint64{common.GCMetaLogTag}
+	tags := []uint64{obj.env.gcWorkerLogTag(obj.nameHash)}
 	_, err = obj.env.faasEnv.SharedLogAppend(obj.env.faasCtx, tags, common.CompressData(encoded))
+	if err != nil {
+		return newRuntimeError(err.Error())
+	}
+	return nil
+}
+
+func (env *envImpl) appendDeleteLog(name string) error {
+	if !env.gcEnabled {
+		return nil
+	}
+	logEntry := &ObjectLogEntry{
+		LogType: LOG_DeleteObject,
+		ObjName: name,
+	}
+	encoded, err := json.Marshal(logEntry)
+	if err != nil {
+		panic(err)
+	}
+	tags := []uint64{env.gcWorkerLogTag(common.NameHash(name))}
+	_, err = env.faasEnv.SharedLogAppend(env.faasCtx, tags, common.CompressData(encoded))
 	if err != nil {
 		return newRuntimeError(err.Error())
 	}

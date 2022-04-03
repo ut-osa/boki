@@ -3,11 +3,22 @@ package statestore
 import (
 	"context"
 	"encoding/json"
+	"log"
+	"os"
 
 	"cs.utexas.edu/zjia/faas/slib/common"
 
 	"cs.utexas.edu/zjia/faas/types"
 )
+
+var FLAGS_DisableTxn bool = false
+
+func init() {
+	if val, exists := os.LookupEnv("DISABLE_TXN"); exists && val == "1" {
+		FLAGS_DisableTxn = true
+		log.Printf("[INFO] Transaction disabled")
+	}
+}
 
 type txnContext struct {
 	active   bool
@@ -18,6 +29,9 @@ type txnContext struct {
 }
 
 func CreateTxnEnv(ctx context.Context, faasEnv types.Environment) (Env, error) {
+	if FLAGS_DisableTxn {
+		return nil, newBadArgumentsError("transaction is globally disabled")
+	}
 	env := CreateEnv(ctx, faasEnv).(*envImpl)
 	if seqNum, err := env.appendTxnBeginLog(); err == nil {
 		env.txnCtx = &txnContext{
@@ -33,6 +47,9 @@ func CreateTxnEnv(ctx context.Context, faasEnv types.Environment) (Env, error) {
 }
 
 func CreateReadOnlyTxnEnv(ctx context.Context, faasEnv types.Environment) (Env, error) {
+	if FLAGS_DisableTxn {
+		return nil, newBadArgumentsError("transaction is globally disabled")
+	}
 	env := CreateEnv(ctx, faasEnv).(*envImpl)
 	if tail, err := faasEnv.SharedLogCheckTail(ctx, 0 /* tag */); err == nil {
 		seqNum := uint64(0)
