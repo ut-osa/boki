@@ -60,9 +60,9 @@ type ObjectLogEntry struct {
 	ObjName string `json:"n,omitempty"`
 
 	ObjData    interface{} `json:"d,omitempty"`
-	NextSeqNum uint64      `json:"n"`
+	NextSeqNum uint64      `json:"s"`
 
-	GCShardId     int    `json:"s"`
+	GCShardId     int    `json:"i"`
 	GCSafeTrimPos uint64 `json:"p"`
 }
 
