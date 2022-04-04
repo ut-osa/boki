@@ -45,7 +45,7 @@ const (
 	LOG_NewObject
 	LOG_DeleteObject
 	LOG_Materialize
-	LOG_GCMeta
+	LOG_GCWorker
 )
 
 type ObjectLogEntry struct {
@@ -79,7 +79,7 @@ func (env *envImpl) gcWorkerLogTag(objNameHash uint64) uint64 {
 		log.Fatal("[FATAL] GC is not enabled")
 	}
 	shard := objNameHash % uint64(env.gcNumShards)
-	return (shard << common.LogTagReserveBits) + common.ObjectLogTagLowBits
+	return (shard << common.LogTagReserveBits) + common.GCWorkerLogTagLowBits
 }
 
 func (l *ObjectLogEntry) fillWriteSet() {
@@ -91,16 +91,28 @@ func (l *ObjectLogEntry) fillWriteSet() {
 	}
 }
 
+func (l *ObjectLogEntry) encode() []byte {
+	encoded, err := json.Marshal(l)
+	if err != nil {
+		panic(err)
+	}
+	return common.CompressData(encoded)
+}
+
+func (l *ObjectLogEntry) decodeFrom(data []byte) {
+	reader, err := common.DecompressReader(data)
+	if err != nil {
+		panic(err)
+	}
+	err = json.NewDecoder(reader).Decode(l)
+	if err != nil {
+		panic(err)
+	}
+}
+
 func decodeLogEntry(logEntry *types.LogEntry) *ObjectLogEntry {
-	reader, err := common.DecompressReader(logEntry.Data)
-	if err != nil {
-		panic(err)
-	}
 	objectLog := &ObjectLogEntry{}
-	err = json.NewDecoder(reader).Decode(objectLog)
-	if err != nil {
-		panic(err)
-	}
+	objectLog.decodeFrom(logEntry.Data)
 	var auxData []byte
 	if FLAGS_RedisForAuxData {
 		key := fmt.Sprintf("%#016x", logEntry.SeqNum)
@@ -173,17 +185,16 @@ func (txnCommitLog *ObjectLogEntry) checkTxnCommitResult(env *envImpl) (bool, er
 		}
 		seqNum := txnCommitLog.seqNum
 		for seqNum > txnCommitLog.TxnId {
-			logEntry, err := env.faasEnv.SharedLogReadPrev(env.faasCtx, tag, seqNum-1)
+			objectLog, err := env.objectLogReadPrev(tag, seqNum-1)
 			if err != nil {
 				return false, newRuntimeError(err.Error())
 			}
-			if logEntry == nil || logEntry.SeqNum <= txnCommitLog.TxnId {
+			if objectLog == nil || objectLog.seqNum <= txnCommitLog.TxnId {
 				break
 			}
-			seqNum = logEntry.SeqNum
+			seqNum = objectLog.seqNum
 			// log.Printf("[DEBUG] Read log with seqnum %#016x", seqNum)
 
-			objectLog := decodeLogEntry(logEntry)
 			if !txnCommitLog.writeSetOverlapped(objectLog) {
 				continue
 			}
@@ -226,6 +237,16 @@ func (l *ObjectLogEntry) hasCachedObjectView(objName string) bool {
 }
 
 func (l *ObjectLogEntry) loadCachedObjectView(objName string) *ObjectView {
+	if l.LogType == LOG_Materialize {
+		if objName != l.ObjName {
+			log.Fatalf("[FATAL] Object name mismatch: %s, %s", objName, l.ObjName)
+		}
+		return &ObjectView{
+			name:       objName,
+			nextSeqNum: l.NextSeqNum,
+			contents:   gabs.Wrap(l.ObjData),
+		}
+	}
 	if l.auxData == nil {
 		return nil
 	}
@@ -272,9 +293,10 @@ func (l *ObjectLogEntry) cacheObjectView(env *envImpl, view *ObjectView) {
 }
 
 func (obj *ObjectRef) syncTo(tailSeqNum uint64) error {
-	return obj.syncToBackward(tailSeqNum)
+	return obj.syncToBackwards(tailSeqNum)
 }
 
+/*
 func (obj *ObjectRef) syncToForward(tailSeqNum uint64) error {
 	tag := objectLogTag(obj.nameHash)
 	env := obj.env
@@ -317,67 +339,73 @@ func (obj *ObjectRef) syncToForward(tailSeqNum uint64) error {
 	}
 	return nil
 }
+*/
 
-func (obj *ObjectRef) syncToBackward(tailSeqNum uint64) error {
-	tag := objectLogTag(obj.nameHash)
-	env := obj.env
-	objectLogs := make([]*ObjectLogEntry, 0, 4)
-	var view *ObjectView
-	seqNum := tailSeqNum
-	currentSeqNum := uint64(0)
+func (obj *ObjectRef) syncToBackwards(tailSeqNum uint64) error {
 	if obj.view == nil {
 		obj.view = newEmptyObjectView(obj.name)
 	}
-	currentSeqNum = obj.view.nextSeqNum
-	if tailSeqNum < currentSeqNum {
-		log.Fatalf("[FATAL] Current seqNum=%#016x, cannot sync to %#016x", currentSeqNum, tailSeqNum)
-	}
-	if tailSeqNum == currentSeqNum {
-		return nil
+	if tailSeqNum < obj.view.nextSeqNum {
+		log.Fatalf("[FATAL] Current seqNum=%#016x, cannot sync to %#016x", obj.view.nextSeqNum, tailSeqNum)
 	}
 
-	for seqNum > currentSeqNum {
+	tag := objectLogTag(obj.nameHash)
+	objectLogs := make([]*ObjectLogEntry, 0, 4)
+	seqNum := tailSeqNum
+
+	for seqNum > obj.view.nextSeqNum {
 		if seqNum != protocol.MaxLogSeqnum {
 			seqNum -= 1
 		}
-		logEntry, err := env.faasEnv.SharedLogReadPrev(env.faasCtx, tag, seqNum)
+		objectLog, err := obj.env.objectLogReadPrev(tag, seqNum)
 		if err != nil {
 			return newRuntimeError(err.Error())
 		}
-		if logEntry == nil || logEntry.SeqNum < currentSeqNum {
+		if objectLog == nil || objectLog.seqNum < obj.view.nextSeqNum {
 			break
 		}
-		seqNum = logEntry.SeqNum
+		seqNum = objectLog.seqNum
 		// log.Printf("[DEBUG] Read log with seqnum %#016x", seqNum)
-		objectLog := decodeLogEntry(logEntry)
-		if !objectLog.withinWriteSet(obj.name) {
+
+		relevant := false
+		switch objectLog.LogType {
+		case LOG_NormalOp:
+			relevant = objectLog.withinWriteSet(obj.name)
+		case LOG_TxnCommit:
+			if objectLog.withinWriteSet(obj.name) {
+				committed, err := objectLog.checkTxnCommitResult(obj.env)
+				if err != nil {
+					return err
+				}
+				relevant = committed
+			}
+		case LOG_Materialize:
+			if obj.name == objectLog.ObjName {
+				relevant = true
+			}
+		default:
+			log.Fatalf("[FATAL] Unknown log type for object %s: %d", obj.name, objectLog.LogType)
+		}
+		if !relevant {
 			continue
 		}
-		if objectLog.LogType == LOG_TxnCommit {
-			if committed, err := objectLog.checkTxnCommitResult(env); err != nil {
-				return err
-			} else if !committed {
-				continue
-			}
-		}
+
 		if obj.isNew {
 			obj.isNew = false
 		}
-		view = objectLog.loadCachedObjectView(obj.name)
-		if view == nil {
-			objectLogs = append(objectLogs, objectLog)
-		} else {
+
+		view := objectLog.loadCachedObjectView(obj.name)
+		if view != nil && view.nextSeqNum > obj.view.nextSeqNum {
 			// log.Printf("[DEBUG] Load cached view: seqNum=%#016x, obj=%s", seqNum, obj.name)
-			break
+			obj.view = view
+		}
+
+		if objectLog.seqNum >= obj.view.nextSeqNum {
+			objectLogs = append(objectLogs, objectLog)
 		}
 	}
 
-	if view == nil {
-		if obj.view == nil {
-			panic("View of this object is nil")
-		}
-		view = obj.view
-	}
+	view := obj.view
 	for i := len(objectLogs) - 1; i >= 0; i-- {
 		objectLog := objectLogs[i]
 		if objectLog.seqNum < view.nextSeqNum {
@@ -389,9 +417,9 @@ func (obj *ObjectRef) syncToBackward(tailSeqNum uint64) error {
 				view.applyWriteOp(op)
 			}
 		}
-		objectLog.cacheObjectView(env, view)
+		objectLog.cacheObjectView(obj.env, view)
 	}
-	obj.view = view
+
 	return nil
 }
 
@@ -409,12 +437,8 @@ func (obj *ObjectRef) appendCreateLogIfNeeded() error {
 		LogType: LOG_NewObject,
 		ObjName: obj.name,
 	}
-	encoded, err := json.Marshal(logEntry)
-	if err != nil {
-		panic(err)
-	}
 	tags := []uint64{obj.env.gcWorkerLogTag(obj.nameHash)}
-	_, err = obj.env.faasEnv.SharedLogAppend(obj.env.faasCtx, tags, common.CompressData(encoded))
+	_, err := obj.env.faasEnv.SharedLogAppend(obj.env.faasCtx, tags, logEntry.encode())
 	if err != nil {
 		return newRuntimeError(err.Error())
 	}
@@ -429,12 +453,8 @@ func (env *envImpl) appendDeleteLog(name string) error {
 		LogType: LOG_DeleteObject,
 		ObjName: name,
 	}
-	encoded, err := json.Marshal(logEntry)
-	if err != nil {
-		panic(err)
-	}
 	tags := []uint64{env.gcWorkerLogTag(common.NameHash(name))}
-	_, err = env.faasEnv.SharedLogAppend(env.faasCtx, tags, common.CompressData(encoded))
+	_, err := env.faasEnv.SharedLogAppend(env.faasCtx, tags, logEntry.encode())
 	if err != nil {
 		return newRuntimeError(err.Error())
 	}
@@ -462,12 +482,8 @@ func (obj *ObjectRef) appendNormalOpLog(ops []*WriteOp) (uint64 /* seqNum */, er
 		LogType: LOG_NormalOp,
 		Ops:     ops,
 	}
-	encoded, err := json.Marshal(logEntry)
-	if err != nil {
-		panic(err)
-	}
 	tags := []uint64{objectLogTag(obj.nameHash)}
-	seqNum, err := obj.env.faasEnv.SharedLogAppend(obj.env.faasCtx, tags, common.CompressData(encoded))
+	seqNum, err := obj.env.faasEnv.SharedLogAppend(obj.env.faasCtx, tags, logEntry.encode())
 	if err != nil {
 		return 0, newRuntimeError(err.Error())
 	} else {
@@ -481,12 +497,8 @@ func (obj *ObjectRef) appendWriteLog(op *WriteOp) (uint64 /* seqNum */, error) {
 
 func (env *envImpl) appendTxnBeginLog() (uint64 /* seqNum */, error) {
 	logEntry := &ObjectLogEntry{LogType: LOG_TxnBegin}
-	encoded, err := json.Marshal(logEntry)
-	if err != nil {
-		panic(err)
-	}
 	tags := []uint64{common.TxnMetaLogTag, common.GCMetaLogTag}
-	seqNum, err := env.faasEnv.SharedLogAppend(env.faasCtx, tags, common.CompressData(encoded))
+	seqNum, err := env.faasEnv.SharedLogAppend(env.faasCtx, tags, logEntry.encode())
 	if err != nil {
 		return 0, newRuntimeError(err.Error())
 	} else {
@@ -516,4 +528,57 @@ func (env *envImpl) setLogAuxData(seqNum uint64, data interface{}) error {
 		// log.Printf("[DEBUG] Set AuxData for log (seqNum=%#016x): contents=%s", seqNum, string(encoded))
 		return nil
 	}
+}
+
+func (view *ObjectView) materialize(env *envImpl) (bool, error) {
+	if view.nextSeqNum == 0 {
+		return false, nil
+	}
+	logEntry := &ObjectLogEntry{
+		ObjName:    view.name,
+		ObjData:    view.contents.Data(),
+		NextSeqNum: view.nextSeqNum,
+	}
+	tags := []uint64{objectLogTag(common.NameHash(view.name))}
+	_, err := env.faasEnv.SharedLogAppend(env.faasCtx, tags, logEntry.encode())
+	if err != nil {
+		return false, newRuntimeError(err.Error())
+	}
+	return true, nil
+}
+
+func (env *envImpl) appendGCWorkerLog(shardId int, safeTrimPos uint64) error {
+	logEntry := &ObjectLogEntry{
+		LogType:       LOG_GCWorker,
+		GCShardId:     shardId,
+		GCSafeTrimPos: safeTrimPos,
+	}
+	tags := []uint64{common.GCMetaLogTag}
+	_, err := env.faasEnv.SharedLogAppend(env.faasCtx, tags, logEntry.encode())
+	if err != nil {
+		return newRuntimeError(err.Error())
+	}
+	return nil
+}
+
+func (env *envImpl) objectLogReadNext(tag uint64, minSeqNum uint64) (*ObjectLogEntry, error) {
+	logEntry, err := env.faasEnv.SharedLogReadNext(env.faasCtx, tag, minSeqNum)
+	if err != nil {
+		return nil, err
+	}
+	if logEntry == nil {
+		return nil, nil
+	}
+	return decodeLogEntry(logEntry), nil
+}
+
+func (env *envImpl) objectLogReadPrev(tag uint64, maxSeqNum uint64) (*ObjectLogEntry, error) {
+	logEntry, err := env.faasEnv.SharedLogReadPrev(env.faasCtx, tag, maxSeqNum)
+	if err != nil {
+		return nil, err
+	}
+	if logEntry == nil {
+		return nil, nil
+	}
+	return decodeLogEntry(logEntry), nil
 }

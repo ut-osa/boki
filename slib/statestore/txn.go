@@ -2,7 +2,6 @@ package statestore
 
 import (
 	"context"
-	"encoding/json"
 	"log"
 	"os"
 
@@ -82,12 +81,8 @@ func (env *envImpl) TxnAbort() error {
 		LogType: LOG_TxnAbort,
 		TxnId:   ctx.id,
 	}
-	encoded, err := json.Marshal(logEntry)
-	if err != nil {
-		panic(err)
-	}
 	tags := []uint64{common.TxnMetaLogTag, common.GCMetaLogTag, txnHistoryLogTag(ctx.id)}
-	if _, err := env.faasEnv.SharedLogAppend(env.faasCtx, tags, common.CompressData(encoded)); err == nil {
+	if _, err := env.faasEnv.SharedLogAppend(env.faasCtx, tags, logEntry.encode()); err == nil {
 		return nil
 	} else {
 		return newRuntimeError(err.Error())
@@ -115,15 +110,11 @@ func (env *envImpl) TxnCommit() (bool /* committed */, error) {
 		Ops:     ctx.ops,
 		TxnId:   ctx.id,
 	}
-	encoded, err := json.Marshal(objectLog)
-	if err != nil {
-		panic(err)
-	}
 	tags := []uint64{common.TxnMetaLogTag, common.GCMetaLogTag, txnHistoryLogTag(ctx.id)}
 	for _, op := range ctx.ops {
 		tags = append(tags, objectLogTag(common.NameHash(op.ObjName)))
 	}
-	seqNum, err := env.faasEnv.SharedLogAppend(env.faasCtx, tags, common.CompressData(encoded))
+	seqNum, err := env.faasEnv.SharedLogAppend(env.faasCtx, tags, objectLog.encode())
 	if err != nil {
 		return false, newRuntimeError(err.Error())
 	}
