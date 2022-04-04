@@ -22,6 +22,7 @@ type ObjectRef struct {
 	multiCtx *multiContext
 	txnCtx   *txnContext
 	isNew    bool
+	logCount int
 }
 
 func (env *envImpl) Object(name string) *ObjectRef {
@@ -39,6 +40,7 @@ func (env *envImpl) Object(name string) *ObjectRef {
 			multiCtx: nil,
 			txnCtx:   env.txnCtx,
 			isNew:    true,
+			logCount: 0,
 		}
 		env.objs[name] = obj
 		return obj

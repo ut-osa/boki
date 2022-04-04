@@ -15,7 +15,10 @@ import (
 	"cs.utexas.edu/zjia/faas/types"
 )
 
-var FLAGS_GCSleepDuration time.Duration
+var FLAGS_GCSleepDuration time.Duration = 100 * time.Millisecond
+var FLAGS_GCLogCountThreshold int = 32
+var FLAGS_GCMinInterval time.Duration = 1 * time.Second
+var FLAGS_GCMaxInterval time.Duration = 5 * time.Second
 
 func init() {
 	if val, exists := os.LookupEnv("GC_SLEEP_DURATION_MS"); exists {
@@ -24,10 +27,33 @@ func init() {
 			panic(err)
 		}
 		FLAGS_GCSleepDuration = time.Duration(durationMs) * time.Millisecond
-	} else {
-		FLAGS_GCSleepDuration = 100 * time.Millisecond
 	}
+	if val, exists := os.LookupEnv("GC_LOG_COUNT_THRESHOLD"); exists {
+		threshold, err := strconv.Atoi(val)
+		if err != nil {
+			panic(err)
+		}
+		FLAGS_GCLogCountThreshold = threshold
+	}
+	if val, exists := os.LookupEnv("GC_MIN_INTERVAL_MS"); exists {
+		intervalMs, err := strconv.Atoi(val)
+		if err != nil {
+			panic(err)
+		}
+		FLAGS_GCMinInterval = time.Duration(intervalMs) * time.Millisecond
+	}
+	if val, exists := os.LookupEnv("GC_MAX_INTERVAL_MS"); exists {
+		intervalMs, err := strconv.Atoi(val)
+		if err != nil {
+			panic(err)
+		}
+		FLAGS_GCMaxInterval = time.Duration(intervalMs) * time.Millisecond
+	}
+
 	log.Printf("[INFO] GC sleep duration set to %s", FLAGS_GCSleepDuration)
+	log.Printf("[INFO] GC log count threshold set to %d", FLAGS_GCLogCountThreshold)
+	log.Printf("[INFO] GC min interval set to %s", FLAGS_GCMinInterval)
+	log.Printf("[INFO] GC max interval set to %s", FLAGS_GCMaxInterval)
 }
 
 type GCFuncInput struct {
@@ -81,22 +107,27 @@ func (h *objectHeap) Pop() interface{} {
 }
 
 type gcWorkerState struct {
-	env         *envImpl
-	gcLogPos    uint64
-	prevTrimPos uint64
-	shardId     int
-	objStates   map[string]*objectState
-	objHeap     *objectHeap
+	env *envImpl
+
+	gcLogPos uint64
+	shardId  int
+
+	objStates map[string]*objectState
+	objHeap   *objectHeap
+
+	prevTrimPos  uint64
+	lastTrimTime time.Time
 }
 
-func newGCWorkerState(env Env, input *GCFuncInput) *gcWorkerState {
+func newGCWorkerState(env Env, shardId int) *gcWorkerState {
 	return &gcWorkerState{
-		env:         env.(*envImpl),
-		gcLogPos:    0,
-		prevTrimPos: 0,
-		shardId:     input.ShardId,
-		objStates:   make(map[string]*objectState),
-		objHeap:     &objectHeap{},
+		env:          env.(*envImpl),
+		gcLogPos:     0,
+		shardId:      shardId,
+		objStates:    make(map[string]*objectState),
+		objHeap:      &objectHeap{},
+		prevTrimPos:  0,
+		lastTrimTime: time.Now(),
 	}
 }
 
@@ -135,6 +166,11 @@ func (state *gcWorkerState) readGCLogs() error {
 		return nil
 	}
 	tailSeqNum := logEntry.SeqNum
+	if state.gcLogPos == tailSeqNum+1 {
+		return nil
+	}
+
+	log.Printf("[DEBUG] Going to read until seqnum %#016x", tailSeqNum+1)
 
 	tag := (uint64(state.shardId) << common.LogTagReserveBits) + common.GCWorkerLogTagLowBits
 	for {
@@ -175,6 +211,11 @@ func (state *gcWorkerState) doTrim() error {
 			break
 		}
 
+		if obj.ref.logCount < FLAGS_GCLogCountThreshold && time.Since(state.lastTrimTime) < FLAGS_GCMaxInterval {
+			break
+		}
+		log.Printf("[DEBUG] Will materialize object %s: gcLogPos=%#016x, objSafeTrimPos=%#016x", obj.name, state.gcLogPos, obj.safeTrimPos)
+
 		if err := obj.ref.syncTo(state.gcLogPos); err != nil {
 			return err
 		}
@@ -197,11 +238,15 @@ func (state *gcWorkerState) doTrim() error {
 	if trimPos == state.prevTrimPos {
 		return nil
 	}
+	if time.Since(state.lastTrimTime) <= FLAGS_GCMinInterval {
+		return nil
+	}
+	log.Printf("[INFO] GC worker (shard %d) trims until seqnum %#016x", state.shardId, trimPos)
 	if err := state.env.appendGCWorkerLog(state.shardId, trimPos); err != nil {
 		return err
 	}
-	log.Printf("[INFO] GC worker (shard %d) trims until seqnum %#016x", state.shardId, trimPos)
 	state.prevTrimPos = trimPos
+	state.lastTrimTime = time.Now()
 	return nil
 }
 
@@ -221,7 +266,8 @@ func (h *gcWorkerFuncHandler) Call(ctx context.Context, input []byte) ([]byte, e
 		log.Fatalf("[FATAL] Failed to decode input: %v", err)
 	}
 	env := CreateEnv(ctx, h.env)
-	state := newGCWorkerState(env, gcInput)
+	state := newGCWorkerState(env, gcInput.ShardId)
+	log.Printf("[INFO] GC worker for shard %d starts", gcInput.ShardId)
 	for {
 		if err := state.readGCLogs(); err != nil {
 			log.Fatalf("[FATAL] Failed to read GC logs: %v", err)
@@ -292,8 +338,8 @@ func (state *gcControllerState) readGCLogs(ctx context.Context, env types.Enviro
 }
 
 func (state *gcControllerState) doTrim(ctx context.Context, env types.Environment) error {
-	trimPos := state.shardSafeTrimPos[0]
-	for i := 1; i < state.numShard; i++ {
+	trimPos := state.gcLogPos
+	for i := 0; i < state.numShard; i++ {
 		if state.shardSafeTrimPos[i] < trimPos {
 			trimPos = state.shardSafeTrimPos[i]
 		}
@@ -312,15 +358,14 @@ func (state *gcControllerState) doTrim(ctx context.Context, env types.Environmen
 	return nil
 }
 
-func newGCControllerState(input *GCFuncInput) *gcControllerState {
-	n := input.NumShard
+func newGCControllerState(numShard int) *gcControllerState {
 	state := &gcControllerState{
 		gcLogPos:         0,
 		prevTrimPos:      0,
-		numShard:         n,
-		shardSafeTrimPos: make([]uint64, n),
+		numShard:         numShard,
+		shardSafeTrimPos: make([]uint64, numShard),
 	}
-	for i := 0; i < n; i++ {
+	for i := 0; i < numShard; i++ {
 		state.shardSafeTrimPos[i] = 0
 	}
 	return state
@@ -341,7 +386,8 @@ func (h *gcControllerFuncHandler) Call(ctx context.Context, input []byte) ([]byt
 	if err := json.Unmarshal(input, gcInput); err != nil {
 		log.Fatalf("[FATAL] Failed to decode input: %v", err)
 	}
-	state := newGCControllerState(gcInput)
+	state := newGCControllerState(gcInput.NumShard)
+	log.Printf("[INFO] GC controller starts")
 	for {
 		if err := state.readGCLogs(ctx, h.env); err != nil {
 			log.Fatalf("[FATAL] Failed to read GC logs: %v", err)

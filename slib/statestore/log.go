@@ -389,6 +389,7 @@ func (obj *ObjectRef) syncToBackwards(tailSeqNum uint64) error {
 		if !relevant {
 			continue
 		}
+		obj.logCount++
 
 		if obj.isNew {
 			obj.isNew = false
