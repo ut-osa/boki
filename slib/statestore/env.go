@@ -17,10 +17,10 @@ func init() {
 		if err != nil {
 			log.Fatalf("[FATAL] Failed to parse GC_NUM_SHARDS: %v", err)
 		}
-		if n <= 0 {
-			log.Fatalf("[FATAL] Invalid number of shards: %d", n)
+		if n > 0 {
+			log.Printf("[INFO] Number of GC shards is %d", n)
+			FLAGS_GCNumShards = n
 		}
-		FLAGS_GCNumShards = n
 	}
 }
 

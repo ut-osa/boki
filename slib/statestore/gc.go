@@ -170,7 +170,7 @@ func (state *gcWorkerState) readGCLogs() error {
 		return nil
 	}
 
-	log.Printf("[DEBUG] Going to read until seqnum %#016x", tailSeqNum+1)
+	// log.Printf("[DEBUG] Going to read until seqnum %#016x", tailSeqNum+1)
 
 	tag := (uint64(state.shardId) << common.LogTagReserveBits) + common.GCWorkerLogTagLowBits
 	for {
@@ -195,6 +195,38 @@ func (state *gcWorkerState) readGCLogs() error {
 	return nil
 }
 
+func (state *gcWorkerState) materializeObject(obj *objectState) (bool, error) {
+	if err := obj.ref.syncTo(state.gcLogPos); err != nil {
+		return false, err
+	}
+	if obj.ref.logCount < FLAGS_GCLogCountThreshold {
+		return false, nil
+	}
+	// log.Printf("[DEBUG] Will materialize object %s: gcLogPos=%#016x, objSafeTrimPos=%#016x", obj.name, state.gcLogPos, obj.safeTrimPos)
+	view := obj.ref.view.Clone()
+	view.nextSeqNum = state.gcLogPos
+	if success, err := view.materialize(state.env); err != nil {
+		return false, err
+	} else if success {
+		obj.ref.logCount = 1
+		obj.safeTrimPos = state.gcLogPos
+		heap.Fix(state.objHeap, obj.indexInHeap)
+		return true, nil
+	} else {
+		log.Printf("[WARN] Failed to materialize object %s", obj.name)
+		return false, nil
+	}
+}
+
+func (state *gcWorkerState) materializeObjects() error {
+	for _, obj := range state.objStates {
+		if _, err := state.materializeObject(obj); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (state *gcWorkerState) doTrim() error {
 	if state.gcLogPos == state.prevTrimPos {
 		return nil
@@ -211,23 +243,13 @@ func (state *gcWorkerState) doTrim() error {
 			break
 		}
 
-		if obj.ref.logCount < FLAGS_GCLogCountThreshold && time.Since(state.lastTrimTime) < FLAGS_GCMaxInterval {
-			break
+		if time.Since(state.lastTrimTime) < FLAGS_GCMaxInterval {
+			return nil
 		}
-		log.Printf("[DEBUG] Will materialize object %s: gcLogPos=%#016x, objSafeTrimPos=%#016x", obj.name, state.gcLogPos, obj.safeTrimPos)
 
-		if err := obj.ref.syncTo(state.gcLogPos); err != nil {
+		if success, err := state.materializeObject(obj); err != nil {
 			return err
-		}
-		view := obj.ref.view.Clone()
-		view.nextSeqNum = state.gcLogPos
-		if success, err := view.materialize(state.env); err != nil {
-			return err
-		} else if success {
-			obj.safeTrimPos = state.gcLogPos
-			heap.Fix(state.objHeap, obj.indexInHeap)
-		} else {
-			log.Printf("[WARN] Failed to materialize object %s", obj.name)
+		} else if !success {
 			return nil
 		}
 	}
@@ -271,6 +293,9 @@ func (h *gcWorkerFuncHandler) Call(ctx context.Context, input []byte) ([]byte, e
 	for {
 		if err := state.readGCLogs(); err != nil {
 			log.Fatalf("[FATAL] Failed to read GC logs: %v", err)
+		}
+		if err := state.materializeObjects(); err != nil {
+			log.Fatalf("[FATAL] Failed to materialize objects: %v", err)
 		}
 		if err := state.doTrim(); err != nil {
 			log.Fatalf("[FATAL] Failed to perform log trim: %v", err)
