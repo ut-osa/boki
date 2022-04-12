@@ -50,6 +50,7 @@ public:
 
     // Must be thread-safe
     void SendMessage(protocol::Message* message);
+    void SendAuxBuffer(uint64_t id, std::span<const char> data);
 
 private:
     uint16_t func_id_;

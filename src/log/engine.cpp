@@ -124,6 +124,29 @@ void Engine::OnViewFinalized(const FinalizedView* finalized_view) {
 }
 
 namespace {
+
+static void SerializeLogEntry(Message* message, utils::AppendableBuffer* aux_buffer,
+                              uint64_t seqnum, std::span<const uint64_t> user_tags,
+                              std::span<const char> log_data,
+                              std::span<const char> aux_data) {
+    DCHECK(aux_buffer->empty());
+    *message = MessageHelper::NewSharedLogOpSucceeded(
+        SharedLogResultType::READ_OK, seqnum);
+    message->log_num_tags = gsl::narrow_cast<uint16_t>(user_tags.size());
+    message->log_aux_data_size = gsl::narrow_cast<uint16_t>(aux_data.size());
+    size_t full_size = user_tags.size() * sizeof(uint64_t) + log_data.size() + aux_data.size();
+    if (full_size <= MESSAGE_INLINE_DATA_SIZE) {
+        MessageHelper::AppendInlineData(message, user_tags);
+        MessageHelper::AppendInlineData(message, log_data);
+        MessageHelper::AppendInlineData(message, aux_data);
+    } else {
+        aux_buffer->AppendData(VECTOR_AS_CHAR_SPAN(user_tags));
+        aux_buffer->AppendData(log_data);
+        aux_buffer->AppendData(aux_data);
+    }
+}
+
+/*
 static Message BuildLocalReadOKResponse(uint64_t seqnum,
                                         std::span<const uint64_t> user_tags,
                                         std::span<const char> log_data) {
@@ -145,6 +168,8 @@ static Message BuildLocalReadOKResponse(const LogEntry& log_entry) {
         VECTOR_AS_SPAN(log_entry.user_tags),
         STRING_AS_SPAN(log_entry.data));
 }
+*/
+
 }  // namespace
 
 // Start handlers for local requests (from functions)
@@ -397,11 +422,21 @@ void Engine::OnRecvResponse(const SharedLogMessage& message,
             std::span<const char> log_data;
             std::span<const char> aux_data;
             log_utils::SplitPayloadForMessage(message, payload, &user_tags, &log_data, &aux_data);
+            Message response;
+            utils::AppendableBuffer aux_buffer;
+            SerializeLogEntry(&response, &aux_buffer, seqnum, user_tags, log_data, aux_data);
+            if (!aux_buffer.empty()) {
+                uint64_t buf_id = NextAuxBufferId();
+                MessageHelper::FillAuxBufferId(&response, buf_id);
+                SendFuncWorkerAuxBuffer(op->client_id, buf_id, aux_buffer.to_span());
+            }
+/*
             Message response = BuildLocalReadOKResponse(seqnum, user_tags, log_data);
             if (aux_data.size() > 0) {
                 response.log_aux_data_size = gsl::narrow_cast<uint16_t>(aux_data.size());
                 MessageHelper::AppendInlineData(&response, aux_data);
             }
+*/
             FinishLocalOpWithResponse(op, &response, message.user_metalog_progress);
             // Put the received log entry into log cache
             LogMetaData log_metadata = log_utils::GetMetaDataFromMessage(message);
@@ -453,6 +488,7 @@ void Engine::ProcessIndexFoundResult(const IndexQueryResult& query_result) {
         std::optional<std::string> cached_aux_data = LogCacheGetAuxData(seqnum);
         std::span<const char> aux_data;
         if (cached_aux_data.has_value()) {
+/*
             size_t full_size = log_entry.data.size()
                              + log_entry.user_tags.size() * sizeof(uint64_t)
                              + cached_aux_data->size();
@@ -465,12 +501,27 @@ void Engine::ProcessIndexFoundResult(const IndexQueryResult& query_result) {
                        bits::HexStr0x(seqnum), log_entry.data.size(),
                        log_entry.user_tags.size(), cached_aux_data->size());
             }
+*/
+            aux_data = STRING_AS_SPAN(*cached_aux_data);
         }
         if (local_request) {
             LocalOp* op = onging_reads_.PollChecked(query.client_data);
+            Message response;
+            utils::AppendableBuffer aux_buffer;
+            SerializeLogEntry(
+                &response, &aux_buffer,
+                seqnum, VECTOR_AS_SPAN(log_entry.user_tags),
+                STRING_AS_SPAN(log_entry.data), aux_data);
+            if (!aux_buffer.empty()) {
+                uint64_t buf_id = NextAuxBufferId();
+                MessageHelper::FillAuxBufferId(&response, buf_id);
+                SendFuncWorkerAuxBuffer(op->client_id, buf_id, aux_buffer.to_span());
+            }
+/*
             Message response = BuildLocalReadOKResponse(log_entry);
             response.log_aux_data_size = gsl::narrow_cast<uint16_t>(aux_data.size());
             MessageHelper::AppendInlineData(&response, aux_data);
+*/
             FinishLocalOpWithResponse(op, &response, query_result.metalog_progress);
         } else {
             HVLOG_F(1, "Send read response for log (seqnum {})", bits::HexStr0x(seqnum));

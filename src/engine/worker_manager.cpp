@@ -150,5 +150,9 @@ void FuncWorker::SendMessage(Message* message) {
     message_connection_->as_ptr<MessageConnection>()->WriteMessage(*message);
 }
 
+void FuncWorker::SendAuxBuffer(uint64_t id, std::span<const char> data) {
+    message_connection_->as_ptr<MessageConnection>()->WriteAuxBuffer(id, data);
+}
+
 }  // namespace engine
 }  // namespace faas

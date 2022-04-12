@@ -87,10 +87,13 @@ const MessageInlineDataSize = MessageFullByteSize - MessageHeaderByteSize
 
 const SharedLogTagByteSize = 8
 
+const InvalidAuxBufferId = uint64(0xffffffffffffffff)
+
 const (
 	FLAG_FuncWorkerUseEngineSocket uint32 = (1 << 0)
 	FLAG_UseFifoForNestedCall      uint32 = (1 << 1)
-	FLAG_kAsyncInvokeFuncFlag      uint32 = (1 << 2)
+	FLAG_kAsyncInvokeFunc          uint32 = (1 << 2)
+	FLAG_kUseAuxBuffer             uint32 = (1 << 3)
 )
 
 func GetFlagsFromMessage(buffer []byte) uint32 {
@@ -129,6 +132,14 @@ func GetLogAuxDataSizeFromMessage(buffer []byte) int {
 
 func GetLogClientDataFromMessage(buffer []byte) uint64 {
 	return binary.LittleEndian.Uint64(buffer[48:56])
+}
+
+func GetAuxBufferIdFromMessage(buffer []byte) uint64 {
+	flags := GetFlagsFromMessage(buffer)
+	if (flags & FLAG_kUseAuxBuffer) == 0 {
+		return InvalidAuxBufferId
+	}
+	return binary.LittleEndian.Uint64(buffer[MessageHeaderByteSize : MessageHeaderByteSize+8])
 }
 
 func getMessageType(buffer []byte) uint16 {
@@ -179,7 +190,7 @@ func NewInvokeFuncCallMessage(funcCall FuncCall, parentCallId uint64, async bool
 	binary.LittleEndian.PutUint64(buffer[0:8], tmp)
 	binary.LittleEndian.PutUint64(buffer[8:16], parentCallId)
 	if async {
-		binary.LittleEndian.PutUint32(buffer[28:32], FLAG_kAsyncInvokeFuncFlag)
+		binary.LittleEndian.PutUint32(buffer[28:32], FLAG_kAsyncInvokeFunc)
 	}
 	return buffer
 }
@@ -264,6 +275,14 @@ func SetPayloadSizeInMessage(buffer []byte, payloadSize int32) {
 func FillInlineDataInMessage(buffer []byte, data []byte) {
 	n := copy(buffer[MessageHeaderByteSize:], data)
 	SetPayloadSizeInMessage(buffer, int32(n))
+}
+
+func FillAuxBufferDataInfo(buffer []byte, auxBufId uint64) {
+	flags := binary.LittleEndian.Uint32(buffer[28:32])
+	flags = flags | FLAG_kUseAuxBuffer
+	binary.LittleEndian.PutUint32(buffer[28:32], flags)
+	SetPayloadSizeInMessage(buffer, 0)
+	binary.LittleEndian.PutUint64(buffer[MessageHeaderByteSize:MessageHeaderByteSize+8], auxBufId)
 }
 
 func GetInlineDataFromMessage(buffer []byte) []byte {

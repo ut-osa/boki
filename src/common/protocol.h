@@ -120,10 +120,12 @@ enum class SharedLogResultType : uint16_t {
 constexpr uint64_t kInvalidLogTag     = std::numeric_limits<uint64_t>::max();
 constexpr uint64_t kInvalidLogLocalId = std::numeric_limits<uint64_t>::max();
 constexpr uint64_t kInvalidLogSeqNum  = std::numeric_limits<uint64_t>::max();
+constexpr uint64_t kInvalidAuxBufId   = std::numeric_limits<uint64_t>::max();
 
 constexpr uint32_t kFuncWorkerUseEngineSocketFlag = (1 << 0);
 constexpr uint32_t kUseFifoForNestedCallFlag      = (1 << 1);
 constexpr uint32_t kAsyncInvokeFuncFlag           = (1 << 2);
+constexpr uint32_t kUseAuxBufferFlag              = (1 << 3);
 
 struct Message {
     struct {
@@ -199,6 +201,22 @@ inline std::string EncodeHandshakeMessage(ConnType type, uint16_t src_node_id = 
     };
     return std::string(reinterpret_cast<const char*>(&message),
                        sizeof(HandshakeMessage));
+}
+
+struct AuxBufferHeader {
+    uint64_t id;
+    uint64_t size;
+} __attribute__ ((packed));
+
+static_assert(sizeof(AuxBufferHeader) == 16, "Unexpected AuxBufferHeader size");
+
+inline std::string EncodeAuxBufferHeader(uint64_t id, size_t size) {
+    AuxBufferHeader message = {
+        .id = id,
+        .size = static_cast<uint64_t>(size), 
+    };
+    return std::string(reinterpret_cast<const char*>(&message),
+                       sizeof(AuxBufferHeader));
 }
 
 struct GatewayMessage {
@@ -475,6 +493,21 @@ public:
     }
 
 #undef NEW_EMPTY_MESSAGE
+
+    static uint64_t GetAuxBufferId(const Message& message) {
+        if ((message.flags & kUseAuxBufferFlag) == 0) {
+            return kInvalidAuxBufId;
+        }
+        uint64_t id;
+        memcpy(&id, message.inline_data, sizeof(uint64_t));
+        return id;
+    }
+
+    static void FillAuxBufferId(Message* message, uint64_t buf_id) {
+        DCHECK_EQ(message->payload_size, 0);
+        message->flags |= kUseAuxBufferFlag;
+        memcpy(message->inline_data, &buf_id, sizeof(uint64_t));
+    }
 
 private:
     DISALLOW_IMPLICIT_CONSTRUCTORS(MessageHelper);

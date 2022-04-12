@@ -13,6 +13,7 @@ namespace engine {
 
 using protocol::Message;
 using protocol::MessageHelper;
+using protocol::AuxBufferHeader;
 
 MessageConnection::MessageConnection(Engine* engine, int sockfd)
     : server::ConnectionBase(kMessageConnectionTypeId),
@@ -141,6 +142,54 @@ void MessageConnection::SendPendingMessages() {
     }
 }
 
+namespace {
+static std::span<const char> CopyToBuffer(std::span<char> buf,
+                                          std::span<const char> data) {
+    DCHECK_LE(data.size(), buf.size());
+    memcpy(buf.data(), data.data(), data.size());
+    return std::span<const char>(buf.data(), data.size());
+}
+}  // namespace
+
+void MessageConnection::SendAuxBufferData() {
+    DCHECK(is_func_worker_connection());
+    DCHECK(!engine_->func_worker_use_engine_socket());
+    DCHECK(io_worker_->WithinMyEventLoopThread());
+    if (state_ == kHandshake) {
+        return;
+    }
+    if (state_ != kRunning) {
+        HLOG(WARNING) << "MessageConnection is closing or has closed, "
+                         "will not send pending data in auxiliary buffer";
+        return;
+    }
+    utils::AppendableBuffer buffer_to_send;
+    {
+        absl::MutexLock lk(&aux_data_mu_);
+        buffer_to_send.Swap(aux_data_buffer_);
+    }
+    if (buffer_to_send.empty()) {
+        return;
+    }
+    while (!buffer_to_send.empty()) {
+        std::span<char> buf;
+        io_worker_->NewWriteBuffer(&buf);
+        size_t copy_size = std::min(buf.size(), buffer_to_send.length());
+        std::span<const char> data(buffer_to_send.data(), copy_size);
+        URING_DCHECK_OK(current_io_uring()->SendAll(
+            *sockfd_, CopyToBuffer(buf, data),
+            [this, buf] (int status) {
+                io_worker_->ReturnWriteBuffer(buf);
+                if (status != 0) {
+                    HPLOG(ERROR) << "Failed to send data, will close this connection";
+                    ScheduleClose();
+                }
+            }
+        ));
+        buffer_to_send.ConsumeFront(copy_size);
+    }
+}
+
 void MessageConnection::OnFdClosed() {
     DCHECK(state_ == kClosing);
     if (    !sockfd_.has_value()
@@ -232,6 +281,28 @@ void MessageConnection::WriteMessage(const Message& message) {
         this, absl::bind_front(&MessageConnection::SendPendingMessages, this));
 }
 
+void MessageConnection::WriteAuxBuffer(uint64_t id, std::span<const char> data) {
+    DCHECK(is_func_worker_connection());
+    if (engine_->func_worker_use_engine_socket()) {
+        LOG(FATAL) << "Must not call WriteAuxBuffer "
+                   << "when func_worker_use_engine_socket flag is set";
+    }
+    bool need_schedule_fn = false;
+    {
+        absl::MutexLock lk(&aux_data_mu_);
+        if (aux_data_buffer_.empty()) {
+            need_schedule_fn = true;
+        }
+        std::string hdr = protocol::EncodeAuxBufferHeader(id, data.size());
+        aux_data_buffer_.AppendData(STRING_AS_SPAN(hdr));
+        aux_data_buffer_.AppendData(data);
+    }
+    if (need_schedule_fn) {
+        io_worker_->ScheduleFunction(
+            this, absl::bind_front(&MessageConnection::SendAuxBufferData, this));
+    }
+}
+
 bool MessageConnection::OnRecvSockData(int status, std::span<const char> data) {
     if (status != 0) {
         HPLOG(ERROR) << "Read error, will close this connection";
@@ -243,7 +314,19 @@ bool MessageConnection::OnRecvSockData(int status, std::span<const char> data) {
         ScheduleClose();
         return false;
     }
-    HLOG(WARNING) << "Unexpected data from socket: size=" << data.size();
+    received_aux_data_.AppendData(data);
+    if (received_aux_data_.length() < sizeof(AuxBufferHeader)) {
+        return true;
+    }
+    const AuxBufferHeader* hdr = reinterpret_cast<const AuxBufferHeader*>(
+        received_aux_data_.data());
+    if (received_aux_data_.length() >= sizeof(AuxBufferHeader) + hdr->size) {
+        std::span<const char> data(
+            received_aux_data_.data() + sizeof(AuxBufferHeader),
+            hdr->size);
+        engine_->OnRecvAuxBuffer(this, hdr->id, data);
+        received_aux_data_.ConsumeFront(sizeof(AuxBufferHeader) + hdr->size);
+    }
     return true;
 }
 

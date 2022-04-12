@@ -281,6 +281,7 @@ void Storage::SendEngineLogResult(const protocol::SharedLogMessage& request,
     std::optional<std::string> cached_aux_data = LogCacheGetAuxData(seqnum);
     std::span<const char> aux_data;
     if (cached_aux_data.has_value()) {
+/*
         size_t full_size = log_data.size() + tags_data.size() + cached_aux_data->size();
         if (full_size <= MESSAGE_INLINE_DATA_SIZE) {
             aux_data = STRING_AS_SPAN(*cached_aux_data);
@@ -292,6 +293,8 @@ void Storage::SendEngineLogResult(const protocol::SharedLogMessage& request,
                    tags_data.size() / sizeof(uint64_t),
                    cached_aux_data->size());
         }
+*/
+        aux_data = STRING_AS_SPAN(*cached_aux_data);
     }
     response->aux_data_size = gsl::narrow_cast<uint16_t>(aux_data.size());
     SendEngineResponse(request, response, tags_data, log_data, aux_data);

@@ -8,11 +8,11 @@ import (
 	"log"
 	"net"
 	"os"
-	"time"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	common "cs.utexas.edu/zjia/faas/common"
 	config "cs.utexas.edu/zjia/faas/config"
@@ -22,6 +22,11 @@ import (
 )
 
 const PIPE_BUF = 4096
+
+type AuxBuffer struct {
+	id   uint64
+	data []byte
+}
 
 type FuncWorker struct {
 	funcId               uint16
@@ -45,6 +50,10 @@ type FuncWorker struct {
 	nextUidLowHalf       uint32
 	sharedLogReadCount   int32
 	mux                  sync.Mutex
+
+	auxBufSendChan  chan *AuxBuffer
+	auxBufRecvChans map[uint64](chan *AuxBuffer) // protected by auxBufMux
+	auxBufMux       sync.Mutex
 }
 
 func NewFuncWorker(funcId uint16, clientId uint16, factory types.FuncHandlerFactory) (*FuncWorker, error) {
@@ -68,6 +77,8 @@ func NewFuncWorker(funcId uint16, clientId uint16, factory types.FuncHandlerFact
 		currentCall:          0,
 		uidHighHalf:          uidHighHalf,
 		nextUidLowHalf:       0,
+		auxBufSendChan:       make(chan *AuxBuffer, 64),
+		auxBufRecvChans:      make(map[uint64](chan *AuxBuffer)),
 	}
 	return w, nil
 }
@@ -79,6 +90,9 @@ func (w *FuncWorker) Run() {
 		log.Fatalf("[FATAL] Handshake failed: %v", err)
 	}
 	log.Printf("[INFO] Handshake with engine done")
+
+	go w.auxBufferSender()
+	go w.auxBufferReceiver()
 
 	go w.servingLoop()
 	for {
@@ -548,9 +562,9 @@ func (w *FuncWorker) SharedLogAppend(ctx context.Context, tags []uint64, data []
 	if err != nil {
 		return 0, err
 	}
-	if len(data)+len(tags)*protocol.SharedLogTagByteSize > protocol.MessageInlineDataSize {
-		return 0, fmt.Errorf("Data too larger (size=%d, num_tags=%d), expect no more than %d bytes", len(data), len(tags), protocol.MessageInlineDataSize)
-	}
+	// if len(data)+len(tags)*protocol.SharedLogTagByteSize > protocol.MessageInlineDataSize {
+	// return 0, fmt.Errorf("Data too larger (size=%d, num_tags=%d), expect no more than %d bytes", len(data), len(tags), protocol.MessageInlineDataSize)
+	// }
 
 	sleepDuration := 5 * time.Millisecond
 	remainingRetries := 4
@@ -559,11 +573,25 @@ func (w *FuncWorker) SharedLogAppend(ctx context.Context, tags []uint64, data []
 		id := atomic.AddUint64(&w.nextLogOpId, 1)
 		currentCallId := atomic.LoadUint64(&w.currentCall)
 		message := protocol.NewSharedLogAppendMessage(currentCallId, w.clientId, uint16(len(tags)), id)
+
+		var encodedData []byte
 		if len(tags) == 0 {
-			protocol.FillInlineDataInMessage(message, data)
+			encodedData = data
 		} else {
 			tagBuffer := protocol.BuildLogTagsBuffer(tags)
-			protocol.FillInlineDataInMessage(message, bytes.Join([][]byte{tagBuffer, data}, nil /* sep */))
+			encodedData = bytes.Join([][]byte{tagBuffer, data}, nil /* sep */)
+		}
+
+		if len(encodedData) <= protocol.MessageInlineDataSize {
+			protocol.FillInlineDataInMessage(message, encodedData)
+		} else {
+			auxBuf := &AuxBuffer{
+				id:   w.GenerateUniqueID(),
+				data: encodedData,
+			}
+			// log.Printf("[DEBUG] Send aux buffer with ID %#016x", auxBuf.id)
+			w.auxBufSendChan <- auxBuf
+			protocol.FillAuxBufferDataInfo(message, auxBuf.id)
 		}
 
 		w.mux.Lock()
@@ -595,14 +623,25 @@ func (w *FuncWorker) SharedLogAppend(ctx context.Context, tags []uint64, data []
 	}
 }
 
-func buildLogEntryFromReadResponse(response []byte) *types.LogEntry {
+func (w *FuncWorker) buildLogEntryFromReadResponse(response []byte) *types.LogEntry {
 	seqNum := protocol.GetLogSeqNumFromMessage(response)
 	numTags := protocol.GetLogNumTagsFromMessage(response)
 	auxDataSize := protocol.GetLogAuxDataSizeFromMessage(response)
-	responseData := protocol.GetInlineDataFromMessage(response)
-	logDataSize := len(responseData) - numTags*protocol.SharedLogTagByteSize - auxDataSize
+
+	var encodedData []byte
+	auxBufId := protocol.GetAuxBufferIdFromMessage(response)
+	if auxBufId == protocol.InvalidAuxBufferId {
+		encodedData = protocol.GetInlineDataFromMessage(response)
+	} else {
+		ch := w.getAuxBufferChan(auxBufId)
+		// log.Printf("[DEBUG] Waiting aux buffer with ID %#016x", auxBufId)
+		auxBuf := <-ch
+		encodedData = auxBuf.data
+	}
+
+	logDataSize := len(encodedData) - numTags*protocol.SharedLogTagByteSize - auxDataSize
 	if logDataSize <= 0 {
-		log.Fatalf("[FATAL] Size of inline data too smaler: size=%d, num_tags=%d, aux_data=%d", len(responseData), numTags, auxDataSize)
+		log.Fatalf("[FATAL] Size of inline data too smaler: size=%d, num_tags=%d, aux_data=%d", len(encodedData), numTags, auxDataSize)
 	}
 	tags := make([]uint64, numTags)
 	for i := 0; i < numTags; i++ {
@@ -612,8 +651,8 @@ func buildLogEntryFromReadResponse(response []byte) *types.LogEntry {
 	return &types.LogEntry{
 		SeqNum:  seqNum,
 		Tags:    tags,
-		Data:    responseData[logDataStart : logDataStart+logDataSize],
-		AuxData: responseData[logDataStart+logDataSize:],
+		Data:    encodedData[logDataStart : logDataStart+logDataSize],
+		AuxData: encodedData[logDataStart+logDataSize:],
 	}
 }
 
@@ -640,7 +679,7 @@ func (w *FuncWorker) sharedLogReadCommon(ctx context.Context, message []byte, op
 	}
 	result := protocol.GetSharedLogResultTypeFromMessage(response)
 	if result == protocol.SharedLogResultType_READ_OK {
-		return buildLogEntryFromReadResponse(response), nil
+		return w.buildLogEntryFromReadResponse(response), nil
 	} else if result == protocol.SharedLogResultType_EMPTY {
 		return nil, nil
 	} else {
@@ -688,14 +727,25 @@ func (w *FuncWorker) SharedLogSetAuxData(ctx context.Context, seqNum uint64, aux
 	if len(auxData) == 0 {
 		return fmt.Errorf("Auxiliary data cannot be empty")
 	}
-	if len(auxData) > protocol.MessageInlineDataSize {
-		return fmt.Errorf("Auxiliary data too larger (size=%d), expect no more than %d bytes", len(auxData), protocol.MessageInlineDataSize)
-	}
+	// if len(auxData) > protocol.MessageInlineDataSize {
+	// 	return fmt.Errorf("Auxiliary data too larger (size=%d), expect no more than %d bytes", len(auxData), protocol.MessageInlineDataSize)
+	// }
 
 	id := atomic.AddUint64(&w.nextLogOpId, 1)
 	currentCallId := atomic.LoadUint64(&w.currentCall)
 	message := protocol.NewSharedLogSetAuxDataMessage(currentCallId, w.clientId, seqNum, id)
-	protocol.FillInlineDataInMessage(message, auxData)
+
+	if len(auxData) <= protocol.MessageInlineDataSize {
+		protocol.FillInlineDataInMessage(message, auxData)
+	} else {
+		auxBuf := &AuxBuffer{
+			id:   w.GenerateUniqueID(),
+			data: auxData,
+		}
+		// log.Printf("[DEBUG] Send aux buffer with ID %#016x", auxBuf.id)
+		w.auxBufSendChan <- auxBuf
+		protocol.FillAuxBufferDataInfo(message, auxBuf.id)
+	}
 
 	w.mux.Lock()
 	outputChan := make(chan []byte, 1)

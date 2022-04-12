@@ -30,6 +30,7 @@ public:
 
     // Must be thread-safe
     void WriteMessage(const protocol::Message& message);
+    void WriteAuxBuffer(uint64_t id, std::span<const char> data);
 
 private:
     enum State { kCreated, kHandshake, kRunning, kClosing, kClosed };
@@ -52,12 +53,18 @@ private:
     protocol::Message handshake_response_;
     utils::AppendableBuffer write_message_buffer_;
 
+    absl::Mutex aux_data_mu_;
+    utils::AppendableBuffer aux_data_buffer_ ABSL_GUARDED_BY(aux_data_mu_);
+
+    utils::AppendableBuffer received_aux_data_;
+
     absl::Mutex write_message_mu_;
     absl::InlinedVector<protocol::Message, 16>
         pending_messages_ ABSL_GUARDED_BY(write_message_mu_);
 
     void RecvHandshakeMessage();
     void SendPendingMessages();
+    void SendAuxBufferData();
     bool OnRecvSockData(int status, std::span<const char> data);
     bool OnRecvData(int status, std::span<const char> data);
     void OnFdClosed();
