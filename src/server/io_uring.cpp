@@ -618,7 +618,7 @@ void IOUring::HandleSendallOpComplete(Op* op, int res, Op** next_op) {
     sendall_cbs_.erase(op->id);
     if (res >= 0) {
         size_t nwrite = gsl::narrow_cast<size_t>(res);
-        if (nwrite == op->buf_len) {
+        if (nwrite == op->data_len) {
             if (op->root_op == kInvalidOpId) {
                 cb(0);
                 if (op->desc->last_send_op == op) {
@@ -630,7 +630,7 @@ void IOUring::HandleSendallOpComplete(Op* op, int res, Op** next_op) {
                 sendall_cbs_[op->next_op].swap(cb);
             }
         } else {
-            std::span<const char> remaining_data(op->buf + nwrite, op->buf_len - nwrite);
+            std::span<const char> remaining_data(op->data + nwrite, op->data_len - nwrite);
             Op* new_op = AllocSendAllOp(op->desc, remaining_data);
             new_op->root_op = op->root_op;
             new_op->next_op = op->next_op;
