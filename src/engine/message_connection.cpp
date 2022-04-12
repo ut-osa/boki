@@ -224,11 +224,6 @@ void MessageConnection::RecvHandshakeMessage() {
 }
 
 void MessageConnection::WriteMessage(const Message& message) {
-    if (is_func_worker_connection()
-            && absl::GetFlag(FLAGS_func_worker_pipe_direct_write)
-            && WriteMessageWithFifo(message)) {
-        return;
-    }
     {
         absl::MutexLock lk(&write_message_mu_);
         pending_messages_.push_back(message);
