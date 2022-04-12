@@ -58,7 +58,8 @@ Engine::Engine(uint16_t node_id)
       input_use_shm_stat_(stat::Counter::StandardReportCallback("input_use_shm"), "engine"),
       output_use_shm_stat_(stat::Counter::StandardReportCallback("output_use_shm"), "engine"),
       discarded_func_call_stat_(stat::Counter::StandardReportCallback(
-          "discarded_func_call"), "engine") {}
+          "discarded_func_call"), "engine"),
+      next_aux_buffer_id_(0) {}
 
 Engine::~Engine() {}
 
@@ -530,6 +531,30 @@ void Engine::OnRecvMessage(MessageConnection* connection, const Message& message
     ProcessDiscardedFuncCallIfNecessary();
 }
 
+void Engine::OnRecvAuxBuffer(MessageConnection* connection,
+                             uint64_t id, std::span<const char> data) {
+    VLOG_F(1, "Receive aux buffer (ID {})", bits::HexStr0x(id));
+    {
+        absl::MutexLock lk(&aux_buf_mu_);
+        if (aux_bufs_.contains(id)) {
+            LOG(FATAL) << "Duplicated aux buffer ID";
+        }
+        aux_bufs_[id] = std::string(data.data(), data.size());
+    }
+    shared_log_engine_->OnAuxBufferFromFuncWorker(id);
+}
+
+std::optional<std::string> Engine::GrabAuxBuffer(uint64_t id) {
+    absl::MutexLock lk(&aux_buf_mu_);
+    if (aux_bufs_.contains(id)) {
+        std::string data = std::move(aux_bufs_[id]);
+        aux_bufs_.erase(id);
+        return data;
+    } else {
+        return std::nullopt;
+    }
+}
+
 void Engine::SendGatewayMessage(const GatewayMessage& message, std::span<const char> payload) {
     EgressHub* hub = CurrentIOWorkerChecked()->PickConnectionAs<EgressHub>(
         kGatewayEgressHubTypeId);
@@ -546,6 +571,16 @@ bool Engine::SendFuncWorkerMessage(uint16_t client_id, Message* message) {
         return false;
     }
     func_worker->SendMessage(message);
+    return true;
+}
+
+bool Engine::SendFuncWorkerAuxBuffer(uint16_t client_id,
+                                     uint64_t buf_id, std::span<const char> data) {
+    auto func_worker = worker_manager_.GetFuncWorker(client_id);
+    if (func_worker == nullptr) {
+        return false;
+    }
+    func_worker->SendAuxBuffer(buf_id, data);
     return true;
 }
 
