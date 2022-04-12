@@ -2,6 +2,7 @@
 
 #include "base/init.h"
 #include "common/time.h"
+#include "utils/bits.h"
 
 ABSL_FLAG(size_t, io_uring_entries, 2048, "");
 ABSL_FLAG(size_t, io_uring_fd_slots, 1024, "");
@@ -35,6 +36,17 @@ IOUring::IOUring()
           fmt::format("io_uring[{}] ev_loop_time", uring_id_))),
       average_op_time_stat_(stat::StatisticsCollector<int>::VerboseLogReportCallback<2>(
           fmt::format("io_uring[{}] average_op_time", uring_id_))) {
+    SetupUring();
+    SetupFdSlots();
+    base::ChainCleanupFn(absl::bind_front(&IOUring::CleanUpFn, this));
+}
+
+IOUring::~IOUring() {
+    CHECK(ops_.empty()) << "There are still inflight Ops";
+    io_uring_queue_exit(&ring_);
+}
+
+void IOUring::SetupUring() {
     struct io_uring_params params;
     memset(&params, 0, sizeof(params));
     if (absl::GetFlag(FLAGS_io_uring_sqpoll)) {
@@ -59,11 +71,15 @@ IOUring::IOUring()
         CHECK_EQ(absl::GetFlag(FLAGS_io_uring_cq_nr_wait), 1U)
             << "io_uring_cq_nr_wait should be set to 1 if timeout is 0";
     }
+}
+
+void IOUring::SetupFdSlots() {
     size_t n_fd_slots = absl::GetFlag(FLAGS_io_uring_fd_slots);
     CHECK_GT(n_fd_slots, 0U);
     std::vector<int> tmp;
     tmp.resize(n_fd_slots, -1);
-    ret = io_uring_register_files(&ring_, tmp.data(), gsl::narrow_cast<uint32_t>(n_fd_slots));
+    int ret = io_uring_register_files(
+        &ring_, tmp.data(), gsl::narrow_cast<uint32_t>(n_fd_slots));
     if (ret != 0) {
         LOG(FATAL) << "io_uring_register_files failed: " << ERRNO_LOGSTR(-ret);
     }
@@ -75,12 +91,6 @@ IOUring::IOUring()
         free_fd_slots_.push_back(i);
     }
     absl::c_reverse(free_fd_slots_);
-    base::ChainCleanupFn(absl::bind_front(&IOUring::CleanUpFn, this));
-}
-
-IOUring::~IOUring() {
-    CHECK(ops_.empty()) << "There are still inflight Ops";
-    io_uring_queue_exit(&ring_);
 }
 
 void IOUring::CleanUpFn() {
@@ -109,6 +119,10 @@ bool IOUring::RegisterFd(int fd) {
         HLOG_F(ERROR, "fd {} already registered", fd);
         return false;
     }
+    FileDescriptorType fd_type = FileDescriptorUtils::InferType(fd);
+    if (fd_type == FileDescriptorType::kInvalid) {
+        LOG(FATAL) << "Failed to infer type for fd " << fd;
+    }
     if (free_fd_slots_.empty()) {
         LOG(FATAL) << "No more fd slot, consider setting larger --io_uring_fd_slots";
     }
@@ -120,9 +134,12 @@ bool IOUring::RegisterFd(int fd) {
         LOG(FATAL) << "io_uring_register_files_update failed: " << ERRNO_LOGSTR(-ret);
     }
     fd_indices_[fd] = index;
-    HLOG_F(INFO, "register fd {}, {} registered fds in total", fd, fd_indices_.size());
+    HLOG_F(INFO, "register fd {} (type {}), {} registered fds in total",
+           fd, FileDescriptorUtils::TypeString(fd_type),
+           fd_indices_.size());
     Descriptor* desc = &fds_[index];
     desc->fd = fd;
+    desc->fd_type = fd_type;
     desc->index = index;
     desc->op_count = 0;
     desc->active_read_op = nullptr;
@@ -145,6 +162,8 @@ bool IOUring::RegisterFd(int fd) {
 
 bool IOUring::Connect(int fd, const struct sockaddr* addr, size_t addrlen, ConnectCallback cb) {
     GET_AND_CHECK_DESC(fd, desc);
+    DCHECK(FileDescriptorUtils::IsSocketType(desc->fd_type))
+        << "Connect only applies to socket fds";
     Op* op = AllocConnectOp(desc, addr, addrlen);
     connect_cbs_[op->id] = cb;
     EnqueueOp(op);
@@ -153,6 +172,10 @@ bool IOUring::Connect(int fd, const struct sockaddr* addr, size_t addrlen, Conne
 
 bool IOUring::StartReadInternal(int fd, uint16_t buf_gid, uint16_t flags, ReadCallback cb) {
     GET_AND_CHECK_DESC(fd, desc);
+    if ((flags & kOpFlagUseRecv) != 0) {
+        DCHECK(FileDescriptorUtils::IsSocketType(desc->fd_type))
+            << "Recv only applies to socket fds";
+    }
     if (desc->active_read_op != nullptr) {
         HLOG_F(ERROR, "fd {} already registered read callback", fd);
         return false;
@@ -207,6 +230,8 @@ bool IOUring::SendAll(int fd, std::span<const char> data, SendAllCallback cb) {
         return false;
     }
     GET_AND_CHECK_DESC(fd, desc);
+    DCHECK(FileDescriptorUtils::IsSocketType(desc->fd_type))
+        << "Send only applies to socket fds";
     Op* op = AllocSendAllOp(desc, data);
     sendall_cbs_[op->id] = cb;
     if (desc->last_send_op != nullptr) {
@@ -224,6 +249,8 @@ bool IOUring::SendAll(int fd, std::span<const char> data, SendAllCallback cb) {
 bool IOUring::SendAll(int fd, const std::vector<std::span<const char>>& data_vec,
                       SendAllCallback cb) {
     GET_AND_CHECK_DESC(fd, desc);
+    DCHECK(FileDescriptorUtils::IsSocketType(desc->fd_type))
+        << "Send only applies to socket fds";
     Op* first_op = nullptr;
     Op* last_op = desc->last_send_op;
     for (std::span<const char> data : data_vec) {
@@ -361,7 +388,7 @@ IOUring::Op* IOUring::AllocConnectOp(Descriptor* desc,
     ALLOC_OP(kConnect, op);
     op->desc = desc;
     op->addr = addr;
-    op->addrlen = addrlen;
+    op->addrlen = gsl::narrow_cast<uint32_t>(addrlen);
     desc->op_count++;
     return op;
 }
@@ -373,7 +400,8 @@ IOUring::Op* IOUring::AllocReadOp(Descriptor* desc, uint16_t buf_gid, std::span<
     op->buf_gid = buf_gid;
     op->flags = flags;
     op->buf = buf.data();
-    op->buf_len = buf.size();
+    DCHECK_EQ(bits::HighHalf64(buf.size()), 0U);
+    op->buf_len = bits::LowHalf64(buf.size());
     desc->op_count++;
     return op;
 }
@@ -382,7 +410,8 @@ IOUring::Op* IOUring::AllocWriteOp(Descriptor* desc, std::span<const char> data)
     ALLOC_OP(kWrite, op);
     op->desc = desc;
     op->data = data.data();
-    op->data_len = data.size();
+    DCHECK_EQ(bits::HighHalf64(data.size()), 0U);
+    op->data_len = bits::LowHalf64(data.size());
     desc->op_count++;
     return op;
 }
@@ -391,7 +420,8 @@ IOUring::Op* IOUring::AllocSendAllOp(Descriptor* desc, std::span<const char> dat
     ALLOC_OP(kSendAll, op);
     op->desc = desc;
     op->data = data.data();
-    op->data_len = data.size();
+    DCHECK_EQ(bits::HighHalf64(data.size()), 0U);
+    op->data_len = bits::LowHalf64(data.size());
     desc->op_count++;
     return op;
 }
@@ -428,36 +458,36 @@ void IOUring::UnregisterFd(Descriptor* desc) {
     HLOG_F(INFO, "unregister fd {}, {} registered fds in total", fd, fd_indices_.size());
 }
 
-#ifdef __CLANG_CONVERSION_DIAGNOSTIC_ENABLED
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wshorten-64-to-32"
-#endif
-
 void IOUring::EnqueueOp(Op* op) {
     VLOG_F(2, "EnqueueOp: id={}, type={}, fd={}",
            (op->id >> 8), kOpTypeStr[op_type(op)], op_fd(op));
     struct io_uring_sqe* sqe = io_uring_get_sqe(&ring_);
+    unsigned flags = 0;
     switch (op_type(op)) {
     case kConnect:
         io_uring_prep_connect(sqe, op_fd_idx(op), op->addr, op->addrlen);
-        io_uring_sqe_set_flags(sqe, IOSQE_FIXED_FILE | IOSQE_ASYNC);
+        flags = IOSQE_FIXED_FILE;
         break;
     case kRead:
         DCHECK_NOTNULL(op->desc)->active_read_op = op;
+        flags = IOSQE_FIXED_FILE;
         if (op->flags & kOpFlagUseRecv) {
             io_uring_prep_recv(sqe, op_fd_idx(op), op->buf, op->buf_len, 0);
         } else {
             io_uring_prep_read(sqe, op_fd_idx(op), op->buf, op->buf_len, 0);
+            // A weird hack
+            if (op->desc->fd_type == FileDescriptorType::kFifo) {
+                flags |= IOSQE_ASYNC;
+            }
         }
-        io_uring_sqe_set_flags(sqe, IOSQE_FIXED_FILE | IOSQE_ASYNC);
         break;
     case kWrite:
         io_uring_prep_write(sqe, op_fd_idx(op), op->data, op->data_len, 0);
-        io_uring_sqe_set_flags(sqe, IOSQE_FIXED_FILE);
+        flags = IOSQE_FIXED_FILE;
         break;
     case kSendAll:
         io_uring_prep_send(sqe, op_fd_idx(op), op->data, op->data_len, 0);
-        io_uring_sqe_set_flags(sqe, IOSQE_FIXED_FILE);
+        flags = IOSQE_FIXED_FILE;
         break;
     case kClose:
         io_uring_prep_close(sqe, op->fd);
@@ -470,12 +500,11 @@ void IOUring::EnqueueOp(Op* op) {
     default:
         UNREACHABLE();
     }
+    if (flags != 0) {
+        io_uring_sqe_set_flags(sqe, flags);
+    }
     io_uring_sqe_set_data(sqe, reinterpret_cast<void*>(op->id));
 }
-
-#ifdef __CLANG_CONVERSION_DIAGNOSTIC_ENABLED
-#pragma clang diagnostic pop
-#endif
 
 void IOUring::OnOpComplete(Op* op, struct io_uring_cqe* cqe) {
     int res = cqe->res;

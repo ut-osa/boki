@@ -2,6 +2,7 @@
 
 #include "base/common.h"
 #include "common/stat.h"
+#include "common/fd_type.h"
 #include "utils/object_pool.h"
 #include "utils/buffer_pool.h"
 
@@ -57,6 +58,7 @@ private:
     struct Op;
     struct Descriptor {
         int fd;
+        FileDescriptorType fd_type;
         size_t index;
         size_t op_count;
         Op* active_read_op;
@@ -103,9 +105,9 @@ private:
             const struct sockaddr* addr;  // Used by kConnect
         };
         union {
-            size_t buf_len;   // Used by kRead
-            size_t data_len;  // Used by kWrite, kSendAll
-            size_t addrlen;   // Used by kConnect
+            uint32_t buf_len;   // Used by kRead
+            uint32_t data_len;  // Used by kWrite, kSendAll
+            uint32_t addrlen;   // Used by kConnect
         };
         uint64_t root_op;    // Used by kSendAll
         uint64_t next_op;    // Used by kSendAll, kCancel
@@ -138,8 +140,8 @@ private:
         }
         return -1;
     }
-    inline size_t op_fd_idx(const Op* op) {
-        return DCHECK_NOTNULL(op->desc)->index;
+    inline int op_fd_idx(const Op* op) {
+        return gsl::narrow_cast<int>(DCHECK_NOTNULL(op->desc)->index);
     }
 
     bool StartReadInternal(int fd, uint16_t buf_gid, uint16_t flags, ReadCallback cb);
@@ -161,6 +163,8 @@ private:
     void HandleSendallOpComplete(Op* op, int res, Op** next_op);
     void HandleCloseOpComplete(Op* op, int res);
 
+    void SetupUring();
+    void SetupFdSlots();
     void CleanUpFn();
 
     DISALLOW_COPY_AND_ASSIGN(IOUring);

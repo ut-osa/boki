@@ -13,6 +13,7 @@ bool MakeDirectory(std::string_view path);
 bool Remove(std::string_view path);
 bool RemoveDirectoryRecursively(std::string_view path);
 bool ReadContents(std::string_view path, std::string* contents);
+bool ReadLink(std::string_view path, std::string* contents);
 
 // Return fd on success
 std::optional<int> Open(std::string_view full_path, int flags);

@@ -82,6 +82,29 @@ bool ReadContents(std::string_view path, std::string* contents) {
     return true;
 }
 
+bool ReadLink(std::string_view path, std::string* contents) {
+    std::string buf;
+    buf.resize(128);
+    while (buf.size() < 4096) {
+        ssize_t ret = readlink(std::string(path).c_str(), buf.data(), buf.size());
+        if (ret < 0) {
+            PLOG_F(WARNING, "readlink failed for {}", path);
+            return false;
+        }
+        size_t nread = gsl::narrow_cast<size_t>(ret);
+        if (nread == 0) {
+            LOG_F(ERROR, "readlink returns empty for {}", path);
+            return false;
+        }
+        if (nread < buf.size()) {
+            contents->assign(buf.data(), nread);
+            return true;
+        }
+        buf.resize(buf.size() * 2);
+    }
+    return false;
+}
+
 std::optional<int> Open(std::string_view full_path, int flags) {
     int fd = open(std::string(full_path).c_str(), flags | O_CLOEXEC);
     if (fd == -1) {
