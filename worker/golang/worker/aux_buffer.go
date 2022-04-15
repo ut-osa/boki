@@ -7,6 +7,11 @@ import (
 	"log"
 )
 
+type AuxBuffer struct {
+	id   uint64
+	data []byte
+}
+
 const kAuxBufferHeaderSize = 16
 
 func encodeAuxBufferHeader(id uint64, size int) []byte {
