@@ -301,10 +301,23 @@ void HttpConnection::OnNewHttpRequest(std::string_view method, std::string_view 
         }
     }
 
+    std::set<uint16_t> node_constraint;
+    if (headers_.contains("x-faas-node-constraint")) {
+        for (auto node_id_str : absl::StrSplit(headers_.at("x-faas-node-constraint"), ",")) {
+            uint32_t tmp;
+            if (absl::SimpleAtoi(node_id_str, &tmp) && bits::HighHalf32(tmp) == 0) {
+                node_constraint.insert(bits::LowHalf32(tmp));
+            } else {
+                HLOG_F(ERROR, "Failed to parse node ID: {}", node_id_str);
+            }
+        }
+    }
+
     func_call_context_.Reset();
     func_call_context_.set_func_name(func_name);
     func_call_context_.set_async(async);
     func_call_context_.set_logspace(logspace);
+    func_call_context_.set_node_constraint(node_constraint);
     if (func_entry->qs_as_input) {
         if (body_buffer_.length() > 0) {
             HLOG(WARNING) << "Body not empty, but qsAsInput is set for func " << func_name;

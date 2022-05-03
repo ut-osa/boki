@@ -26,6 +26,7 @@ public:
     void set_method_name(std::string_view method_name) { method_name_.assign(method_name); }
     void set_async(bool async) { async_ = async; }
     void set_logspace(uint32_t logspace) { logspace_ = logspace; }
+    void set_node_constraint(const std::set<uint16_t>& node_ids) { node_constraint_ = node_ids; }
     void set_h2_stream_id(int32_t h2_stream_id) { h2_stream_id_ = h2_stream_id; }
     void set_func_call(const protocol::FuncCall& func_call) { func_call_ = func_call; }
     void append_input(std::span<const char> input) { input_.AppendData(input); }
@@ -36,6 +37,7 @@ public:
     std::string_view method_name() const { return method_name_; }
     bool is_async() const { return async_; }
     uint32_t logspace() const { return logspace_; }
+    const std::set<uint16_t>& node_constraint() const { return node_constraint_; }
     int32_t h2_stream_id() const { return h2_stream_id_; }
     protocol::FuncCall func_call() const { return func_call_; }
     std::span<const char> input() const { return input_.to_span(); }
@@ -48,6 +50,7 @@ public:
         method_name_.clear();
         async_ = false;
         logspace_ = 0;
+        node_constraint_.clear();
         func_call_ = protocol::kInvalidFuncCall;
         input_.Reset();
         output_.Reset();
@@ -59,6 +62,7 @@ private:
     std::string method_name_;
     bool async_;
     uint32_t logspace_;
+    std::set<uint16_t> node_constraint_;
     int32_t h2_stream_id_;
     protocol::FuncCall func_call_;
     utils::AppendableBuffer input_;

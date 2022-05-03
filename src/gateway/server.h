@@ -62,6 +62,7 @@ private:
     struct FuncCallState {
         protocol::FuncCall func_call;
         uint32_t           logspace;
+        std::set<uint16_t> node_constraint;
         int                connection_id;  // of HttpConnection or GrpcConnection, or -1 for async calls
         FuncCallContext*   context;
         int64_t            recv_timestamp;

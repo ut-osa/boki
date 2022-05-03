@@ -203,7 +203,8 @@ void Server::TryDispatchingPendingFuncCalls() {
         }
         mu_.Unlock();
         uint16_t node_id;
-        bool node_picked = node_manager_.PickNodeForNewFuncCall(func_call, &node_id);
+        bool node_picked = node_manager_.PickNodeForNewFuncCall(
+            func_call, state.node_constraint, &node_id);
         bool dispatched = false;
         if (node_picked) {
             if (async_call) {
@@ -360,14 +361,16 @@ void Server::OnNewFuncCallCommon(std::shared_ptr<server::ConnectionBase> parent_
     FuncCallState state = {
         .func_call = func_call,
         .logspace = func_call_context->logspace(),
+        .node_constraint = func_call_context->node_constraint(),
         .connection_id = func_call_context->is_async() ? -1 : parent_connection->id(),
         .context = func_call_context->is_async() ? nullptr : func_call_context,
         .recv_timestamp = GetMonotonicMicroTimestamp(),
         .dispatch_timestamp = 0,
-        .input = std::string()
+        .input = std::string(),
     };
     uint16_t node_id;
-    bool node_picked = node_manager_.PickNodeForNewFuncCall(func_call, &node_id);
+    bool node_picked = node_manager_.PickNodeForNewFuncCall(
+        func_call, func_call_context->node_constraint(), &node_id);
     {
         absl::MutexLock lk(&mu_);
         int64_t current_timestamp = GetMonotonicMicroTimestamp();

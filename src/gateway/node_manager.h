@@ -15,7 +15,9 @@ public:
     explicit NodeManager(Server* server);
     ~NodeManager();
 
-    bool PickNodeForNewFuncCall(const protocol::FuncCall& func_call, uint16_t* node_id);
+    bool PickNodeForNewFuncCall(const protocol::FuncCall& func_call,
+                                std::set<uint16_t> node_constraint,
+                                uint16_t* node_id);
     void FuncCallFinished(const protocol::FuncCall& func_call, uint16_t node_id);
 
     void OnNodeOnline(server::NodeWatcher::NodeType node_type, uint16_t node_id);

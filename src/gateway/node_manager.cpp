@@ -16,7 +16,9 @@ NodeManager::NodeManager(Server* server)
 
 NodeManager::~NodeManager() {}
 
-bool NodeManager::PickNodeForNewFuncCall(const protocol::FuncCall& func_call, uint16_t* node_id) {
+bool NodeManager::PickNodeForNewFuncCall(const protocol::FuncCall& func_call,
+                                         std::set<uint16_t> node_constraint,
+                                         uint16_t* node_id) {
     absl::MutexLock lk(&mu_);
     if (connected_node_list_.empty()) {
         return false;
@@ -24,21 +26,35 @@ bool NodeManager::PickNodeForNewFuncCall(const protocol::FuncCall& func_call, ui
     if (max_running_requests_ > 0 && running_requests_.size() > max_running_requests_) {
         return false;
     }
+    std::vector<Node*> preferred_nodes;
+    for (uint16_t node_id : node_constraint) {
+        if (connected_nodes_.contains(node_id)) {
+            preferred_nodes.push_back(connected_nodes_.at(node_id).get());
+        } else {
+            HLOG_F(ERROR, "Cannot find engine node with ID {}", node_id);
+        }
+    }
+    if (!node_constraint.empty() && preferred_nodes.empty()) {
+        return false;
+    }
+
+    const std::vector<Node*>& target_nodes = preferred_nodes.empty() ? connected_node_list_
+                                                                     : preferred_nodes;
     size_t idx;
     if (absl::GetFlag(FLAGS_lb_per_fn_round_robin)) {
-        idx = (next_dispatch_node_idx_[func_call.func_id]++) % connected_node_list_.size();
+        idx = (next_dispatch_node_idx_[func_call.func_id]++) % target_nodes.size();
     } else if (absl::GetFlag(FLAGS_lb_pick_least_load)) {
         auto iter = absl::c_min_element(
-            connected_node_list_,
+            target_nodes,
             [] (const Node* lhs, const Node* rhs) {
                 return lhs->inflight_requests < rhs->inflight_requests;
             }
         );
-        idx = static_cast<size_t>(iter - connected_node_list_.begin());
+        idx = static_cast<size_t>(iter - target_nodes.begin());
     } else {
-        idx = absl::Uniform<size_t>(random_bit_gen_, 0, connected_node_list_.size());
+        idx = absl::Uniform<size_t>(random_bit_gen_, 0, target_nodes.size());
     }
-    Node* node = connected_node_list_[idx];
+    Node* node = target_nodes[idx];
     node->inflight_requests++;
     node->dispatched_requests_stat.Tick();
     running_requests_.insert(func_call.full_call_id);
