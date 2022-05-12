@@ -142,10 +142,20 @@ private:
 
     std::optional<LRUCache> log_cache_;
 
+    absl::Mutex stat_mu_;
+
+    stat::Counter append_counter_ ABSL_GUARDED_BY(stat_mu_);
+    stat::Counter read_counter_   ABSL_GUARDED_BY(stat_mu_);
+
+    stat::StatisticsCollector<int32_t> append_delay_stat_ ABSL_GUARDED_BY(stat_mu_);
+    stat::StatisticsCollector<int32_t> read_delay_stat_   ABSL_GUARDED_BY(stat_mu_);
+
     void SetupZKWatchers();
     void SetupTimers();
 
     void PopulateLogTagsAndData(LocalOp* op, std::span<const char> data);
+    void TickCounter(protocol::SharedLogOpType op_type);
+    void RecordOpDelay(protocol::SharedLogOpType op_type, int32_t delay);
 
     DISALLOW_COPY_AND_ASSIGN(EngineBase);
 };
